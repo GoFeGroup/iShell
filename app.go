@@ -26,6 +26,7 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	installEscGuard()
 	a.dataDir = dataDir()
 	store, err := storage.Open(a.dataDir)
 	if err != nil {
