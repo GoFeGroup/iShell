@@ -38,7 +38,7 @@ export async function initSettings() {
           <div class="settings-row-label">Font family</div>
           <div class="settings-row-control">
             <select class="input" id="st-font" style="width:auto;">
-              ${['Cascadia Code','JetBrains Mono','Fira Code','Consolas','Monaco'].map(f=>`<option ${(settings.font_family||'').includes(f)?'selected':''}>${f}</option>`).join('')}
+              ${['Menlo','SF Mono','Monaco','Cascadia Code','JetBrains Mono','Fira Code','Consolas'].map(f=>`<option ${(settings.font_family||'').includes(f)?'selected':''}>${f}</option>`).join('')}
             </select>
           </div>
         </div>
@@ -169,7 +169,7 @@ export async function initSettings() {
   const footer = document.createElement('div');
   footer.style.cssText = 'padding:12px 32px;border-top:1px solid var(--border-subtle);display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;';
   footer.innerHTML = `<button class="btn btn-secondary" id="st-discard">Discard</button><button class="btn btn-primary" id="st-save">Save Settings</button>`;
-  panel.querySelector('.settings-layout').appendChild(footer);
+  panel.appendChild(footer);
 
   document.getElementById('st-discard').addEventListener('click', () => {
     document.getElementById('panel-settings').style.display = 'none';

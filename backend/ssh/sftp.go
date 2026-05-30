@@ -20,7 +20,7 @@ type FileInfo struct {
 	Size    int64     `json:"size"`
 	IsDir   bool      `json:"is_dir"`
 	Mode    string    `json:"mode"`
-	ModTime time.Time `json:"mod_time"`
+	ModTime string `json:"mod_time"`
 }
 
 // TransferProgress is emitted as a Wails event while a transfer runs.
@@ -50,7 +50,7 @@ func ListRemoteDir(client *sftp.Client, path string) ([]FileInfo, error) {
 			Size:    e.Size(),
 			IsDir:   e.IsDir(),
 			Mode:    e.Mode().String(),
-			ModTime: e.ModTime(),
+			ModTime: e.ModTime().UTC().Format(time.RFC3339),
 		})
 	}
 	return infos, nil
@@ -73,7 +73,7 @@ func ListLocalDir(path string) ([]FileInfo, error) {
 			Size:    info.Size(),
 			IsDir:   e.IsDir(),
 			Mode:    info.Mode().String(),
-			ModTime: info.ModTime(),
+			ModTime: info.ModTime().UTC().Format(time.RFC3339),
 		})
 	}
 	return infos, nil

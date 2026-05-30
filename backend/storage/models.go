@@ -1,7 +1,5 @@
 package storage
 
-import "time"
-
 type AuthType string
 
 const (
@@ -26,8 +24,8 @@ type Session struct {
 	Encoding    string    `json:"encoding"`
 	JumpHost    string    `json:"jump_host,omitempty"`
 	InitCommand string    `json:"init_command,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 type Settings struct {
