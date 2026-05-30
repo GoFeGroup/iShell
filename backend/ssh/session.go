@@ -15,6 +15,7 @@ type TermSession struct {
 	connID  string
 	session *gossh.Session
 	stdin   io.WriteCloser
+	inputCh chan []byte
 	ctx     context.Context
 }
 
@@ -64,19 +65,35 @@ func newTermSession(ctx context.Context, connID string, client *gossh.Client, co
 		return nil, fmt.Errorf("start shell: %w", err)
 	}
 
-	ts := &TermSession{connID: connID, session: sess, stdin: stdin, ctx: ctx}
+	ts := &TermSession{
+		connID:  connID,
+		session: sess,
+		stdin:   stdin,
+		inputCh: make(chan []byte, 256),
+		ctx:     ctx,
+	}
 
-	// Stream stdout
+	// Single writer goroutine: guarantees FIFO order regardless of how many
+	// concurrent goroutines call Write (Wails spawns one goroutine per IPC call).
+	go ts.pumpInput()
+
 	go ts.pumpOutput(stdout)
-	// Stream stderr to the same terminal channel
 	go ts.pumpOutput(stderr)
-	// Notify frontend when the session ends
 	go func() {
 		_ = sess.Wait()
 		runtime.EventsEmit(ctx, "terminal:closed:"+connID, nil)
 	}()
 
 	return ts, nil
+}
+
+// pumpInput drains inputCh and writes to SSH stdin sequentially.
+func (ts *TermSession) pumpInput() {
+	for data := range ts.inputCh {
+		if _, err := ts.stdin.Write(data); err != nil {
+			return
+		}
+	}
 }
 
 func (ts *TermSession) pumpOutput(r io.Reader) {
@@ -93,9 +110,17 @@ func (ts *TermSession) pumpOutput(r io.Reader) {
 	}
 }
 
+// Write enqueues data for the single writer goroutine.
+// Returns immediately; actual SSH write happens in pumpInput.
 func (ts *TermSession) Write(data []byte) error {
-	_, err := ts.stdin.Write(data)
-	return err
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	select {
+	case ts.inputCh <- buf:
+		return nil
+	case <-ts.ctx.Done():
+		return ts.ctx.Err()
+	}
 }
 
 func (ts *TermSession) Resize(cols, rows int) error {
@@ -103,6 +128,7 @@ func (ts *TermSession) Resize(cols, rows int) error {
 }
 
 func (ts *TermSession) Close() {
+	close(ts.inputCh)
 	_ = ts.stdin.Close()
 	_ = ts.session.Close()
 }

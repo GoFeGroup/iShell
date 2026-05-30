@@ -1,5 +1,5 @@
 import '@xterm/xterm/css/xterm.css';
-import { connect, disconnect, on, getSettings } from './api.js';
+import { connect, disconnect, on, off, getSettings } from './api.js';
 import { initSidebar, loadSessions, setSessionStatus } from './sidebar.js';
 import { createTerminal, destroyTerminal, focusTerminal } from './terminal.js';
 import { initSFTP } from './sftp.js';
@@ -13,6 +13,8 @@ let sftpActive = false;
 let timerInterval = null;
 let connStartTime = null;
 let settings = null;
+let isFullscreen = false;
+const pendingConnects = {}; // sessionID → { sess, req } — kept until host key dialog resolves
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
@@ -30,17 +32,19 @@ window.addEventListener('load', async () => {
   document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
   document.getElementById('find-close').addEventListener('click', () => setFindBar(false));
 
+  // Update fullscreen shortcut hint based on platform
+  const fsKey = isMac ? '⌘↩' : 'Alt+Enter';
+  document.querySelectorAll('.kbd-hint kbd').forEach(el => {
+    if (el.textContent === 'Alt+Enter') el.textContent = fsKey;
+  });
+  document.getElementById('btn-fullscreen').title = `Fullscreen  ${fsKey}`;
+
   // Keyboard shortcuts
   document.addEventListener('keydown', handleKeydown);
+  window.addEventListener('ishell:toggleFullscreen', toggleFullscreen);
 
   // Host key events
   on('ssh:unknown_host', showHostKeyDialog);
-
-  // Terminal closed
-  on('terminal:closed', (connID) => {
-    const tab = tabs.find(t => t.connID === connID);
-    if (tab) { doDisconnect(connID); }
-  });
 
   showPanel('welcome');
 });
@@ -59,34 +63,47 @@ async function onConnectRequest(sess) {
   const cols = Math.floor((el?.clientWidth || 800) / 8);
   const rows = Math.floor((el?.clientHeight || 400) / 17);
 
-  try {
-    const connID = await connect({
-      session_id: sess.id,
-      password: sess.auth_type === 'password' ? sess.password : '',
-      key_path: sess.auth_type === 'key' ? sess.key_path : '',
-      passphrase: sess.auth_type === 'key' ? sess.passphrase : '',
-      cols, rows,
-    });
+  const req = {
+    session_id: sess.id,
+    password: sess.auth_type === 'password' ? sess.password : '',
+    key_path: sess.auth_type === 'key' ? sess.key_path : '',
+    passphrase: sess.auth_type === 'key' ? sess.passphrase : '',
+    cols, rows,
+  };
 
-    const tab = {
-      id: 'tab-' + Date.now(),
-      connID,
-      sessionID: sess.id,
-      sessionLabel: sess.label || sess.host,
-      host: sess.host,
-      username: sess.username,
-    };
-    tabs.push(tab);
-    renderTabs();
-    switchToTab(tab);
-    setSessionStatus(sess.id, 'connected');
-    showToast(`✅ Connected to ${sess.host}`);
+  // Store for potential host-key retry
+  pendingConnects[sess.id] = { sess, req };
+
+  try {
+    const connID = await connect(req);
+    delete pendingConnects[sess.id];
+    await afterConnect(connID, sess);
   } catch (e) {
     setSessionStatus(sess.id, 'disconnected');
+    if (isHostKeyPromptError(e)) return; // dialog will handle retry
+    delete pendingConnects[sess.id];
     showToast(`❌ ${e}`);
-    if (String(e).includes('unknown host')) return; // handled by dialog
     alert('Connection failed:\n' + e);
   }
+}
+
+async function afterConnect(connID, sess) {
+  const tab = {
+    id: 'tab-' + Date.now(),
+    connID,
+    sessionID: sess.id,
+    sessionLabel: sess.label || sess.host,
+    host: sess.host,
+    username: sess.username,
+  };
+  tabs.push(tab);
+  renderTabs();
+  switchToTab(tab);
+  on('terminal:closed:' + connID, () => {
+    if (tabs.some(t => t.connID === connID)) doDisconnect(connID);
+  });
+  setSessionStatus(sess.id, 'connected');
+  showToast(`✅ Connected to ${sess.host}`);
 }
 
 async function doDisconnect(connID) {
@@ -94,6 +111,7 @@ async function doDisconnect(connID) {
   const tab = tabs.find(t => t.connID === connID);
   if (tab) { setSessionStatus(tab.sessionID, 'disconnected'); }
   tabs = tabs.filter(t => t.connID !== connID);
+  off('terminal:closed:' + connID);
   destroyTerminal(connID);
   renderTabs();
   if (tabs.length > 0) switchToTab(tabs[tabs.length - 1]);
@@ -228,18 +246,22 @@ function setFindBar(show) {
 
 // ── Fullscreen ────────────────────────────────────────────────────────────────
 
+const isMac = navigator.platform.startsWith('Mac');
+
 function toggleFullscreen() {
-  if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen().catch(() => {});
+  const btn = document.getElementById('btn-fullscreen');
+  if (isFullscreen) {
+    window.runtime.WindowUnfullscreen();
+    isFullscreen = false;
+    if (btn) btn.textContent = '⛶';
+    showToast('Exited fullscreen');
   } else {
-    document.exitFullscreen();
+    window.runtime.WindowFullscreen();
+    isFullscreen = true;
+    if (btn) btn.textContent = '⊡';
+    showToast(`Fullscreen — ${isMac ? 'Cmd+Enter' : 'Alt+Enter'} to exit`);
   }
 }
-document.addEventListener('fullscreenchange', () => {
-  const btn = document.getElementById('btn-fullscreen');
-  if (btn) btn.textContent = document.fullscreenElement ? '⊡' : '⛶';
-  showToast(document.fullscreenElement ? 'Fullscreen — Alt+Enter to exit' : 'Exited fullscreen');
-});
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 
@@ -249,7 +271,7 @@ function handleKeydown(e) {
     switchToTabByIndex(parseInt(e.key));
     return;
   }
-  if (e.altKey && e.key === 'Enter') {
+  if (e.key === 'Enter' && (isMac ? e.metaKey : e.altKey)) {
     e.preventDefault();
     toggleFullscreen();
     return;
@@ -272,22 +294,73 @@ function handleKeydown(e) {
 // ── Host key dialog ───────────────────────────────────────────────────────────
 
 function showHostKeyDialog(data) {
+  const { hostname, fingerprint, key_type, session_id } = data;
+
   const overlay = document.getElementById('hostkey-overlay');
   document.getElementById('hostkey-fp').textContent =
-    `${data.key_type}  ${data.fingerprint}\n${data.hostname}`;
+    `${key_type}  ${fingerprint}\n${hostname}`;
   overlay.style.display = 'flex';
 
   const close = () => { overlay.style.display = 'none'; };
-  document.getElementById('hostkey-reject').onclick = () => { close(); showToast('❌ Connection rejected'); };
-  document.getElementById('hostkey-once').onclick = () => {
+
+  document.getElementById('hostkey-reject').onclick = () => {
     close();
-    showToast('Trusted once — reconnect to apply');
+    const pending = findPendingConnect(session_id, hostname);
+    if (pending) delete pendingConnects[pending.sess.id];
+    showToast('❌ Connection rejected');
   };
+
+  document.getElementById('hostkey-once').onclick = async () => {
+    close();
+    const pending = findPendingConnect(session_id, hostname);
+    if (!pending) { showToast('❌ No pending connection'); return; }
+    delete pendingConnects[pending.sess.id];
+    setSessionStatus(pending.sess.id, 'connecting');
+    try {
+      const connID = await connect({ ...pending.req, skip_host_key_check: true });
+      await afterConnect(connID, pending.sess);
+    } catch (e) {
+      setSessionStatus(pending.sess.id, 'disconnected');
+      showToast(`❌ ${e}`);
+    }
+  };
+
   document.getElementById('hostkey-always').onclick = async () => {
     close();
-    // Re-connect with strict checking disabled for this one session (trust & add)
-    showToast('✅ Host key accepted');
+    const pending = findPendingConnect(session_id, hostname);
+    if (!pending) { showToast('❌ No pending connection'); return; }
+    delete pendingConnects[pending.sess.id];
+    try {
+      await window.go.main.App.AcceptHostKey(hostname);
+    } catch (e) {
+      showToast(`⚠️ Could not save host key: ${e}`);
+    }
+    setSessionStatus(pending.sess.id, 'connecting');
+    try {
+      const connID = await connect({ ...pending.req, skip_host_key_check: true });
+      await afterConnect(connID, pending.sess);
+    } catch (e) {
+      setSessionStatus(pending.sess.id, 'disconnected');
+      showToast(`❌ ${e}`);
+    }
   };
+}
+
+function findPendingConnect(sessionID, hostname) {
+  if (sessionID && pendingConnects[sessionID]) return pendingConnects[sessionID];
+
+  return Object.values(pendingConnects).find(({ sess }) => {
+    const port = sess.port || 22;
+    return hostname === `${sess.host}:${port}` || hostname === sess.host;
+  });
+}
+
+function isHostKeyPromptError(err) {
+  const message = String(err).toLowerCase();
+  return message.includes('unknown host') ||
+    message.includes('knownhosts') ||
+    message.includes('key is unknown') ||
+    message.includes('host key');
 }
 
 function escHtml(s) {

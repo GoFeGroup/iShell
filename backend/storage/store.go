@@ -52,10 +52,29 @@ func Open(dataDir string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
+	if err = configureSQLite(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if _, err = db.Exec(schema); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+func configureSQLite(db *sql.DB) error {
+	pragmas := []string{
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA busy_timeout = 5000",
+		"PRAGMA synchronous = NORMAL",
+	}
+	for _, pragma := range pragmas {
+		if _, err := db.Exec(pragma); err != nil {
+			return fmt.Errorf("configure sqlite %q: %w", pragma, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error {
@@ -79,20 +98,17 @@ func (s *Store) ListSessions() ([]Session, error) {
 	var sessions []Session
 	for rows.Next() {
 		var sess Session
-		var createdAt, updatedAt string
 		err := rows.Scan(
 			&sess.ID, &sess.Label, &sess.Host, &sess.Port,
 			&sess.Username, &sess.AuthType,
 			&sess.Password, &sess.KeyPath, &sess.Passphrase, &sess.Group,
 			&sess.Keepalive, &sess.Timeout, &sess.Encoding,
 			&sess.JumpHost, &sess.InitCommand,
-			&createdAt, &updatedAt,
+			&sess.CreatedAt, &sess.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
 		}
-		sess.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		sess.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 		sessions = append(sessions, sess)
 	}
 	return sessions, rows.Err()
@@ -100,7 +116,6 @@ func (s *Store) ListSessions() ([]Session, error) {
 
 func (s *Store) GetSession(id string) (*Session, error) {
 	var sess Session
-	var createdAt, updatedAt string
 	err := s.db.QueryRow(`
 		SELECT id, label, host, port, username, auth_type,
 		       password, key_path, passphrase, group_name,
@@ -112,7 +127,7 @@ func (s *Store) GetSession(id string) (*Session, error) {
 		&sess.Password, &sess.KeyPath, &sess.Passphrase, &sess.Group,
 		&sess.Keepalive, &sess.Timeout, &sess.Encoding,
 		&sess.JumpHost, &sess.InitCommand,
-		&createdAt, &updatedAt,
+		&sess.CreatedAt, &sess.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -120,13 +135,11 @@ func (s *Store) GetSession(id string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	sess.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	sess.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	return &sess, nil
 }
 
 func (s *Store) SaveSession(sess Session) (*Session, error) {
-	now := time.Now()
+	now := time.Now().UTC().Format(time.RFC3339)
 	if sess.ID == "" {
 		sess.ID = uuid.NewString()
 		sess.CreatedAt = now
@@ -163,8 +176,8 @@ func (s *Store) SaveSession(sess Session) (*Session, error) {
 		string(sess.AuthType), sess.Password, sess.KeyPath, sess.Passphrase,
 		sess.Group, sess.Keepalive, sess.Timeout, sess.Encoding,
 		sess.JumpHost, sess.InitCommand,
-		sess.CreatedAt.Format(time.RFC3339),
-		sess.UpdatedAt.Format(time.RFC3339),
+		sess.CreatedAt,
+		sess.UpdatedAt,
 	)
 	return &sess, err
 }

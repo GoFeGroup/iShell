@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/sftp"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	"ishell/backend/storage"
 	gossh "golang.org/x/crypto/ssh"
+	"ishell/backend/storage"
 )
 
 // Conn holds an active SSH connection and its sub-resources.
@@ -26,25 +26,31 @@ type Conn struct {
 
 // Manager manages all active SSH connections.
 type Manager struct {
-	mu    sync.RWMutex
-	conns map[string]*Conn
-	ctx   context.Context
+	mu          sync.RWMutex
+	conns       map[string]*Conn
+	ctx         context.Context
+	pendingMu   sync.Mutex
+	pendingKeys map[string]gossh.PublicKey // hostname:port → key awaiting acceptance
 }
 
 func NewManager(ctx context.Context) *Manager {
-	return &Manager{ctx: ctx, conns: make(map[string]*Conn)}
+	return &Manager{
+		ctx:         ctx,
+		conns:       make(map[string]*Conn),
+		pendingKeys: make(map[string]gossh.PublicKey),
+	}
 }
 
 // ── Connect ───────────────────────────────────────────────────────────────────
 
 type ConnectOptions struct {
-	Session    storage.Session
-	Password   string // override password (from connect dialog)
-	KeyPath    string // override key path
-	Passphrase string // override passphrase
+	Session        storage.Session
+	Password       string // override password (from connect dialog)
+	KeyPath        string // override key path
+	Passphrase     string // override passphrase
 	KnownHostsPath string
 	StrictHostKey  bool
-	Cols, Rows int
+	Cols, Rows     int
 }
 
 type HostKeyError struct {
@@ -112,10 +118,14 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 			err := cb(hostname, remote, key)
 			if err != nil {
 				fp := gossh.FingerprintSHA256(key)
+				m.pendingMu.Lock()
+				m.pendingKeys[hostname] = key
+				m.pendingMu.Unlock()
 				runtime.EventsEmit(m.ctx, "ssh:unknown_host", map[string]string{
 					"hostname":    hostname,
 					"fingerprint": fp,
 					"key_type":    key.Type(),
+					"session_id":  sess.ID,
 				})
 				return err
 			}
@@ -249,6 +259,18 @@ func (m *Manager) get(connID string) *Conn {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.conns[connID]
+}
+
+// AcceptAndStoreHostKey writes a previously seen unknown key to known_hosts.
+func (m *Manager) AcceptAndStoreHostKey(hostname, khPath string) error {
+	m.pendingMu.Lock()
+	key, ok := m.pendingKeys[hostname]
+	delete(m.pendingKeys, hostname)
+	m.pendingMu.Unlock()
+	if !ok {
+		return fmt.Errorf("no pending host key for %s", hostname)
+	}
+	return AddHostKey(khPath, hostname, key)
 }
 
 // ListActive returns a map of connID → sessionID for all live connections.

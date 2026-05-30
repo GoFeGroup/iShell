@@ -92,12 +92,13 @@ func (a *App) DeleteSession(id string) error {
 // ── SSH connection ────────────────────────────────────────────────────────────
 
 type ConnectRequest struct {
-	SessionID  string `json:"session_id"`
-	Password   string `json:"password"`
-	KeyPath    string `json:"key_path"`
-	Passphrase string `json:"passphrase"`
-	Cols       int    `json:"cols"`
-	Rows       int    `json:"rows"`
+	SessionID        string `json:"session_id"`
+	Password         string `json:"password"`
+	KeyPath          string `json:"key_path"`
+	Passphrase       string `json:"passphrase"`
+	Cols             int    `json:"cols"`
+	Rows             int    `json:"rows"`
+	SkipHostKeyCheck bool   `json:"skip_host_key_check"`
 }
 
 func (a *App) Connect(req ConnectRequest) (string, error) {
@@ -115,6 +116,9 @@ func (a *App) Connect(req ConnectRequest) (string, error) {
 	if settings != nil {
 		khPath = settings.KnownHostsPath
 		strictHK = settings.StrictHostKey
+	}
+	if req.SkipHostKeyCheck {
+		strictHK = false
 	}
 
 	connID, err := a.sshMgr.Connect(ssh.ConnectOptions{
@@ -146,12 +150,14 @@ func (a *App) ResizeTerminal(connID string, cols, rows int) error {
 	return a.sshMgr.ResizeTerminal(connID, cols, rows)
 }
 
-// AcceptHostKey saves a host key to known_hosts (called from frontend after user confirms).
-func (a *App) AcceptHostKey(hostname, fingerprint string) error {
-	// Re-connect flow: the frontend should call Connect again after accepting.
-	// This is a no-op placeholder; actual key is added via AddHostKey after re-dial.
-	wailsRuntime.LogInfof(a.ctx, "user accepted host key for %s: %s", hostname, fingerprint)
-	return nil
+// AcceptHostKey writes the pending host key for hostname to known_hosts.
+func (a *App) AcceptHostKey(hostname string) error {
+	settings, _ := a.store.LoadSettings()
+	khPath := ""
+	if settings != nil {
+		khPath = settings.KnownHostsPath
+	}
+	return a.sshMgr.AcceptAndStoreHostKey(hostname, khPath)
 }
 
 // ── SFTP ─────────────────────────────────────────────────────────────────────
