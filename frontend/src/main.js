@@ -32,12 +32,14 @@ window.addEventListener('load', async () => {
   document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
   document.getElementById('find-close').addEventListener('click', () => setFindBar(false));
 
-  // Update fullscreen shortcut hint based on platform
+  // Update shortcut hints based on platform
   const fsKey = isMac ? '⌘↩' : 'Alt+Enter';
   document.querySelectorAll('.kbd-hint kbd').forEach(el => {
     if (el.textContent === 'Alt+Enter') el.textContent = fsKey;
   });
   document.getElementById('btn-fullscreen').title = `Fullscreen  ${fsKey}`;
+  const tabSwitchEl = document.getElementById('kbd-switch-tab');
+  if (tabSwitchEl) tabSwitchEl.textContent = isMac ? '⌘1…9' : 'Alt+1…9';
 
   // Keyboard shortcuts
   document.addEventListener('keydown', handleKeydown);
@@ -267,7 +269,10 @@ function toggleFullscreen() {
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 
 function handleKeydown(e) {
-  if (e.altKey && e.key >= '1' && e.key <= '9') {
+  const isTabSwitch = isMac
+    ? (e.metaKey && !e.ctrlKey && !e.altKey && e.key >= '1' && e.key <= '9')
+    : (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= '1' && e.key <= '9');
+  if (isTabSwitch) {
     e.preventDefault();
     switchToTabByIndex(parseInt(e.key));
     return;
