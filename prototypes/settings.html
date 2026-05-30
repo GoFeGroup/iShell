@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iShell — Settings</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+html, body { height: 100%; overflow: hidden; }
+
+.settings-layout {
+  display: flex;
+  height: 100vh;
+  background: var(--bg-primary);
+}
+
+/* ── Left nav ── */
+.settings-nav {
+  width: 210px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+.settings-nav-header {
+  padding: 18px 16px 14px;
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.settings-nav-list { padding: 10px 8px; flex: 1; overflow-y: auto; }
+.nav-group-label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 10px 8px 4px;
+}
+.settings-nav-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ── Content area ── */
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 36px;
+  max-width: 700px;
+}
+.settings-page { display: none; }
+.settings-page.active { display: block; }
+.settings-page-title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  margin-bottom: 24px;
+  color: var(--text-primary);
+}
+
+/* Color swatch picker */
+.color-schemes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.color-scheme {
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.color-scheme:hover { border-color: var(--text-muted); }
+.color-scheme.selected { border-color: var(--accent); }
+.cs-preview {
+  height: 50px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  gap: 3px;
+}
+.cs-name {
+  padding: 5px 8px;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  background: var(--bg-elevated);
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+/* Font size slider */
+.slider-row { display: flex; align-items: center; gap: 12px; }
+.slider-row input[type="range"] {
+  flex: 1; accent-color: var(--accent);
+  height: 4px; cursor: pointer;
+}
+.slider-val {
+  width: 36px; text-align: center;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Cursor style */
+.cursor-options { display: flex; gap: 8px; }
+.cursor-opt {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px 14px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.15s;
+  background: var(--bg-elevated);
+}
+.cursor-opt:hover { border-color: var(--text-muted); }
+.cursor-opt.selected { border-color: var(--accent); background: var(--accent-dim); }
+.cursor-opt .preview-cursor {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  color: var(--text-primary);
+}
+.cursor-opt .cursor-label { font-size: var(--font-size-xs); color: var(--text-secondary); }
+
+/* Shortcut table */
+.shortcut-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-md); }
+.shortcut-table th {
+  text-align: left;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.shortcut-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.shortcut-table tr:hover td { background: var(--bg-hover); }
+.shortcut-table tr:last-child td { border-bottom: none; }
+kbd {
+  padding: 2px 7px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+/* About card */
+.about-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center; gap: 10px;
+}
+.about-logo {
+  width: 64px; height: 64px;
+  background: linear-gradient(135deg, var(--accent), var(--mauve));
+  border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 30px; font-weight: 700; color: white;
+  margin-bottom: 4px;
+}
+.about-version { color: var(--text-muted); font-size: var(--font-size-md); }
+.about-links { display: flex; gap: 10px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="settings-layout">
+
+  <!-- ── Nav ── -->
+  <nav class="settings-nav">
+    <div class="settings-nav-header">
+      <span style="font-size:20px;">⚙</span> Preferences
+    </div>
+    <div class="settings-nav-list">
+      <div class="nav-group-label">Application</div>
+      <div class="nav-pill active" onclick="show('general', this)">
+        <span class="nav-icon">🏠</span> General
+      </div>
+      <div class="nav-pill" onclick="show('appearance', this)">
+        <span class="nav-icon">🎨</span> Appearance
+      </div>
+
+      <div class="nav-group-label" style="margin-top:6px;">Terminal</div>
+      <div class="nav-pill" onclick="show('terminal', this)">
+        <span class="nav-icon">⌨</span> Terminal
+      </div>
+      <div class="nav-pill" onclick="show('shortcuts', this)">
+        <span class="nav-icon">⌘</span> Keyboard Shortcuts
+      </div>
+
+      <div class="nav-group-label" style="margin-top:6px;">Security</div>
+      <div class="nav-pill" onclick="show('ssh', this)">
+        <span class="nav-icon">🔐</span> SSH / Security
+      </div>
+
+      <div class="nav-group-label" style="margin-top:6px;">Other</div>
+      <div class="nav-pill" onclick="show('about', this)">
+        <span class="nav-icon">ℹ</span> About
+      </div>
+    </div>
+    <div class="settings-nav-footer">
+      <span>iShell v1.0.0</span>
+      <button class="btn btn-ghost btn-sm" style="font-size:11px; padding:2px 6px;">Restart</button>
+    </div>
+  </nav>
+
+  <!-- ── Content ── -->
+  <div class="settings-content">
+
+    <!-- ── General ── -->
+    <div class="settings-page active" id="page-general">
+      <div class="settings-page-title">General</div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Startup</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Launch at login</div>
+            <div class="settings-row-desc">Start iShell automatically when you log in</div>
+          </div>
+          <div class="settings-row-control">
+            <div class="toggle-switch" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Restore previous sessions on launch</div>
+            <div class="settings-row-desc">Reconnect tabs that were open when iShell was closed</div>
+          </div>
+          <div class="settings-row-control">
+            <div class="toggle-switch on" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Check for updates automatically</div>
+          </div>
+          <div class="settings-row-control">
+            <div class="toggle-switch on" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Data</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Session data location</div>
+            <div class="settings-row-desc" style="font-family:var(--font-mono); font-size:11px;">~/.config/ishell/sessions.db</div>
+          </div>
+          <div class="settings-row-control">
+            <button class="btn btn-secondary btn-sm">Open in Explorer</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Export sessions</div>
+            <div class="settings-row-desc">Save all sessions to a JSON file</div>
+          </div>
+          <div class="settings-row-control">
+            <button class="btn btn-secondary btn-sm">Export…</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Import sessions</div>
+            <div class="settings-row-desc">Load sessions from a JSON or CSV file</div>
+          </div>
+          <div class="settings-row-control">
+            <button class="btn btn-secondary btn-sm">Import…</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Language</div>
+        <div class="settings-row">
+          <div class="settings-row-label">Interface language</div>
+          <div class="settings-row-control">
+            <select class="select" style="width:auto;">
+              <option>English</option>
+              <option>中文 (简体)</option>
+              <option>日本語</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Appearance ── -->
+    <div class="settings-page" id="page-appearance">
+      <div class="settings-page-title">Appearance</div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Theme</div>
+        <div class="radio-group">
+          <label class="radio-option selected">
+            <input type="radio" name="theme" value="dark" checked /> 🌙 Dark
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="theme" value="light" /> ☀️ Light
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="theme" value="system" /> 💻 System
+          </label>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Color Scheme</div>
+        <div class="color-schemes">
+          <!-- Catppuccin Mocha -->
+          <div class="color-scheme selected" onclick="selectScheme(this)">
+            <div class="cs-preview" style="background:#1E1E2E;">
+              <span style="color:#A6E3A1;">user</span><span style="color:#CDD6F4;">@</span><span style="color:#89B4FA;">host</span><span style="color:#CDD6F4;">:~$</span>
+            </div>
+            <div class="cs-name">Catppuccin</div>
+          </div>
+          <!-- Dracula -->
+          <div class="color-scheme" onclick="selectScheme(this)">
+            <div class="cs-preview" style="background:#282A36;">
+              <span style="color:#50FA7B;">user</span><span style="color:#F8F8F2;">@</span><span style="color:#BD93F9;">host</span><span style="color:#F8F8F2;">:~$</span>
+            </div>
+            <div class="cs-name">Dracula</div>
+          </div>
+          <!-- Solarized Dark -->
+          <div class="color-scheme" onclick="selectScheme(this)">
+            <div class="cs-preview" style="background:#002B36;">
+              <span style="color:#859900;">user</span><span style="color:#839496;">@</span><span style="color:#268BD2;">host</span><span style="color:#839496;">:~$</span>
+            </div>
+            <div class="cs-name">Solarized Dark</div>
+          </div>
+          <!-- One Dark -->
+          <div class="color-scheme" onclick="selectScheme(this)">
+            <div class="cs-preview" style="background:#282C34;">
+              <span style="color:#98C379;">user</span><span style="color:#ABB2BF;">@</span><span style="color:#61AFEF;">host</span><span style="color:#ABB2BF;">:~$</span>
+            </div>
+            <div class="cs-name">One Dark</div>
+          </div>
+          <!-- Nord -->
+          <div class="color-scheme" onclick="selectScheme(this)">
+            <div class="cs-preview" style="background:#2E3440;">
+              <span style="color:#A3BE8C;">user</span><span style="color:#ECEFF4;">@</span><span style="color:#81A1C1;">host</span><span style="color:#ECEFF4;">:~$</span>
+            </div>
+            <div class="cs-name">Nord</div>
+          </div>
+          <!-- Light -->
+          <div class="color-scheme" onclick="selectScheme(this)">
+            <div class="cs-preview" style="background:#FAFAFA;">
+              <span style="color:#22863A;">user</span><span style="color:#24292E;">@</span><span style="color:#005CC5;">host</span><span style="color:#24292E;">:~$</span>
+            </div>
+            <div class="cs-name">GitHub Light</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Font</div>
+        <div class="settings-row">
+          <div class="settings-row-label">Font family</div>
+          <div class="settings-row-control">
+            <select class="select" style="width:auto;">
+              <option>Cascadia Code</option>
+              <option>JetBrains Mono</option>
+              <option>Fira Code</option>
+              <option>Consolas</option>
+              <option>Monaco</option>
+              <option>Menlo</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Font size</div>
+          <div class="settings-row-control" style="min-width:200px;">
+            <div class="slider-row">
+              <span style="font-size:11px; color:var(--text-muted);">10</span>
+              <input type="range" min="10" max="24" value="13" oninput="document.getElementById('fsz').textContent=this.value" />
+              <span style="font-size:11px; color:var(--text-muted);">24</span>
+              <span class="slider-val" id="fsz">13</span>
+            </div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Line height</div>
+          <div class="settings-row-control" style="min-width:200px;">
+            <div class="slider-row">
+              <span style="font-size:11px; color:var(--text-muted);">1.0</span>
+              <input type="range" min="100" max="200" value="150" oninput="document.getElementById('lh').textContent=(this.value/100).toFixed(1)" />
+              <span style="font-size:11px; color:var(--text-muted);">2.0</span>
+              <span class="slider-val" id="lh">1.5</span>
+            </div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Ligatures</div>
+            <div class="settings-row-desc">Show font ligatures (e.g. → != >=)</div>
+          </div>
+          <div class="settings-row-control">
+            <div class="toggle-switch on" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Terminal ── -->
+    <div class="settings-page" id="page-terminal">
+      <div class="settings-page-title">Terminal</div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Cursor</div>
+        <div class="cursor-options">
+          <div class="cursor-opt selected" onclick="selectCursor(this)">
+            <div class="preview-cursor">█</div>
+            <div class="cursor-label">Block</div>
+          </div>
+          <div class="cursor-opt" onclick="selectCursor(this)">
+            <div class="preview-cursor">_</div>
+            <div class="cursor-label">Underline</div>
+          </div>
+          <div class="cursor-opt" onclick="selectCursor(this)">
+            <div class="preview-cursor">|</div>
+            <div class="cursor-label">Bar</div>
+          </div>
+        </div>
+        <div class="settings-row" style="margin-top:12px;">
+          <div class="settings-row-label">Blink cursor</div>
+          <div class="settings-row-control">
+            <div class="toggle-switch on" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Behavior</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Scrollback lines</div>
+            <div class="settings-row-desc">Number of lines to keep in history</div>
+          </div>
+          <div class="settings-row-control">
+            <input class="input" value="10000" type="number" style="width:100px;" />
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Copy on select</div>
+            <div class="settings-row-desc">Automatically copy selected text to clipboard</div>
+          </div>
+          <div class="settings-row-control">
+            <div class="toggle-switch" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Scroll to bottom on input</div>
+          </div>
+          <div class="settings-row-control">
+            <div class="toggle-switch on" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Bell style</div>
+          </div>
+          <div class="settings-row-control">
+            <select class="select" style="width:auto;">
+              <option>Visual (flash)</option>
+              <option>Audio</option>
+              <option>None</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SSH / Security ── -->
+    <div class="settings-page" id="page-ssh">
+      <div class="settings-page-title">SSH / Security</div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Authentication Defaults</div>
+        <div class="settings-row">
+          <div class="settings-row-label">Default auth method</div>
+          <div class="settings-row-control">
+            <select class="select" style="width:auto;">
+              <option>SSH Key</option>
+              <option>Password</option>
+              <option>SSH Agent</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Default key file</div>
+            <div class="settings-row-desc" style="font-family:var(--font-mono); font-size:11px;">~/.ssh/id_rsa</div>
+          </div>
+          <div class="settings-row-control">
+            <button class="btn btn-secondary btn-sm">Browse…</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">SSH agent socket</div>
+            <div class="settings-row-desc" style="font-family:var(--font-mono); font-size:11px;">/run/user/1000/gnupg/S.gpg-agent.ssh</div>
+          </div>
+          <div class="settings-row-control">
+            <button class="btn btn-secondary btn-sm">Auto-detect</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Host Key Verification</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Strict host key checking</div>
+            <div class="settings-row-desc">Reject connections to hosts with unknown or changed keys</div>
+          </div>
+          <div class="settings-row-control">
+            <div class="toggle-switch on" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">known_hosts file</div>
+            <div class="settings-row-desc" style="font-family:var(--font-mono); font-size:11px;">~/.ssh/known_hosts</div>
+          </div>
+          <div class="settings-row-control">
+            <button class="btn btn-secondary btn-sm">Edit File…</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">Stored Credentials</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Clear all saved passwords</div>
+            <div class="settings-row-desc">Remove all encrypted passwords from the local store</div>
+          </div>
+          <div class="settings-row-control">
+            <button class="btn btn-danger btn-sm">Clear Passwords</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Keyboard Shortcuts ── -->
+    <div class="settings-page" id="page-shortcuts">
+      <div class="settings-page-title">Keyboard Shortcuts</div>
+
+      <div style="margin-bottom:14px;">
+        <div class="search-wrap" style="max-width:280px;">
+          <span class="search-icon">🔍</span>
+          <input class="input" placeholder="Filter shortcuts…" style="padding-left:30px; font-size:13px;" />
+        </div>
+      </div>
+
+      <table class="shortcut-table">
+        <thead>
+          <tr>
+            <th>Action</th>
+            <th>Shortcut</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>New session</td><td><kbd>⌘N</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>New tab</td><td><kbd>⌘T</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Close tab</td><td><kbd>⌘W</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Next tab</td><td><kbd>⌘→</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Previous tab</td><td><kbd>⌘←</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Quick connect</td><td><kbd>⌘K</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Find in terminal</td><td><kbd>⌘F</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Copy</td><td><kbd>⌘C</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Paste</td><td><kbd>⌘V</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Clear screen</td><td><kbd>⌘K</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Disconnect</td><td><kbd>⇧⌘D</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Preferences</td><td><kbd>⌘,</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Switch to tab 1–9</td><td><kbd>Alt+1</kbd> … <kbd>Alt+9</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Toggle fullscreen</td><td><kbd>Alt+Enter</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Toggle sidebar</td><td><kbd>⌘B</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+          <tr><td>Fullscreen (alt)</td><td><kbd>F11</kbd></td><td><button class="btn btn-ghost btn-sm">Edit</button></td></tr>
+        </tbody>
+      </table>
+
+      <div style="margin-top:14px;">
+        <button class="btn btn-secondary btn-sm">Reset to Defaults</button>
+      </div>
+    </div>
+
+    <!-- ── About ── -->
+    <div class="settings-page" id="page-about">
+      <div class="settings-page-title">About</div>
+      <div class="about-card">
+        <div class="about-logo">⌨</div>
+        <div style="font-size:22px; font-weight:700;">iShell</div>
+        <div class="about-version">Version 1.0.0 (Build 100)</div>
+        <div style="font-size:var(--font-size-sm); color:var(--text-muted); max-width:320px; text-align:center;">
+          A modern, cross-platform SSH client built with Go and Wails. Simple, fast, and secure.
+        </div>
+        <div class="about-links">
+          <button class="btn btn-secondary btn-sm">📋 Release Notes</button>
+          <button class="btn btn-secondary btn-sm">🐛 Report Bug</button>
+          <button class="btn btn-secondary btn-sm">⭐ Star on GitHub</button>
+        </div>
+      </div>
+
+      <div class="settings-section" style="margin-top:24px;">
+        <div class="settings-section-title">Runtime</div>
+        <div class="settings-row">
+          <div class="settings-row-label">Go version</div>
+          <div style="font-family:var(--font-mono); font-size:var(--font-size-sm); color:var(--text-secondary);">go1.22.3</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Wails version</div>
+          <div style="font-family:var(--font-mono); font-size:var(--font-size-sm); color:var(--text-secondary);">v2.9.1</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Platform</div>
+          <div style="font-family:var(--font-mono); font-size:var(--font-size-sm); color:var(--text-secondary);">windows/amd64</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /settings-content -->
+</div><!-- /settings-layout -->
+
+<script>
+function show(page, el) {
+  document.querySelectorAll('.settings-page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-pill').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  el.classList.add('active');
+}
+function selectScheme(el) {
+  document.querySelectorAll('.color-scheme').forEach(e => e.classList.remove('selected'));
+  el.classList.add('selected');
+}
+function selectCursor(el) {
+  document.querySelectorAll('.cursor-opt').forEach(e => e.classList.remove('selected'));
+  el.classList.add('selected');
+}
+</script>
+</body>
+</html>

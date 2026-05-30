@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iShell — Add / Edit Session</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+html, body { height: 100%; overflow: hidden; }
+body {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-primary);
+}
+
+.modal { width: 500px; max-height: 90vh; display: flex; flex-direction: column; }
+.modal-body { overflow-y: auto; flex: 1; }
+
+/* Auth tabs */
+.auth-tabs {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.auth-tab {
+  flex: 1;
+  padding: 7px 12px;
+  text-align: center;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: none;
+  transition: background 0.15s, color 0.15s;
+}
+.auth-tab.active { background: var(--accent); color: #fff; }
+.auth-tab:not(.active):hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Section heading */
+.section-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex; align-items: center; gap: 6px;
+}
+
+/* Password field with visibility toggle */
+.password-wrap { position: relative; }
+.password-wrap .input { padding-right: 38px; }
+.password-toggle {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 14px; padding: 2px;
+}
+.password-toggle:hover { color: var(--text-primary); }
+
+/* File picker */
+.file-pick { display: flex; gap: 6px; align-items: center; }
+.file-pick .input { flex: 1; font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }
+
+/* Collapsible advanced */
+.adv-section {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-top: 8px;
+}
+.adv-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  background: var(--bg-elevated);
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  color: var(--text-secondary);
+  user-select: none;
+}
+.adv-header:hover { color: var(--text-primary); }
+.adv-body {
+  padding: 14px;
+  background: var(--bg-surface);
+  display: none;
+  border-top: 1px solid var(--border-subtle);
+}
+.adv-body.open { display: block; }
+
+/* Two-col grid */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+
+.test-result {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  margin-top: 8px;
+  display: none;
+}
+.test-result.success { background: var(--green-dim); color: var(--green); display: flex; }
+.test-result.error { background: var(--red-dim); color: var(--red); display: flex; }
+</style>
+</head>
+<body>
+
+<div class="modal">
+  <div class="modal-header">
+    <span class="modal-title">✏️ Edit Session — web-prod-01</span>
+    <button class="btn btn-ghost btn-icon">✕</button>
+  </div>
+
+  <div class="modal-body" style="padding: 20px;">
+
+    <!-- ── Connection ── -->
+    <div class="section-title">🔌 Connection</div>
+
+    <div class="form-field">
+      <label class="form-label">Label (nickname)</label>
+      <input class="input" value="web-prod-01" placeholder="My Server (optional)" />
+      <div class="form-hint">Friendly name shown in the session list</div>
+    </div>
+
+    <div class="grid-2">
+      <div class="form-field">
+        <label class="form-label">Hostname / IP Address *</label>
+        <input class="input" value="192.168.1.10" placeholder="192.168.1.1 or example.com" />
+      </div>
+      <div class="form-field">
+        <label class="form-label">Port *</label>
+        <input class="input" value="22" type="number" min="1" max="65535" />
+      </div>
+    </div>
+
+    <div class="form-field">
+      <label class="form-label">Username *</label>
+      <input class="input" value="deploy" placeholder="root" />
+    </div>
+
+    <div class="form-field">
+      <label class="form-label">Group / Tag</label>
+      <input class="input" value="Production" placeholder="e.g. Production, Staging, Personal" list="groups" />
+      <datalist id="groups">
+        <option value="Production">
+        <option value="Staging">
+        <option value="Personal">
+      </datalist>
+    </div>
+
+    <!-- ── Authentication ── -->
+    <div class="section-title" style="margin-top:4px;">🔑 Authentication</div>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" onclick="setAuth('password', this)">🔒 Password</button>
+      <button class="auth-tab" onclick="setAuth('key', this)">🗝 SSH Key</button>
+      <button class="auth-tab" onclick="setAuth('agent', this)">🤝 SSH Agent</button>
+    </div>
+
+    <!-- Password panel -->
+    <div id="auth-password">
+      <div class="form-field">
+        <label class="form-label">Password</label>
+        <div class="password-wrap">
+          <input class="input" id="pw-input" type="password" value="••••••••••" />
+          <button class="password-toggle" onclick="togglePw()">👁</button>
+        </div>
+        <div class="form-hint">Password is encrypted and stored locally</div>
+      </div>
+    </div>
+
+    <!-- SSH Key panel -->
+    <div id="auth-key" style="display:none;">
+      <div class="form-field">
+        <label class="form-label">Private Key File *</label>
+        <div class="file-pick">
+          <input class="input" value="~/.ssh/id_rsa" placeholder="/path/to/id_rsa" />
+          <button class="btn btn-secondary btn-sm">Browse…</button>
+        </div>
+        <div class="form-hint">Supports RSA, ECDSA, Ed25519 key types</div>
+      </div>
+      <div class="form-field">
+        <label class="form-label">Passphrase <span style="color:var(--text-muted);font-weight:400;">(if protected)</span></label>
+        <div class="password-wrap">
+          <input class="input" type="password" placeholder="Leave blank if not passphrase-protected" />
+          <button class="password-toggle">👁</button>
+        </div>
+      </div>
+      <div class="form-field">
+        <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" checked style="accent-color:var(--accent);" />
+          Add to SSH agent after connecting
+        </label>
+      </div>
+    </div>
+
+    <!-- Agent panel -->
+    <div id="auth-agent" style="display:none;">
+      <div style="background:var(--bg-elevated); border:1px solid var(--border); border-radius:var(--radius-md); padding:14px 16px; color:var(--text-secondary); font-size:var(--font-size-md);">
+        <p>🤝 iShell will use the <strong>system SSH agent</strong> (ssh-agent / Pageant) for authentication.</p>
+        <p style="margin-top:8px; font-size:var(--font-size-sm); color:var(--text-muted);">Make sure your keys are loaded in the agent before connecting. On macOS, keys in the Keychain are available automatically.</p>
+      </div>
+    </div>
+
+    <!-- ── Advanced (collapsible) ── -->
+    <div class="adv-section">
+      <div class="adv-header" onclick="toggleAdv(this)">
+        <span>⚙ Advanced Options</span>
+        <span id="adv-arrow">▶</span>
+      </div>
+      <div class="adv-body" id="adv-body">
+        <div class="grid-2">
+          <div class="form-field">
+            <label class="form-label">Connection Timeout (sec)</label>
+            <input class="input" value="30" type="number" />
+          </div>
+          <div class="form-field">
+            <label class="form-label">Keepalive Interval (sec)</label>
+            <input class="input" value="60" type="number" />
+          </div>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Server Encoding</label>
+          <select class="select">
+            <option selected>UTF-8</option>
+            <option>GBK</option>
+            <option>ISO-8859-1</option>
+            <option>Shift-JIS</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Jump Host / Proxy</label>
+          <input class="input" placeholder="user@jumphost:22 (optional)" />
+          <div class="form-hint">Connect to this server through a bastion host</div>
+        </div>
+        <div class="form-field">
+          <label class="form-label">Initial Command</label>
+          <input class="input" placeholder="e.g. sudo su - or tmux attach (optional)" />
+          <div class="form-hint">Runs immediately after login</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Test result banner -->
+    <div class="test-result success" id="test-ok">✅ Connection successful — server responded in 42ms</div>
+    <div class="test-result error" id="test-err">❌ Connection failed: Authentication refused</div>
+
+  </div>
+
+  <div class="modal-footer">
+    <button class="btn btn-secondary btn-sm" onclick="testConn()">🧪 Test Connection</button>
+    <div style="flex:1;"></div>
+    <button class="btn btn-secondary">Cancel</button>
+    <button class="btn btn-primary">Save Session</button>
+  </div>
+</div>
+
+<script>
+let authMode = 'password';
+let testToggle = 0;
+
+function setAuth(mode, btn) {
+  authMode = mode;
+  document.querySelectorAll('.auth-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('auth-password').style.display = mode === 'password' ? '' : 'none';
+  document.getElementById('auth-key').style.display = mode === 'key' ? '' : 'none';
+  document.getElementById('auth-agent').style.display = mode === 'agent' ? '' : 'none';
+}
+
+function togglePw() {
+  const inp = document.getElementById('pw-input');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+function toggleAdv(header) {
+  const body = document.getElementById('adv-body');
+  const arrow = document.getElementById('adv-arrow');
+  body.classList.toggle('open');
+  arrow.textContent = body.classList.contains('open') ? '▼' : '▶';
+}
+
+function testConn() {
+  const ok = document.getElementById('test-ok');
+  const err = document.getElementById('test-err');
+  testToggle++;
+  ok.style.display = 'none'; err.style.display = 'none';
+  setTimeout(() => {
+    if (testToggle % 2 === 1) ok.style.display = 'flex';
+    else err.style.display = 'flex';
+  }, 600);
+}
+</script>
+</body>
+</html>

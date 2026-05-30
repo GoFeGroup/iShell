@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>iShell</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+
+<!-- ── App Layout ── -->
+<div class="app-layout" id="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">⌨</div>
+      <div>
+        <div class="app-name">iShell</div>
+        <div class="app-version">v1.0.0</div>
+      </div>
+    </div>
+
+    <div class="sidebar-search">
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input class="input" id="session-search" placeholder="Search sessions…" />
+      </div>
+    </div>
+
+    <div class="sidebar-list" id="session-list">
+      <!-- populated by JS -->
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="btn btn-primary btn-sm" id="btn-new-session">+ New Session</button>
+      <div style="display:flex;gap:4px;">
+        <button class="btn btn-ghost btn-icon" id="btn-settings" title="Settings">⚙️</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main area -->
+  <div class="main-area" id="main-area">
+
+    <!-- Unified toolbar -->
+    <div class="unified-toolbar" id="unified-toolbar">
+      <button class="sidebar-toggle" id="btn-toggle-sidebar" title="Toggle sidebar">☰</button>
+      <div class="toolbar-vdiv"></div>
+      <div class="tabs-scroll" id="tabs-scroll"></div>
+      <div class="toolbar-vdiv" id="conn-info-divider" style="display:none;"></div>
+      <div class="conn-info" id="conn-info" style="display:none;">
+        <div class="status-dot connected" id="conn-status-dot"></div>
+        <span class="conn-label" id="conn-label"></span>
+        <span class="conn-timer" id="conn-timer">00:00:00</span>
+        <span class="badge badge-green">SSH</span>
+      </div>
+      <div style="flex:1;"></div>
+      <div class="topbar-actions" id="topbar-actions" style="display:none;">
+        <button class="btn btn-ghost btn-sm" id="btn-search-term" title="Find in terminal">🔍</button>
+        <button class="btn btn-ghost btn-sm" id="btn-sftp" style="color:var(--blue);" title="Open SFTP">📁 SFTP</button>
+        <div class="toolbar-vdiv"></div>
+        <button class="btn btn-ghost btn-sm" id="btn-fullscreen" title="Fullscreen  Alt+Enter">⛶</button>
+        <div class="toolbar-vdiv"></div>
+        <button class="btn btn-danger btn-sm" id="btn-disconnect">Disconnect</button>
+      </div>
+    </div>
+
+    <!-- Content panels (only one visible at a time) -->
+
+    <!-- Welcome screen -->
+    <div class="panel" id="panel-welcome">
+      <div class="empty-state">
+        <div class="empty-icon">⌨️</div>
+        <div class="empty-title">Welcome to iShell</div>
+        <div class="empty-sub">Select a saved session from the sidebar or click <strong>+ New Session</strong>.</div>
+        <div class="kbd-hints">
+          <div class="kbd-hint"><kbd>Alt+1…9</kbd> Switch tab</div>
+          <div class="kbd-hint"><kbd>Alt+Enter</kbd> Fullscreen</div>
+          <div class="kbd-hint"><kbd>⌘,</kbd> Settings</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Terminal panel -->
+    <div class="panel" id="panel-terminal" style="display:none;">
+      <div id="terminal-container"></div>
+      <!-- Find bar -->
+      <div class="find-bar" id="find-bar" style="display:none;">
+        <input id="find-input" placeholder="Find…" />
+        <span class="find-count" id="find-count"></span>
+        <button class="btn btn-ghost btn-icon" id="find-prev">▲</button>
+        <button class="btn btn-ghost btn-icon" id="find-next">▼</button>
+        <button class="btn btn-ghost btn-icon" id="find-close">✕</button>
+      </div>
+      <div class="terminal-statusbar">
+        <div class="statusbar-left">
+          <span class="statusbar-item" id="sb-status">🟢 Connected</span>
+          <span class="statusbar-item" id="sb-latency"></span>
+        </div>
+        <div class="statusbar-right">
+          <span class="statusbar-item" id="sb-encoding">UTF-8</span>
+          <span class="statusbar-item" id="sb-size">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SFTP panel -->
+    <div class="panel" id="panel-sftp" style="display:none;">
+      <!-- content injected by sftp.js -->
+    </div>
+
+    <!-- Settings panel -->
+    <div class="panel" id="panel-settings" style="display:none;">
+      <!-- content injected by settings.js -->
+    </div>
+
+  </div><!-- /main-area -->
+</div><!-- /app -->
+
+<!-- ── Modals ── -->
+<div id="modal-root"></div>
+
+<!-- Toast -->
+<div id="kb-toast"></div>
+
+<!-- Host key warning dialog -->
+<div class="overlay" id="hostkey-overlay" style="display:none;">
+  <div class="modal" style="width:460px;">
+    <div class="modal-header">
+      <span class="modal-title">⚠ Unknown Host Key</span>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:10px;">
+        The server's host key has not been verified before. Make sure the fingerprint below matches what you expect.
+      </p>
+      <div style="font-family:var(--font-mono);font-size:12px;background:var(--bg-primary);padding:10px 14px;border-radius:6px;word-break:break-all;color:var(--text-secondary);" id="hostkey-fp"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="hostkey-reject">✕ Reject</button>
+      <button class="btn btn-secondary" id="hostkey-once">Trust Once</button>
+      <button class="btn btn-primary" id="hostkey-always">Always Trust</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

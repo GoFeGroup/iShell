@@ -1,0 +1,1240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iShell — SFTP File Manager</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+html, body { height: 100%; overflow: hidden; }
+
+.app-layout { display: flex; height: 100vh; }
+
+/* ── Sidebar ── */
+.sidebar-mini {
+  width: 260px; flex-shrink: 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  display: flex; flex-direction: column;
+  transition: width 0.22s cubic-bezier(0.4,0,0.2,1);
+  overflow: hidden;
+}
+.sidebar-mini.collapsed { width: 0; border-right-color: transparent; }
+.sidebar-mini > * { min-width: 260px; }
+.sidebar-header {
+  padding: 16px 14px 12px;
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* ── Sidebar toggle ── */
+.sidebar-toggle {
+  width: 26px; height: 26px;
+  background: transparent; border: none; border-radius: var(--radius-sm);
+  cursor: pointer; color: var(--text-muted); font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: background 0.1s, color 0.1s;
+}
+.sidebar-toggle:hover { background: var(--bg-hover); color: var(--text-primary); }
+.logo {
+  width: 30px; height: 30px;
+  background: linear-gradient(135deg, var(--accent), var(--mauve));
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; color: white; flex-shrink: 0;
+}
+.app-name { font-size: var(--font-size-lg); font-weight: 700; }
+.sidebar-search { padding: 10px 10px 6px; }
+.search-wrap { position: relative; }
+.search-wrap .search-icon {
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+  color: var(--text-muted); font-size: 13px; pointer-events: none;
+}
+.search-wrap .input { padding-left: 30px; }
+.sidebar-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+.sidebar-footer {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex; align-items: center; justify-content: space-between;
+}
+
+/* ── Main area ── */
+.main-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+/* ── Unified toolbar (tabs + conn info + SFTP actions in one row) ── */
+.unified-toolbar {
+  display: flex; align-items: center;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  height: 38px; flex-shrink: 0;
+  padding: 0 6px 0 4px; gap: 0;
+}
+.toolbar-vdiv { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; margin: 0 5px; }
+.tabs-scroll {
+  display: flex; align-items: center;
+  overflow-x: auto; overflow-y: hidden;
+  gap: 1px; flex-shrink: 1; min-width: 0;
+}
+.tabs-scroll::-webkit-scrollbar { height: 0; }
+.conn-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 10px 0 9px; height: 28px;
+  border-radius: var(--radius-sm); cursor: pointer;
+  font-size: var(--font-size-sm); color: var(--text-secondary);
+  white-space: nowrap; margin-top: 2px;
+  border: 1px solid transparent; flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+.conn-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+.conn-tab.active { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--border-subtle); }
+.conn-tab .tab-close {
+  width: 14px; height: 14px; border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: var(--text-muted);
+  background: transparent; border: none; cursor: pointer; opacity: 0;
+}
+.conn-tab:hover .tab-close, .conn-tab.active .tab-close { opacity: 1; }
+.conn-tab .tab-close:hover { color: var(--red); }
+.tab-add {
+  padding: 0 7px; height: 26px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; cursor: pointer;
+  color: var(--text-muted); font-size: 16px;
+  background: transparent; border: none; margin-top: 2px; flex-shrink: 0;
+}
+.tab-add:hover { background: var(--bg-hover); color: var(--text-primary); }
+.sftp-conn-info { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.sftp-view-toggle {
+  display: flex; gap: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px; flex-shrink: 0;
+}
+.view-btn {
+  padding: 3px 9px; border-radius: 3px; border: none; cursor: pointer;
+  font-size: var(--font-size-sm); background: transparent;
+  color: var(--text-secondary); transition: background 0.1s, color 0.1s;
+}
+.view-btn.active { background: var(--bg-elevated); color: var(--text-primary); }
+
+/* ── SFTP body: two-pane + middle arrow strip ── */
+.sftp-body {
+  flex: 1; display: flex; overflow: hidden; min-height: 0;
+}
+.sftp-pane {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
+}
+.sftp-pane-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.pane-label {
+  font-size: var(--font-size-xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--text-muted); flex-shrink: 0;
+}
+.breadcrumb {
+  display: flex; align-items: center; gap: 2px;
+  flex: 1; overflow: hidden;
+  font-size: var(--font-size-sm);
+}
+.breadcrumb-seg {
+  cursor: pointer; color: var(--accent); white-space: nowrap;
+  padding: 1px 4px; border-radius: 3px;
+}
+.breadcrumb-seg:hover { background: var(--accent-dim); }
+.breadcrumb-sep { color: var(--text-muted); font-size: 12px; }
+.pane-toolbar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 4px 8px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.pane-toolbar-sep { width: 1px; height: 16px; background: var(--border); margin: 0 3px; }
+
+/* ── File list ── */
+.file-list {
+  flex: 1; overflow-y: auto;
+  font-size: var(--font-size-sm);
+}
+.file-list-header {
+  display: grid;
+  grid-template-columns: 20px 1fr 90px 130px 80px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  font-size: var(--font-size-xs);
+  font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.4px;
+  position: sticky; top: 0; z-index: 2;
+  cursor: default;
+}
+.file-list-header span { user-select: none; display: flex; align-items: center; gap: 3px; }
+.file-list-header span:hover { color: var(--text-primary); }
+.file-row {
+  display: grid;
+  grid-template-columns: 20px 1fr 90px 130px 80px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background 0.08s;
+  align-items: center;
+}
+.file-row:hover { background: var(--bg-hover); }
+.file-row.selected { background: var(--accent-dim); }
+.file-row.selected:hover { background: rgba(124,140,248,0.22); }
+.file-row:last-child { border-bottom: none; }
+.file-icon { font-size: 14px; line-height: 1; }
+.file-name {
+  font-size: var(--font-size-sm);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 6px;
+}
+.file-name .is-dir { color: var(--blue); font-weight: 500; }
+.file-size { color: var(--text-secondary); text-align: right; font-family: var(--font-mono); font-size: 12px; }
+.file-date { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; }
+.file-perms { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; }
+.file-row input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+
+/* ── Middle strip (transfer arrows) ── */
+.sftp-mid {
+  width: 52px; flex-shrink: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+}
+.transfer-btn {
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  cursor: pointer; display: flex;
+  align-items: center; justify-content: center;
+  font-size: 16px; transition: background 0.15s, border-color 0.15s;
+  color: var(--text-primary);
+}
+.transfer-btn:hover { background: var(--accent-dim); border-color: var(--accent); }
+.transfer-btn.upload { transform: scaleX(-1); }
+.transfer-btn-label { font-size: 9px; color: var(--text-muted); text-align: center; }
+
+/* ── Transfer queue panel ── */
+.transfer-queue {
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+}
+.queue-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 14px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.queue-title { font-size: var(--font-size-sm); font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.queue-stats { font-size: var(--font-size-xs); color: var(--text-muted); }
+.queue-body { overflow-y: auto; }
+.queue-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+}
+.queue-item:last-child { border-bottom: none; }
+.queue-file-icon { font-size: 16px; flex-shrink: 0; }
+.queue-file-info { flex: 1; min-width: 0; }
+.queue-file-name {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-weight: 500; margin-bottom: 4px;
+}
+.queue-progress-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.progress-bar {
+  flex: 1; height: 4px; background: var(--bg-elevated);
+  border-radius: 2px; overflow: hidden;
+}
+.progress-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.progress-fill.uploading { background: var(--accent); }
+.progress-fill.downloading { background: var(--green); }
+.progress-fill.done { background: var(--text-muted); }
+.progress-fill.error { background: var(--red); }
+.queue-pct { font-size: 11px; color: var(--text-muted); white-space: nowrap; font-family: var(--font-mono); }
+.queue-speed { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.queue-direction {
+  font-size: 11px; font-weight: 600; flex-shrink: 0; padding: 1px 6px;
+  border-radius: 10px;
+}
+.queue-direction.up { background: rgba(124,140,248,0.15); color: var(--accent); }
+.queue-direction.down { background: var(--green-dim); color: var(--green); }
+.queue-direction.done { background: var(--bg-elevated); color: var(--text-muted); }
+.queue-direction.error { background: var(--red-dim); color: var(--red); }
+.queue-cancel {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 13px; padding: 2px 4px;
+  border-radius: 3px; flex-shrink: 0;
+}
+.queue-cancel:hover { color: var(--red); background: var(--red-dim); }
+
+/* ── Drop overlay ── */
+.drop-overlay {
+  position: absolute; inset: 0;
+  background: rgba(124,140,248,0.12);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-md);
+  display: none; align-items: center; justify-content: center;
+  z-index: 50; pointer-events: none;
+}
+.drop-overlay.visible { display: flex; }
+.drop-msg { font-size: 18px; font-weight: 600; color: var(--accent); text-align: center; }
+.sftp-pane { position: relative; }
+
+/* ── File row drag-and-drop ── */
+.file-row[draggable="true"] { cursor: grab; user-select: none; }
+.file-row[draggable="true"]:active { cursor: grabbing; }
+.file-row.dragging { opacity: 0.4; background: var(--bg-hover); }
+/* Row-level drop indicator: blue top border when dragging over */
+.file-row.drag-over-row { border-top: 2px solid var(--accent) !important; background: var(--accent-dim); }
+/* Pane highlight when something is dragged over (subtle) */
+.sftp-pane.pane-drag-active .file-list { background: rgba(124,140,248,0.04); }
+
+/* ── Toast ── */
+#sftp-toast {
+  position: fixed; bottom: 54px; left: 50%; transform: translateX(-50%);
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  color: var(--text-primary); padding: 5px 16px; border-radius: 20px;
+  font-size: 13px; z-index: 1000; opacity: 0; transition: opacity 0.18s;
+  pointer-events: none; box-shadow: var(--shadow-md); white-space: nowrap;
+}
+#sftp-toast.show { opacity: 1; }
+
+/* ── Context menu ── */
+.ctx-menu {
+  position: fixed;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+  min-width: 180px; overflow: hidden; z-index: 200; display: none;
+}
+.ctx-menu.visible { display: block; }
+.ctx-item {
+  padding: 7px 14px; font-size: var(--font-size-md);
+  cursor: pointer; display: flex; align-items: center; gap: 8px;
+  color: var(--text-primary); transition: background 0.1s;
+}
+.ctx-item:hover { background: var(--bg-hover); }
+.ctx-item.danger { color: var(--red); }
+.ctx-item.danger:hover { background: var(--red-dim); }
+.ctx-item.disabled { opacity: 0.4; cursor: default; pointer-events: none; }
+.ctx-divider { height: 1px; background: var(--border-subtle); margin: 4px 0; }
+.ctx-item .shortcut { margin-left: auto; color: var(--text-muted); font-size: 11px; }
+
+/* ── Upload dialog ── */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(2px); }
+.modal { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px 12px; border-bottom: 1px solid var(--border-subtle); }
+.modal-title { font-size: var(--font-size-lg); font-weight: 600; }
+.modal-body { padding: 20px; }
+.modal-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border-subtle); background: var(--bg-elevated); }
+
+/* drop zone inside upload dialog */
+.upload-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-md);
+  padding: 32px;
+  text-align: center; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+.upload-dropzone:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--text-primary); }
+.upload-dropzone-icon { font-size: 36px; margin-bottom: 8px; }
+.upload-dropzone-title { font-size: var(--font-size-base); font-weight: 600; margin-bottom: 4px; }
+.upload-dropzone-sub { font-size: var(--font-size-sm); }
+
+.file-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 3px 8px;
+  font-size: var(--font-size-sm); margin: 3px;
+}
+.file-chip-remove {
+  cursor: pointer; color: var(--text-muted); font-size: 11px;
+  background: none; border: none;
+}
+.file-chip-remove:hover { color: var(--red); }
+</style>
+</head>
+<body>
+
+<div class="app-layout">
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar-mini">
+    <div class="sidebar-header">
+      <div class="logo">⌨</div>
+      <div><div class="app-name">iShell</div></div>
+    </div>
+    <div class="sidebar-search">
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input class="input" placeholder="Search sessions…" style="font-size:13px; padding:6px 8px 6px 30px;" />
+      </div>
+    </div>
+    <div class="sidebar-list">
+      <div class="section-header"><span>Production</span></div>
+      <div class="sidebar-item active">
+        <div class="status-dot connected"></div>
+        <div class="item-info">
+          <div class="item-name">web-prod-01</div>
+          <div class="item-sub">deploy@192.168.1.10:22</div>
+        </div>
+      </div>
+      <div class="sidebar-item">
+        <div class="status-dot disconnected"></div>
+        <div class="item-info">
+          <div class="item-name">db-prod-01</div>
+          <div class="item-sub">admin@10.0.0.5:22</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="section-header"><span>Staging</span></div>
+      <div class="sidebar-item">
+        <div class="status-dot connecting"></div>
+        <div class="item-info">
+          <div class="item-name">web-staging-01</div>
+          <div class="item-sub">deploy@staging.example.com</div>
+        </div>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <button class="btn btn-primary btn-sm">+ New Session</button>
+      <button class="btn btn-ghost btn-icon" style="font-size:15px;">⚙️</button>
+    </div>
+  </aside>
+
+  <!-- ── Main area ── -->
+  <div class="main-area">
+
+    <!-- Unified toolbar: sidebar toggle | tabs | conn info | sftp actions -->
+    <div class="unified-toolbar">
+      <button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">☰</button>
+      <div class="toolbar-vdiv"></div>
+
+      <!-- Tabs (scrollable) -->
+      <div class="tabs-scroll">
+        <div class="conn-tab" onclick="window.open('terminal.html','_self')">
+          <div class="status-dot connected" style="width:6px;height:6px;"></div>
+          <span>⌨ Terminal</span>
+          <button class="tab-close">✕</button>
+        </div>
+        <div class="conn-tab active">
+          <div class="status-dot connected" style="width:6px;height:6px;"></div>
+          <span>📁 SFTP — web-prod-01</span>
+          <button class="tab-close">✕</button>
+        </div>
+        <button class="tab-add">+</button>
+      </div>
+
+      <div class="toolbar-vdiv"></div>
+
+      <!-- Connection info -->
+      <div class="sftp-conn-info">
+        <div class="status-dot connected"></div>
+        <span style="font-size:13px; font-weight:500; font-family:var(--font-mono);">deploy@192.168.1.10</span>
+        <span class="badge badge-blue">SFTP</span>
+      </div>
+
+      <!-- Spacer -->
+      <div style="flex:1;"></div>
+
+      <!-- SFTP actions -->
+      <div style="display:flex; gap:4px; align-items:center;">
+        <div class="sftp-view-toggle">
+          <button class="view-btn active" onclick="setView('split',this)">⊟ Split</button>
+          <button class="view-btn" onclick="setView('local',this)">💻 Local</button>
+          <button class="view-btn" onclick="setView('remote',this)">🌐 Remote</button>
+        </div>
+        <div class="toolbar-vdiv"></div>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('upload-modal').style.display='flex'">⬆ Upload</button>
+        <button class="btn btn-ghost btn-sm" onclick="simulateDownload()">⬇ Download</button>
+        <div class="toolbar-vdiv"></div>
+        <button class="btn btn-secondary btn-sm" onclick="window.open('terminal.html','_self')">← Terminal</button>
+      </div>
+    </div>
+
+    <!-- SFTP body -->
+    <div class="sftp-body" id="sftp-body">
+
+      <!-- ── LOCAL PANE ── -->
+      <div class="sftp-pane" id="pane-local" ondragover="onDragOver(event,'local')" ondragleave="onDragLeave('local')" ondrop="onDrop(event,'local')">
+
+        <div class="sftp-pane-header">
+          <span class="pane-label">💻 Local</span>
+          <div class="breadcrumb">
+            <span class="breadcrumb-seg">~</span>
+            <span class="breadcrumb-sep">/</span>
+            <span class="breadcrumb-seg">Users</span>
+            <span class="breadcrumb-sep">/</span>
+            <span class="breadcrumb-seg">terry</span>
+            <span class="breadcrumb-sep">/</span>
+            <span class="breadcrumb-seg">Downloads</span>
+          </div>
+        </div>
+
+        <div class="pane-toolbar">
+          <button class="btn btn-ghost btn-icon" title="Parent directory" style="font-size:13px;">↑</button>
+          <button class="btn btn-ghost btn-icon" title="Back" style="font-size:13px;">←</button>
+          <button class="btn btn-ghost btn-icon" title="Refresh" style="font-size:13px;">↺</button>
+          <button class="btn btn-ghost btn-icon" title="Home" style="font-size:13px;">🏠</button>
+          <div class="pane-toolbar-sep"></div>
+          <button class="btn btn-ghost btn-icon" title="New folder" style="font-size:13px;">📁+</button>
+          <button class="btn btn-ghost btn-sm" style="font-size:12px;" onclick="document.getElementById('upload-modal').style.display='flex'">⬆ Upload</button>
+          <div class="pane-toolbar-sep"></div>
+          <div class="search-wrap" style="flex:1; max-width:160px;">
+            <span class="search-icon" style="font-size:11px;">🔍</span>
+            <input class="input" placeholder="Filter…" style="padding:4px 6px 4px 24px; font-size:12px; height:26px;" />
+          </div>
+        </div>
+
+        <div class="file-list" oncontextmenu="showCtx(event,'local')">
+          <div class="file-list-header">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span>Name ↑</span>
+            <span style="text-align:right;">Size</span>
+            <span>Modified</span>
+            <span>Type</span>
+          </div>
+
+          <!-- Up dir -->
+          <div class="file-row" ondblclick="void(0)">
+            <span></span>
+            <span class="file-name"><span class="file-icon">📂</span><span class="is-dir">..</span></span>
+            <span class="file-size">—</span>
+            <span class="file-date"></span>
+            <span class="file-perms"></span>
+          </div>
+
+          <div class="file-row selected" oncontextmenu="showCtx(event,'local')">
+            <span><input type="checkbox" checked style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📄</span>deploy-v1.2.3.tar.gz</span>
+            <span class="file-size">48.2 MB</span>
+            <span class="file-date">2025-05-30 09:14</span>
+            <span class="file-perms">-rw-r--r--</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'local')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📄</span>config.yaml</span>
+            <span class="file-size">3.1 KB</span>
+            <span class="file-date">2025-05-29 22:01</span>
+            <span class="file-perms">-rw-r--r--</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'local')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📁</span><span class="is-dir">scripts</span></span>
+            <span class="file-size">—</span>
+            <span class="file-date">2025-05-28 14:00</span>
+            <span class="file-perms">drwxr-xr-x</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'local')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📄</span>backup-2025-05-29.sql.gz</span>
+            <span class="file-size">124 MB</span>
+            <span class="file-date">2025-05-29 03:00</span>
+            <span class="file-perms">-rw-r--r--</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'local')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">🖼</span>screenshot.png</span>
+            <span class="file-size">1.8 MB</span>
+            <span class="file-date">2025-05-30 08:45</span>
+            <span class="file-perms">-rw-r--r--</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'local')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📄</span>notes.txt</span>
+            <span class="file-size">412 B</span>
+            <span class="file-date">2025-05-27 18:22</span>
+            <span class="file-perms">-rw-r--r--</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'local')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📁</span><span class="is-dir">logs</span></span>
+            <span class="file-size">—</span>
+            <span class="file-date">2025-05-30 07:11</span>
+            <span class="file-perms">drwxr-xr-x</span>
+          </div>
+        </div>
+
+        <!-- Drag-drop overlay -->
+        <div class="drop-overlay" id="drop-local">
+          <div class="drop-msg">⬆ Drop files here to upload</div>
+        </div>
+      </div>
+
+      <!-- ── Middle transfer strip ── -->
+      <div class="sftp-mid">
+        <div>
+          <button class="transfer-btn" title="Upload selected to remote" onclick="simulateUpload()">→</button>
+          <div class="transfer-btn-label" style="margin-top:3px;">Upload</div>
+        </div>
+        <div>
+          <button class="transfer-btn" title="Download selected to local" onclick="simulateDownload()">←</button>
+          <div class="transfer-btn-label" style="margin-top:3px;">Download</div>
+        </div>
+      </div>
+
+      <!-- ── REMOTE PANE ── -->
+      <div class="sftp-pane" id="pane-remote" ondragover="onDragOver(event,'remote')" ondragleave="onDragLeave('remote')" ondrop="onDrop(event,'remote')">
+
+        <div class="sftp-pane-header">
+          <span class="pane-label">🌐 Remote</span>
+          <div class="breadcrumb">
+            <span class="breadcrumb-seg">/</span>
+            <span class="breadcrumb-sep">/</span>
+            <span class="breadcrumb-seg">var</span>
+            <span class="breadcrumb-sep">/</span>
+            <span class="breadcrumb-seg">www</span>
+            <span class="breadcrumb-sep">/</span>
+            <span class="breadcrumb-seg">app</span>
+          </div>
+        </div>
+
+        <div class="pane-toolbar">
+          <button class="btn btn-ghost btn-icon" title="Parent directory" style="font-size:13px;">↑</button>
+          <button class="btn btn-ghost btn-icon" title="Back" style="font-size:13px;">←</button>
+          <button class="btn btn-ghost btn-icon" title="Refresh" style="font-size:13px;">↺</button>
+          <button class="btn btn-ghost btn-icon" title="Home" style="font-size:13px;">🏠</button>
+          <div class="pane-toolbar-sep"></div>
+          <button class="btn btn-ghost btn-icon" title="New folder" style="font-size:13px;">📁+</button>
+          <button class="btn btn-ghost btn-sm" style="font-size:12px;" onclick="simulateDownload()">⬇ Download</button>
+          <div class="pane-toolbar-sep"></div>
+          <div class="search-wrap" style="flex:1; max-width:160px;">
+            <span class="search-icon" style="font-size:11px;">🔍</span>
+            <input class="input" placeholder="Filter…" style="padding:4px 6px 4px 24px; font-size:12px; height:26px;" />
+          </div>
+        </div>
+
+        <div class="file-list" oncontextmenu="showCtx(event,'remote')">
+          <div class="file-list-header">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span>Name ↑</span>
+            <span style="text-align:right;">Size</span>
+            <span>Modified</span>
+            <span>Perms</span>
+          </div>
+
+          <div class="file-row">
+            <span></span>
+            <span class="file-name"><span class="file-icon">📂</span><span class="is-dir">..</span></span>
+            <span class="file-size">—</span>
+            <span class="file-date"></span>
+            <span class="file-perms"></span>
+          </div>
+
+          <div class="file-row" oncontextmenu="showCtx(event,'remote')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📁</span><span class="is-dir">.git</span></span>
+            <span class="file-size">—</span>
+            <span class="file-date">2025-05-30 08:58</span>
+            <span class="file-perms">drwxr-xr-x</span>
+          </div>
+          <div class="file-row selected" oncontextmenu="showCtx(event,'remote')">
+            <span><input type="checkbox" checked style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📁</span><span class="is-dir">bin</span></span>
+            <span class="file-size">—</span>
+            <span class="file-date">2025-05-30 09:01</span>
+            <span class="file-perms">drwxr-xr-x</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'remote')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📁</span><span class="is-dir">src</span></span>
+            <span class="file-size">—</span>
+            <span class="file-date">2025-05-29 22:14</span>
+            <span class="file-perms">drwxr-xr-x</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'remote')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📄</span>.env</span>
+            <span class="file-size">127 B</span>
+            <span class="file-date">2025-05-28 14:32</span>
+            <span class="file-perms">-rw-r--r--</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'remote')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📄</span>Makefile</span>
+            <span class="file-size">1.8 KB</span>
+            <span class="file-date">2025-05-29 11:02</span>
+            <span class="file-perms">-rw-r--r--</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'remote')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📄</span>go.mod</span>
+            <span class="file-size">2.0 KB</span>
+            <span class="file-date">2025-05-29 22:14</span>
+            <span class="file-perms">-rw-r--r--</span>
+          </div>
+          <div class="file-row" oncontextmenu="showCtx(event,'remote')">
+            <span><input type="checkbox" style="accent-color:var(--accent);" /></span>
+            <span class="file-name"><span class="file-icon">📄</span>go.sum</span>
+            <span class="file-size">18.4 KB</span>
+            <span class="file-date">2025-05-29 22:14</span>
+            <span class="file-perms">-rw-r--r--</span>
+          </div>
+        </div>
+
+        <!-- Drag-drop overlay -->
+        <div class="drop-overlay" id="drop-remote">
+          <div class="drop-msg">⬇ Drop remote files here to download</div>
+        </div>
+      </div>
+    </div><!-- /sftp-body -->
+
+    <!-- ── Transfer queue ── -->
+    <div class="transfer-queue">
+      <div class="queue-header" onclick="toggleQueue()">
+        <div class="queue-title">
+          📋 Transfers
+          <span class="badge badge-blue" id="queue-badge">2 active</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span class="queue-stats">⬆ 1.2 MB/s &nbsp;·&nbsp; ⬇ 5.8 MB/s &nbsp;·&nbsp; ETA 00:23</span>
+          <span id="queue-arrow" style="color:var(--text-muted); font-size:12px;">▼</span>
+        </div>
+      </div>
+      <div class="queue-body" id="queue-body" style="max-height:160px; overflow-y:auto;">
+
+        <!-- Active upload -->
+        <div class="queue-item">
+          <span class="queue-file-icon">📄</span>
+          <div class="queue-file-info">
+            <div class="queue-file-name">deploy-v1.2.3.tar.gz &nbsp;<span style="font-size:11px; color:var(--text-muted);">→ /var/www/app/</span></div>
+            <div class="queue-progress-row">
+              <div class="progress-bar"><div class="progress-fill uploading" style="width:63%;"></div></div>
+              <span class="queue-pct">63%</span>
+              <span class="queue-speed">1.2 MB/s</span>
+            </div>
+          </div>
+          <span class="queue-direction up">⬆ Upload</span>
+          <button class="queue-cancel" title="Cancel">✕</button>
+        </div>
+
+        <!-- Active download -->
+        <div class="queue-item">
+          <span class="queue-file-icon">📁</span>
+          <div class="queue-file-info">
+            <div class="queue-file-name">bin/ &nbsp;<span style="font-size:11px; color:var(--text-muted);">→ ~/Downloads/</span></div>
+            <div class="queue-progress-row">
+              <div class="progress-bar"><div class="progress-fill downloading" style="width:28%;"></div></div>
+              <span class="queue-pct">28%</span>
+              <span class="queue-speed">5.8 MB/s</span>
+            </div>
+          </div>
+          <span class="queue-direction down">⬇ Download</span>
+          <button class="queue-cancel" title="Cancel">✕</button>
+        </div>
+
+        <!-- Completed -->
+        <div class="queue-item" style="opacity:0.7;">
+          <span class="queue-file-icon">📄</span>
+          <div class="queue-file-info">
+            <div class="queue-file-name">config.yaml &nbsp;<span style="font-size:11px; color:var(--text-muted);">→ /var/www/app/</span></div>
+            <div class="queue-progress-row">
+              <div class="progress-bar"><div class="progress-fill done" style="width:100%;"></div></div>
+              <span class="queue-pct" style="color:var(--text-muted);">Done</span>
+              <span class="queue-speed">3.1 KB</span>
+            </div>
+          </div>
+          <span class="queue-direction done">✓ Done</span>
+          <button class="queue-cancel" style="visibility:hidden;">✕</button>
+        </div>
+
+        <!-- Error -->
+        <div class="queue-item">
+          <span class="queue-file-icon">📄</span>
+          <div class="queue-file-info">
+            <div class="queue-file-name" style="color:var(--red);">backup-2025-05-29.sql.gz &nbsp;<span style="font-size:11px;">Permission denied</span></div>
+            <div class="queue-progress-row">
+              <div class="progress-bar"><div class="progress-fill error" style="width:100%;"></div></div>
+              <span class="queue-pct" style="color:var(--red);">Error</span>
+            </div>
+          </div>
+          <span class="queue-direction error">✕ Failed</span>
+          <button class="queue-cancel" title="Retry" style="color:var(--accent);">↺</button>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- /main-area -->
+</div><!-- /app-layout -->
+
+<!-- ── Context menu (local) ── -->
+<div class="ctx-menu" id="ctx-local">
+  <div class="ctx-item" onclick="simulateUpload()">⬆ Upload to Remote <span class="shortcut">⌘U</span></div>
+  <div class="ctx-item">📋 Copy</div>
+  <div class="ctx-item">✂ Move</div>
+  <div class="ctx-divider"></div>
+  <div class="ctx-item">📁 New Folder</div>
+  <div class="ctx-item">✏ Rename</div>
+  <div class="ctx-item">📋 Copy Path</div>
+  <div class="ctx-divider"></div>
+  <div class="ctx-item danger">🗑 Delete</div>
+</div>
+
+<!-- ── Context menu (remote) ── -->
+<div class="ctx-menu" id="ctx-remote">
+  <div class="ctx-item" onclick="simulateDownload()">⬇ Download to Local <span class="shortcut">⌘D</span></div>
+  <div class="ctx-item">📋 Copy</div>
+  <div class="ctx-item">✂ Move</div>
+  <div class="ctx-divider"></div>
+  <div class="ctx-item">📁 New Folder</div>
+  <div class="ctx-item">✏ Rename</div>
+  <div class="ctx-item">🔒 Change Permissions…</div>
+  <div class="ctx-item">📋 Copy Path</div>
+  <div class="ctx-divider"></div>
+  <div class="ctx-item danger">🗑 Delete</div>
+</div>
+
+<!-- ── Upload dialog ── -->
+<div class="overlay" id="upload-modal" style="display:none;">
+  <div class="modal" style="width:480px;">
+    <div class="modal-header">
+      <span class="modal-title">⬆ Upload Files</span>
+      <button class="btn btn-ghost btn-icon" onclick="document.getElementById('upload-modal').style.display='none'">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="upload-dropzone" onclick="addFakeFile()">
+        <div class="upload-dropzone-icon">📂</div>
+        <div class="upload-dropzone-title">Drag files here or click to browse</div>
+        <div class="upload-dropzone-sub">Supports multiple files and folders</div>
+      </div>
+
+      <div id="file-chips" style="margin-bottom:12px; min-height:28px;">
+        <div class="file-chip">📄 deploy-v1.2.3.tar.gz <span style="color:var(--text-muted); font-size:11px; margin-left:4px;">48 MB</span><button class="file-chip-remove">✕</button></div>
+        <div class="file-chip">📄 config.yaml <span style="color:var(--text-muted); font-size:11px; margin-left:4px;">3.1 KB</span><button class="file-chip-remove">✕</button></div>
+      </div>
+
+      <div class="form-field">
+        <label class="form-label">Destination path (remote)</label>
+        <input class="input" value="/var/www/app/" style="font-family:var(--font-mono); font-size:13px;" />
+      </div>
+
+      <div class="form-field">
+        <label class="form-label" style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" style="accent-color:var(--accent);" />
+          Overwrite existing files without confirmation
+        </label>
+      </div>
+      <div class="form-field">
+        <label class="form-label" style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" checked style="accent-color:var(--accent);" />
+          Preserve file timestamps
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('upload-modal').style.display='none'">Cancel</button>
+      <button class="btn btn-primary" onclick="startUpload()">⬆ Upload (2 files)</button>
+    </div>
+  </div>
+</div>
+
+<!-- Permissions dialog -->
+<div class="overlay" id="perms-modal" style="display:none;">
+  <div class="modal" style="width:360px;">
+    <div class="modal-header">
+      <span class="modal-title">🔒 Change Permissions</span>
+      <button class="btn btn-ghost btn-icon" onclick="document.getElementById('perms-modal').style.display='none'">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-family:var(--font-mono); font-size:13px; color:var(--text-secondary); margin-bottom:14px;">go.mod</div>
+      <div style="display:grid; grid-template-columns:auto 1fr 1fr 1fr; gap:6px; align-items:center; font-size:var(--font-size-sm);">
+        <span></span>
+        <span style="text-align:center; font-weight:600; color:var(--text-muted);">Read</span>
+        <span style="text-align:center; font-weight:600; color:var(--text-muted);">Write</span>
+        <span style="text-align:center; font-weight:600; color:var(--text-muted);">Execute</span>
+
+        <span style="color:var(--text-secondary);">Owner</span>
+        <span style="text-align:center;"><input type="checkbox" checked style="accent-color:var(--accent);"></span>
+        <span style="text-align:center;"><input type="checkbox" checked style="accent-color:var(--accent);"></span>
+        <span style="text-align:center;"><input type="checkbox" style="accent-color:var(--accent);"></span>
+
+        <span style="color:var(--text-secondary);">Group</span>
+        <span style="text-align:center;"><input type="checkbox" checked style="accent-color:var(--accent);"></span>
+        <span style="text-align:center;"><input type="checkbox" style="accent-color:var(--accent);"></span>
+        <span style="text-align:center;"><input type="checkbox" style="accent-color:var(--accent);"></span>
+
+        <span style="color:var(--text-secondary);">Others</span>
+        <span style="text-align:center;"><input type="checkbox" checked style="accent-color:var(--accent);"></span>
+        <span style="text-align:center;"><input type="checkbox" style="accent-color:var(--accent);"></span>
+        <span style="text-align:center;"><input type="checkbox" style="accent-color:var(--accent);"></span>
+      </div>
+      <div style="margin-top:14px; display:flex; align-items:center; gap:10px;">
+        <span style="font-size:var(--font-size-sm); color:var(--text-muted);">Octal:</span>
+        <input class="input" value="644" style="width:70px; font-family:var(--font-mono);" />
+      </div>
+      <div style="margin-top:10px;">
+        <label class="form-label" style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" style="accent-color:var(--accent);" />
+          Apply recursively to subfolders
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('perms-modal').style.display='none'">Cancel</button>
+      <button class="btn btn-primary">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast notification -->
+<div id="sftp-toast"></div>
+
+<script>
+// Sidebar toggle
+function toggleSidebar() {
+  document.querySelector('.sidebar-mini').classList.toggle('collapsed');
+}
+
+// Context menu
+let activeCtx = null;
+function showCtx(e, pane) {
+  e.preventDefault(); e.stopPropagation();
+  ['ctx-local','ctx-remote'].forEach(id => document.getElementById(id).classList.remove('visible'));
+  const id = pane === 'local' ? 'ctx-local' : 'ctx-remote';
+  const m = document.getElementById(id);
+  m.style.left = e.pageX + 'px';
+  m.style.top = e.pageY + 'px';
+  m.classList.add('visible');
+  activeCtx = m;
+}
+document.addEventListener('click', () => {
+  ['ctx-local','ctx-remote'].forEach(id => document.getElementById(id).classList.remove('visible'));
+});
+
+// Queue toggle
+let queueOpen = true;
+function toggleQueue() {
+  queueOpen = !queueOpen;
+  document.getElementById('queue-body').style.display = queueOpen ? '' : 'none';
+  document.getElementById('queue-arrow').textContent = queueOpen ? '▼' : '▶';
+}
+
+// View toggle
+function setView(mode, btn) {
+  document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const local = document.getElementById('pane-local');
+  const mid = document.querySelector('.sftp-mid');
+  const remote = document.getElementById('pane-remote');
+  if (mode === 'split') { local.style.display=''; mid.style.display=''; remote.style.display=''; }
+  else if (mode === 'local') { local.style.display=''; mid.style.display='none'; remote.style.display='none'; }
+  else { local.style.display='none'; mid.style.display='none'; remote.style.display=''; }
+}
+
+// ── Toast ──
+function showToast(msg) {
+  const t = document.getElementById('sftp-toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.classList.remove('show'), 1600);
+}
+
+// ── Drag state ──
+let dragState = null; // { name, icon, srcPane, row }
+
+// ── Pane-level drag events (handles both internal + OS file drops) ──
+function onDragOver(e, pane) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  // Only show full overlay for OS-level drops (no internal dragState yet active on the pane)
+  if (!dragState || dragState.srcPane !== pane) {
+    document.getElementById('drop-' + pane).classList.add('visible');
+    document.getElementById('pane-' + pane).classList.add('pane-drag-active');
+  }
+}
+function onDragLeave(pane) {
+  document.getElementById('drop-' + pane).classList.remove('visible');
+  document.getElementById('pane-' + pane).classList.remove('pane-drag-active');
+}
+function onDrop(e, targetPane) {
+  e.preventDefault();
+  document.getElementById('drop-' + targetPane).classList.remove('visible');
+  document.getElementById('pane-' + targetPane).classList.remove('pane-drag-active');
+  document.querySelectorAll('.file-row.drag-over-row').forEach(r => r.classList.remove('drag-over-row'));
+
+  if (dragState) {
+    if (dragState.srcPane === targetPane) { dragState = null; return; }
+    const action = targetPane === 'remote' ? 'upload' : 'download';
+    // Transfer ALL selected files
+    dragState.files.forEach(f => addTransferToQueue(f.name, f.icon, action));
+  } else {
+    // OS-level file drop
+    const osFiles = Array.from(e.dataTransfer.files);
+    if (osFiles.length > 0) {
+      osFiles.forEach(f => addTransferToQueue(f.name, f.type.startsWith('image') ? '🖼' : '📄', targetPane === 'remote' ? 'upload' : 'download'));
+    } else {
+      targetPane === 'remote' ? simulateUpload() : simulateDownload();
+    }
+  }
+  dragState = null;
+}
+
+// ── Selection helpers ──
+let lastSelected = { local: null, remote: null }; // last clicked row per pane
+
+function rowName(row) {
+  const nameSpan = row.querySelector('.file-name');
+  const textEl = nameSpan?.querySelector('.is-dir') || nameSpan?.querySelector('span:last-of-type');
+  return textEl?.textContent.trim() || '';
+}
+function rowIcon(row) {
+  return row.querySelector('.file-icon')?.textContent || '📄';
+}
+function isSkipRow(row) {
+  const n = rowName(row);
+  return !n || n === '..';
+}
+function sel(row) {
+  row.classList.add('selected');
+  const cb = row.querySelector('input[type="checkbox"]');
+  if (cb) cb.checked = true;
+}
+function desel(row) {
+  row.classList.remove('selected');
+  const cb = row.querySelector('input[type="checkbox"]');
+  if (cb) cb.checked = false;
+}
+function getDataRows(pane) {
+  return Array.from(document.querySelectorAll(`#pane-${pane} .file-list .file-row`))
+    .filter(r => !isSkipRow(r));
+}
+function selectOnly(row, pane) {
+  getDataRows(pane).forEach(r => desel(r));
+  sel(row);
+  lastSelected[pane] = row;
+}
+function toggleSel(row, pane) {
+  row.classList.contains('selected') ? desel(row) : sel(row);
+  lastSelected[pane] = row;
+}
+function rangeSel(row, pane) {
+  const rows = getDataRows(pane);
+  const anchor = lastSelected[pane];
+  if (!anchor || !rows.includes(anchor)) { selectOnly(row, pane); return; }
+  const a = rows.indexOf(anchor), b = rows.indexOf(row);
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  rows.forEach((r, i) => i >= lo && i <= hi ? sel(r) : desel(r));
+}
+function updateHeaderCb(pane) {
+  const cb = document.querySelector(`#pane-${pane} .file-list-header input[type="checkbox"]`);
+  if (!cb) return;
+  const rows = getDataRows(pane);
+  const selCount = rows.filter(r => r.classList.contains('selected')).length;
+  cb.checked = selCount === rows.length && rows.length > 0;
+  cb.indeterminate = selCount > 0 && selCount < rows.length;
+}
+
+// ── Row-level drag events ──
+function onRowDragStart(e, pane, draggedRow) {
+  // If the dragged row is not already selected, select only it
+  if (!draggedRow.classList.contains('selected')) selectOnly(draggedRow, pane);
+
+  // Collect all selected rows in this pane as the drag payload
+  const files = getDataRows(pane)
+    .filter(r => r.classList.contains('selected'))
+    .map(r => ({ name: rowName(r), icon: rowIcon(r) }))
+    .filter(f => f.name);
+
+  dragState = { srcPane: pane, files };
+  document.querySelectorAll(`#pane-${pane} .file-row.selected`).forEach(r => r.classList.add('dragging'));
+  e.dataTransfer.effectAllowed = 'copy';
+  e.dataTransfer.setData('text/plain', files.map(f => f.name).join('\n'));
+
+  // Ghost image
+  const dest = pane === 'local' ? 'remote' : 'local';
+  const ghost = document.createElement('div');
+  ghost.style.cssText = 'position:fixed;top:-200px;background:var(--bg-elevated);border:1px solid var(--border);padding:5px 14px;border-radius:6px;font-size:13px;color:var(--text-primary);white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.4);pointer-events:none;display:flex;align-items:center;gap:8px;';
+  ghost.innerHTML = files.length === 1
+    ? `<span>${files[0].icon}</span><span>${files[0].name}</span><span style="color:var(--text-muted);">→ ${dest}</span>`
+    : `<span>📦</span><span>${files.length} files</span><span style="color:var(--text-muted);">→ ${dest}</span>`;
+  document.body.appendChild(ghost);
+  e.dataTransfer.setDragImage(ghost, 0, 24);
+  setTimeout(() => ghost.remove(), 0);
+}
+function onRowDragEnd(e) {
+  document.querySelectorAll('.file-row.dragging').forEach(r => r.classList.remove('dragging'));
+  document.querySelectorAll('.file-row.drag-over-row').forEach(r => r.classList.remove('drag-over-row'));
+  document.querySelectorAll('.drop-overlay').forEach(o => o.classList.remove('visible'));
+  document.querySelectorAll('.pane-drag-active').forEach(p => p.classList.remove('pane-drag-active'));
+  dragState = null;
+}
+function onRowDragOver(e, row) {
+  e.preventDefault(); e.stopPropagation();
+  document.querySelectorAll('.file-row.drag-over-row').forEach(r => r.classList.remove('drag-over-row'));
+  row.classList.add('drag-over-row');
+}
+
+// ── Add item to transfer queue ──
+let queueCount = 2;
+function addTransferToQueue(name, icon, action) {
+  queueCount++;
+  document.getElementById('queue-badge').textContent = queueCount + ' active';
+
+  const body = document.getElementById('queue-body');
+  const isUpload = action === 'upload';
+  const fillClass = isUpload ? 'uploading' : 'downloading';
+  const dirClass = isUpload ? 'up' : 'down';
+  const dirLabel = isUpload ? '⬆ Upload' : '⬇ Download';
+  const destLabel = isUpload ? '→ /var/www/app/' : '→ ~/Downloads/';
+
+  const item = document.createElement('div');
+  item.className = 'queue-item';
+  item.innerHTML = `
+    <span class="queue-file-icon">${icon}</span>
+    <div class="queue-file-info">
+      <div class="queue-file-name">${name} <span style="font-size:11px;color:var(--text-muted);">${destLabel}</span></div>
+      <div class="queue-progress-row">
+        <div class="progress-bar"><div class="progress-fill ${fillClass}" style="width:0%;"></div></div>
+        <span class="queue-pct">0%</span>
+        <span class="queue-speed">—</span>
+      </div>
+    </div>
+    <span class="queue-direction ${dirClass}">${dirLabel}</span>
+    <button class="queue-cancel" onclick="this.closest('.queue-item').remove()">✕</button>
+  `;
+  body.insertBefore(item, body.firstChild);
+  showToast((isUpload ? '⬆ Uploading ' : '⬇ Downloading ') + name);
+
+  // Animate progress
+  let pct = 0;
+  const fill = item.querySelector('.progress-fill');
+  const pctEl = item.querySelector('.queue-pct');
+  const speedEl = item.querySelector('.queue-speed');
+  const speed = (Math.random() * 8 + 1).toFixed(1) + ' MB/s';
+  speedEl.textContent = speed;
+  const iv = setInterval(() => {
+    pct += Math.random() * 6 + 2;
+    if (pct >= 100) { pct = 100; clearInterval(iv); markDone(item); }
+    fill.style.width = pct + '%';
+    pctEl.textContent = Math.round(pct) + '%';
+  }, 180);
+}
+function markDone(item) {
+  const fill = item.querySelector('.progress-fill');
+  fill.classList.remove('uploading', 'downloading');
+  fill.classList.add('done');
+  item.querySelector('.queue-pct').textContent = 'Done';
+  item.querySelector('.queue-speed').textContent = '';
+  item.querySelector('.queue-direction').className = 'queue-direction done';
+  item.querySelector('.queue-direction').textContent = '✓ Done';
+  item.style.opacity = '0.7';
+  queueCount = Math.max(0, queueCount - 1);
+  const badge = document.getElementById('queue-badge');
+  badge.textContent = queueCount > 0 ? queueCount + ' active' : 'Done';
+}
+
+// Simulate upload
+function simulateUpload() {
+  document.getElementById('upload-modal').style.display = 'none';
+  const badge = document.getElementById('queue-badge');
+  badge.textContent = '3 active';
+}
+
+// Simulate download
+function simulateDownload() {
+  const badge = document.getElementById('queue-badge');
+  badge.textContent = '3 active';
+}
+
+// File chip
+const fakeFiles = ['📄 nginx.conf (2.4 KB)', '📄 docker-compose.yml (1.1 KB)', '📁 assets/ (18 MB)'];
+let fi = 0;
+function addFakeFile() {
+  if (fi >= fakeFiles.length) return;
+  const chips = document.getElementById('file-chips');
+  const c = document.createElement('div');
+  c.className = 'file-chip';
+  c.innerHTML = fakeFiles[fi] + '<button class="file-chip-remove" onclick="this.parentElement.remove()">✕</button>';
+  chips.appendChild(c);
+  fi++;
+}
+
+// Start upload → close modal + animate
+function startUpload() {
+  document.getElementById('upload-modal').style.display = 'none';
+  simulateUpload();
+}
+
+// ── Init: selection + draggable rows ──
+function initRows() {
+  ['local', 'remote'].forEach(pane => {
+    // Header checkbox → select all / deselect all
+    const headerCb = document.querySelector(`#pane-${pane} .file-list-header input[type="checkbox"]`);
+    if (headerCb) {
+      headerCb.addEventListener('change', () => {
+        getDataRows(pane).forEach(r => headerCb.checked ? sel(r) : desel(r));
+      });
+    }
+
+    // Data rows
+    document.querySelectorAll(`#pane-${pane} .file-list .file-row`).forEach(row => {
+      if (isSkipRow(row)) return;
+      const cb = row.querySelector('input[type="checkbox"]');
+
+      // ── Single-click selection ──
+      row.addEventListener('click', e => {
+        // Clicking the checkbox itself → sync row highlight only
+        if (e.target === cb) {
+          cb.checked ? sel(row) : desel(row);
+          lastSelected[pane] = row;
+          updateHeaderCb(pane);
+          return;
+        }
+        if (e.shiftKey) {
+          rangeSel(row, pane);
+        } else {
+          toggleSel(row, pane);
+        }
+        updateHeaderCb(pane);
+      });
+
+      // Prevent checkbox click from bubbling and double-toggling
+      if (cb) cb.addEventListener('click', e => e.stopPropagation());
+
+      // ── Drag ──
+      row.setAttribute('draggable', 'true');
+      row.addEventListener('dragstart', e => onRowDragStart(e, pane, row));
+      row.addEventListener('dragend',   onRowDragEnd);
+      row.addEventListener('dragover',  e => { e.preventDefault(); onRowDragOver(e, row); });
+    });
+  });
+}
+document.addEventListener('DOMContentLoaded', initRows);
+
+// Progress animation
+let progress1 = 63, progress2 = 28;
+setInterval(() => {
+  const bars = document.querySelectorAll('.progress-fill.uploading, .progress-fill.downloading');
+  bars.forEach((b, i) => {
+    if (b.classList.contains('uploading')) {
+      progress1 = Math.min(100, progress1 + 0.4);
+      b.style.width = progress1 + '%';
+      b.closest('.queue-item').querySelector('.queue-pct').textContent = Math.round(progress1) + '%';
+    } else {
+      progress2 = Math.min(100, progress2 + 0.6);
+      b.style.width = progress2 + '%';
+      b.closest('.queue-item').querySelector('.queue-pct').textContent = Math.round(progress2) + '%';
+    }
+  });
+}, 200);
+</script>
+</body>
+</html>
