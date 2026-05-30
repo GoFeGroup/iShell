@@ -150,6 +150,12 @@ export function createTerminal(connID, settings) {
       return false;
     }
 
+    // Alt+1-9: tab switching (intercept before keyEventToInput sends escape sequence to SSH)
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= '1' && e.key <= '9') {
+      window.dispatchEvent(new CustomEvent('ishell:switchTab', { detail: parseInt(e.key) }));
+      return false;
+    }
+
     // Copy: Cmd+C (Mac) or Ctrl+Shift+C (Win/Linux)
     if (isMac ? (e.metaKey && e.key === 'c') : (e.ctrlKey && e.shiftKey && e.key === 'C')) {
       const sel = term.getSelection();

@@ -42,6 +42,7 @@ window.addEventListener('load', async () => {
   // Keyboard shortcuts
   document.addEventListener('keydown', handleKeydown);
   window.addEventListener('ishell:toggleFullscreen', toggleFullscreen);
+  window.addEventListener('ishell:switchTab', (e) => switchToTabByIndex(e.detail));
 
   // Host key events
   on('ssh:unknown_host', showHostKeyDialog);
