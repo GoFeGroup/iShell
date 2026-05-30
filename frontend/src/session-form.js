@@ -20,7 +20,7 @@ export function openSessionForm(existing, onSaved) {
   overlay.innerHTML = `
 <div class="modal" style="width:500px;display:flex;flex-direction:column;max-height:90vh;">
   <div class="modal-header">
-    <span class="modal-title">${isNew ? '+ New Session' : '✏️ Edit Session'}</span>
+    <span class="modal-title">${isNew ? '+ New Profile' : '✏️ Edit Profile'}</span>
     <button class="btn btn-ghost btn-icon" id="sf-close">✕</button>
   </div>
   <div class="modal-body" style="flex:1;overflow-y:auto;">

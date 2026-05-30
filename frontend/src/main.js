@@ -52,10 +52,6 @@ window.addEventListener('load', async () => {
 // ── Connect flow ──────────────────────────────────────────────────────────────
 
 async function onConnectRequest(sess) {
-  // Check if already connected
-  const existing = tabs.find(t => t.sessionID === sess.id);
-  if (existing) { switchToTab(existing); return; }
-
   showToast(`🔌 Connecting to ${sess.host}…`);
   setSessionStatus(sess.id, 'connecting');
 
@@ -109,8 +105,12 @@ async function afterConnect(connID, sess) {
 async function doDisconnect(connID) {
   try { await disconnect(connID); } catch {}
   const tab = tabs.find(t => t.connID === connID);
-  if (tab) { setSessionStatus(tab.sessionID, 'disconnected'); }
+  const sessionID = tab?.sessionID;
   tabs = tabs.filter(t => t.connID !== connID);
+  // Only mark disconnected when no remaining tabs for this profile
+  if (sessionID && !tabs.some(t => t.sessionID === sessionID)) {
+    setSessionStatus(sessionID, 'disconnected');
+  }
   off('terminal:closed:' + connID);
   destroyTerminal(connID);
   renderTabs();
