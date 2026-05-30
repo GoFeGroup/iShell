@@ -45,6 +45,7 @@ window.addEventListener('load', async () => {
   document.addEventListener('keydown', handleKeydown);
   window.addEventListener('ishell:toggleFullscreen', toggleFullscreen);
   window.addEventListener('ishell:switchTab', (e) => switchToTabByIndex(e.detail));
+  window.addEventListener('ishell:closeTab', () => activeTab && doDisconnect(activeTab.connID));
 
   // Host key events
   on('ssh:unknown_host', showHostKeyDialog);
@@ -269,6 +270,11 @@ function toggleFullscreen() {
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 
 function handleKeydown(e) {
+  if ((isMac ? e.metaKey : e.altKey) && e.key === 'w') {
+    e.preventDefault();
+    if (activeTab) doDisconnect(activeTab.connID);
+    return;
+  }
   const isTabSwitch = isMac
     ? (e.metaKey && !e.ctrlKey && !e.altKey && e.key >= '1' && e.key <= '9')
     : (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= '1' && e.key <= '9');

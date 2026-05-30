@@ -150,6 +150,12 @@ export function createTerminal(connID, settings) {
       return false;
     }
 
+    // Close current tab: Cmd+W (Mac) or Alt+W (Win/Linux)
+    if (isMac ? (e.metaKey && e.key === 'w') : (e.altKey && e.key === 'w')) {
+      window.dispatchEvent(new CustomEvent('ishell:closeTab'));
+      return false;
+    }
+
     // Tab switching: Cmd+1-9 (Mac) or Alt+1-9 (Win/Linux)
     const isTabSwitch = isMac
       ? (e.metaKey && !e.ctrlKey && !e.altKey && e.key >= '1' && e.key <= '9')
