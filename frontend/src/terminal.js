@@ -86,7 +86,7 @@ export function createTerminal(connID, settings) {
   const container = document.getElementById('terminal-container');
 
   const resolvedFont = settings?.font_family || "Menlo, Monaco, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace";
-  const resolvedSize = settings?.font_size || 13;
+  const resolvedSize = settings?.font_size || 16;
 
   // Reuse existing terminal unless font settings changed.
   if (instances[connID]) {
@@ -242,17 +242,17 @@ export function fitTerminal(connID) {
 
 function buildTheme(scheme) {
   return {
-    background:    '#0D0D13',
-    foreground:    '#CDD6F4',
+    background:    '#1E1E2E',
+    foreground:    '#FEFFFF',
     cursor:        '#F5E0DC',
     selectionBackground: 'rgba(124,140,248,0.3)',
-    black:         '#45475A', brightBlack:   '#585B70',
-    red:           '#F38BA8', brightRed:     '#F38BA8',
-    green:         '#A6E3A1', brightGreen:   '#A6E3A1',
-    yellow:        '#F9E2AF', brightYellow:  '#F9E2AF',
-    blue:          '#89B4FA', brightBlue:    '#89B4FA',
-    magenta:       '#CBA6F7', brightMagenta: '#CBA6F7',
-    cyan:          '#94E2D5', brightCyan:    '#94E2D5',
-    white:         '#BAC2DE', brightWhite:   '#A6ADC8',
+    black:         '#14191E', brightBlack:   '#676767',
+    red:           '#B43C29', brightRed:     '#DC7974',
+    green:         '#00C200', brightGreen:   '#57E690',
+    yellow:        '#C7C400', brightYellow:  '#ECE100',
+    blue:          '#2743C7', brightBlue:    '#A6AAF1',
+    magenta:       '#BF3FBD', brightMagenta: '#E07DE0',
+    cyan:          '#00C5C7', brightCyan:    '#5FFDFF',
+    white:         '#C7C7C7', brightWhite:   '#FEFFFF',
   };
 }

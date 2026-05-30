@@ -51,7 +51,7 @@ func DefaultSettings() Settings {
 		Theme:         "dark",
 		ColorScheme:   "catppuccin",
 		FontFamily:    "Cascadia Code, JetBrains Mono, Consolas, monospace",
-		FontSize:      13,
+		FontSize:      16,
 		LineHeight:    1.5,
 		Scrollback:    10000,
 		CursorStyle:   "block",
