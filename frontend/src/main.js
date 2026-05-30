@@ -42,6 +42,13 @@ window.addEventListener('load', async () => {
   if (tabSwitchEl) tabSwitchEl.textContent = isMac ? '⌘1…9' : 'Alt+1…9';
 
   // Keyboard shortcuts
+  // Capture ESC before WKWebView exits fullscreen
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isFullscreen) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
   document.addEventListener('keydown', handleKeydown);
   window.addEventListener('ishell:toggleFullscreen', toggleFullscreen);
   window.addEventListener('ishell:switchTab', (e) => switchToTabByIndex(e.detail));
