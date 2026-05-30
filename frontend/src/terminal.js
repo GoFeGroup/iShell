@@ -132,6 +132,8 @@ export function createTerminal(connID, settings) {
   fitAddon.fit();
 
   const flushInput = makeInputSender(connID);
+  let pasteFromKeyboard = false;
+
   const tabHandler = (e) => {
     if (e.key !== 'Tab') return;
     e.preventDefault();
@@ -141,10 +143,29 @@ export function createTerminal(connID, settings) {
   xtermEl.addEventListener('keydown', tabHandler, true);
 
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type === 'keydown' && e.key === 'Enter' && (isMac ? e.metaKey : e.altKey)) {
+    if (e.type !== 'keydown') return true;
+
+    if (e.key === 'Enter' && (isMac ? e.metaKey : e.altKey)) {
       window.dispatchEvent(new CustomEvent('ishell:toggleFullscreen'));
       return false;
     }
+
+    // Copy: Cmd+C (Mac) or Ctrl+Shift+C (Win/Linux)
+    if (isMac ? (e.metaKey && e.key === 'c') : (e.ctrlKey && e.shiftKey && e.key === 'C')) {
+      const sel = term.getSelection();
+      if (sel) window.runtime.ClipboardSetText(sel).catch(() => {});
+      return false;
+    }
+
+    // Paste: Cmd+V (Mac) or Ctrl+Shift+V (Win/Linux)
+    if (isMac ? (e.metaKey && e.key === 'v') : (e.ctrlKey && e.shiftKey && e.key === 'V')) {
+      pasteFromKeyboard = true;
+      window.runtime.ClipboardGetText()
+        .then(text => { pasteFromKeyboard = false; if (text) flushInput(text); })
+        .catch(() => { pasteFromKeyboard = false; });
+      return false;
+    }
+
     const input = keyEventToInput(e);
     if (input) {
       flushInput(input);
@@ -153,11 +174,15 @@ export function createTerminal(connID, settings) {
     return true;
   });
 
+  // Handles right-click "Paste" from context menu; keyboard paste is handled above.
   xtermEl.addEventListener('paste', e => {
-    const text = e.clipboardData?.getData('text');
-    if (!text) return;
     e.preventDefault();
-    flushInput(text);
+    if (pasteFromKeyboard) return;
+    const text = e.clipboardData?.getData('text');
+    if (text) { flushInput(text); return; }
+    window.runtime.ClipboardGetText()
+      .then(text => { if (text) flushInput(text); })
+      .catch(() => {});
   });
 
   const dataHandler = (b64) => {
