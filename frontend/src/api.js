@@ -29,6 +29,8 @@ export const downloadFilesToDir = (id, rps, dir)   => go().DownloadFilesToDir(id
 
 export const listLocalDir   = (p)     => go().ListLocalDir(p);
 export const getHomeDir     = ()      => go().GetHomeDir();
+export const getDownloadsDir = ()     => go().GetDownloadsDir();
+export const getRemotePWD   = (id)    => go().GetRemotePWD(id);
 
 export const getSettings    = ()      => go().GetSettings();
 export const saveSettings   = (s)     => go().SaveSettings(s);

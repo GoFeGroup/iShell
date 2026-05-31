@@ -1,8 +1,10 @@
 import {
-  listRemoteDir, listLocalDir, getHomeDir,
+  listRemoteDir, listLocalDir,
   makeRemoteDir, deleteRemote, renameRemote, setPermissions,
-  uploadFiles, downloadFiles, downloadFilesToDir, on,
+  uploadFiles, uploadSpecific, downloadFiles, downloadFilesToDir, on,
+  getDownloadsDir, getRemotePWD,
 } from './api.js';
+import { getTerminalCWD } from './terminal.js';
 import { showToast } from './toast.js';
 
 let connID = null;
@@ -11,17 +13,47 @@ let remotePath = '';
 const transfers = {};
 let lastSelected = { local: null, remote: null };
 let dragState = null;
+let cwdListener = null;
 
 export async function initSFTP(cID) {
+  // Clean up previous CWD listener before re-initializing
+  if (cwdListener) {
+    window.removeEventListener('terminal:cwd:' + cwdListener.connID, cwdListener.handler);
+    cwdListener = null;
+  }
+
   connID = cID;
-  localPath = await getHomeDir();
-  remotePath = '/';
+  localPath = await getDownloadsDir();
+
+  // Priority 1: CWD tracked from terminal OSC sequences (accurate, reflects terminal navigation)
+  // Priority 2: SFTP session default dir (user home on most servers)
+  // Priority 3: root
+  remotePath = getTerminalCWD(connID);
+  if (!remotePath) {
+    try {
+      remotePath = await getRemotePWD(connID);
+    } catch (e) {
+      console.error('getRemotePWD failed:', e);
+      remotePath = '/';
+    }
+  }
 
   renderSFTP();
   await Promise.all([loadLocal(), loadRemote()]);
 
   // Listen for transfer progress
   on('sftp:progress', (prog) => handleProgress(prog));
+
+  // Update remote pane when terminal CWD changes.
+  const handler = (e) => {
+    if (document.getElementById('panel-sftp')?.style.display === 'none') return;
+    if (e.detail !== remotePath) {
+      remotePath = e.detail;
+      loadRemote();
+    }
+  };
+  window.addEventListener('terminal:cwd:' + connID, handler);
+  cwdListener = { connID, handler };
 }
 
 function renderSFTP() {
@@ -322,7 +354,6 @@ async function doUploadDialog() {
 async function doUploadPaths(localPaths) {
   // For drag-dropped paths we use the specific upload API
   try {
-    const { uploadSpecific } = await import('./api.js');
     const ids = await uploadSpecific(connID, localPaths, remotePath);
     if (ids) {
       localPaths.forEach((lp, i) => {

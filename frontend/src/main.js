@@ -127,6 +127,7 @@ async function afterConnect(connID, sess) {
     sessionLabel: sess.label || sess.host,
     host: sess.host,
     username: sess.username,
+    isLocal: sess.id === '__local__',
   };
   tabs.push(tab);
   renderTabs();
@@ -267,13 +268,16 @@ function showPanel(name) {
 function updateConnUI(tab) {
   const hasConn = !!tab;
   const actions = document.getElementById('topbar-actions');
+  const sftpBtn = document.getElementById('btn-sftp');
   actions.style.display = hasConn ? '' : 'none';
+  if (sftpBtn) sftpBtn.style.display = hasConn && !tab?.isLocal ? '' : 'none';
 }
 
 // ── SFTP toggle ───────────────────────────────────────────────────────────────
 
 async function toggleSFTP() {
   if (!isTerminalTab(activeTab)) { showToast('Connect to a session first'); return; }
+  if (activeTab.isLocal) { showToast('SFTP is only available for remote SSH sessions'); return; }
   sftpActive = !sftpActive;
   if (sftpActive) {
     showPanel('sftp');

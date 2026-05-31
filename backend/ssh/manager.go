@@ -273,6 +273,16 @@ func (m *Manager) AcceptAndStoreHostKey(hostname, khPath string) error {
 	return AddHostKey(khPath, hostname, key)
 }
 
+// RemotePWD returns the default directory of the SFTP session (user home on most servers).
+// It reuses the already-established SFTP client rather than opening a new exec channel.
+func (m *Manager) RemotePWD(connID string) (string, error) {
+	cl, err := m.SFTPClient(connID)
+	if err != nil {
+		return "/", err
+	}
+	return cl.Getwd()
+}
+
 // ListActive returns a map of connID → sessionID for all live connections.
 func (m *Manager) ListActive() map[string]string {
 	m.mu.RLock()

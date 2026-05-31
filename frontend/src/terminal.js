@@ -5,6 +5,7 @@ import { sendInput, resizeTerm, on, off } from './api.js';
 
 const isMac = navigator.platform.startsWith('Mac');
 const instances = {};  // connID → { term, fitAddon, resizeObs, dataHandler, xtermEl }
+const cwdByConn = {};
 const INPUT_BATCH_DELAY_MS = 60;
 
 function makeInputSender(connID) {
@@ -139,6 +140,21 @@ export function createTerminal(connID, settings) {
   term.loadAddon(fitAddon);
   term.loadAddon(new WebLinksAddon());
   term.open(xtermEl);
+
+  // Parse CWD reports emitted by shells/terminal integrations.
+  const osc7Disposable = term.parser.registerOscHandler(7, (data) => {
+    try {
+      const url = new URL(data);
+      setTerminalCWD(connID, decodeURIComponent(url.pathname));
+    } catch {}
+    return false;
+  });
+  const osc1337Disposable = term.parser.registerOscHandler(1337, (data) => {
+    const cwd = parseCurrentDir(data);
+    if (cwd) setTerminalCWD(connID, cwd);
+    return false;
+  });
+
   fitAddon.fit();
   // Sync initial PTY size immediately; ResizeObserver handles subsequent resizes.
   resizeTerm(connID, term.cols, term.rows).catch(() => {});
@@ -281,6 +297,7 @@ export function createTerminal(connID, settings) {
     term, fitAddon, resizeObs, dataHandler, tabHandler,
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
     xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize,
+    oscDisposables: [osc7Disposable, osc1337Disposable],
   };
 
   return term;
@@ -290,6 +307,7 @@ export function destroyTerminal(connID) {
   const inst = instances[connID];
   if (!inst) return;
   off('terminal:data:' + connID);
+  inst.oscDisposables?.forEach(d => d.dispose());
   inst.xtermEl.removeEventListener('keydown',     inst.tabHandler,        true);
   inst.xtermEl.removeEventListener('mousedown',   inst.mouseDownHandler,  true);
   inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
@@ -297,6 +315,7 @@ export function destroyTerminal(connID) {
   document.removeEventListener('mouseup',         inst.mouseUpHandler,    true);
   inst.resizeObs.disconnect();
   inst.term.dispose();
+  delete cwdByConn[connID];
   delete instances[connID];
 }
 
@@ -304,8 +323,30 @@ export function focusTerminal(connID) {
   instances[connID]?.term.focus();
 }
 
+// Returns the last terminal-reported CWD for connID, or null if the shell hasn't reported one.
+export function getTerminalCWD(connID) {
+  return instances[connID]?.cwd ?? cwdByConn[connID] ?? null;
+}
+
 export function fitTerminal(connID) {
   instances[connID]?.fitAddon.fit();
+}
+
+function setTerminalCWD(connID, cwd) {
+  if (!cwd || !cwd.startsWith('/')) return;
+  cwdByConn[connID] = cwd;
+  if (instances[connID]) instances[connID].cwd = cwd;
+  window.dispatchEvent(new CustomEvent('terminal:cwd:' + connID, { detail: cwd }));
+}
+
+function parseCurrentDir(data) {
+  const match = data.match(/(?:^|;)CurrentDir=([^;]+)/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
 }
 
 function buildTheme(scheme) {

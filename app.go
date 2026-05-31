@@ -303,6 +303,19 @@ func (a *App) GetHomeDir() string {
 	return home
 }
 
+func (a *App) GetDownloadsDir() string {
+	home, _ := os.UserHomeDir()
+	dl := filepath.Join(home, "Downloads")
+	if _, err := os.Stat(dl); err == nil {
+		return dl
+	}
+	return home
+}
+
+func (a *App) GetRemotePWD(connID string) (string, error) {
+	return a.sshMgr.RemotePWD(connID)
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 func (a *App) GetSettings() (*storage.Settings, error) {
