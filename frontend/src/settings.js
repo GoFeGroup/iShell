@@ -5,6 +5,7 @@ export async function initSettings() {
   const panel = document.getElementById('panel-settings');
   const settings = await getSettings().catch(() => ({}));
   const kh = await getKnownHosts().catch(() => []);
+  const fontSize = settings.font_size || 16;
 
   const isMac = navigator.platform.startsWith('Mac');
   const mod = isMac ? '⌘' : 'Ctrl';
@@ -50,8 +51,8 @@ export async function initSettings() {
           <div class="settings-row-label">Font size</div>
           <div class="settings-row-control" style="min-width:180px;">
             <div style="display:flex;align-items:center;gap:8px;">
-              <input type="range" id="st-fontsize" min="10" max="24" value="${settings.font_size||13}" style="flex:1;accent-color:var(--accent);" oninput="document.getElementById('st-fontsize-val').textContent=this.value" />
-              <span id="st-fontsize-val" style="font-size:12px;width:24px;">${settings.font_size||13}</span>
+              <input type="range" id="st-fontsize" min="10" max="24" value="${fontSize}" style="flex:1;accent-color:var(--accent);" oninput="document.getElementById('st-fontsize-val').textContent=this.value" />
+              <span id="st-fontsize-val" style="font-size:12px;width:24px;">${fontSize}</span>
             </div>
           </div>
         </div>

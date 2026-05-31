@@ -7,6 +7,7 @@ const isMac = navigator.platform.startsWith('Mac');
 const instances = {};  // connID → { term, fitAddon, resizeObs, dataHandler, xtermEl }
 const cwdByConn = {};
 const INPUT_BATCH_DELAY_MS = 60;
+const DEFAULT_FONT_SIZE = 16;
 
 function makeInputSender(connID) {
   let buffer = '';
@@ -87,7 +88,7 @@ export function createTerminal(connID, settings) {
   const container = document.getElementById('terminal-container');
 
   const resolvedFont = settings?.font_family || "Menlo, Monaco, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace";
-  const resolvedSize = settings?.font_size || 16;
+  const resolvedSize = connID.startsWith('local-') ? DEFAULT_FONT_SIZE : (settings?.font_size || DEFAULT_FONT_SIZE);
 
   // Reuse existing terminal unless font settings changed.
   if (instances[connID]) {
