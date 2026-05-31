@@ -16,14 +16,29 @@ export const LOCAL_SESSION = {
 let sessions = [];
 let onConnectCb = null;
 let selectedProfileId = null;
+let searchHighlightId = null;
 
 export function initSidebar(onConnect) {
   onConnectCb = onConnect;
   document.getElementById('btn-new-session').addEventListener('click', () => {
     openProfileForm(null, (saved) => { loadProfiles(); });
   });
-  document.getElementById('session-search').addEventListener('input', (e) => {
+  const searchEl = document.getElementById('session-search');
+  searchEl.addEventListener('input', (e) => {
     renderList(e.target.value.toLowerCase());
+  });
+  searchEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !searchHighlightId) return;
+    e.preventDefault();
+    const id = searchHighlightId;
+    searchEl.value = '';
+    renderList('');
+    if (id === '__local__') {
+      onConnectCb && onConnectCb(LOCAL_SESSION);
+    } else {
+      const sess = sessions.find(s => s.id === id);
+      if (sess) onConnectCb && onConnectCb(sess);
+    }
   });
   loadProfiles();
 }
@@ -45,9 +60,9 @@ function setSelectedProfile(id) {
   });
 }
 
-function renderLocalTerminal(container) {
+function renderLocalTerminal(container, activeId) {
   const item = document.createElement('div');
-  item.className = 'sidebar-item' + (selectedProfileId === '__local__' ? ' active' : '');
+  item.className = 'sidebar-item' + (activeId === '__local__' ? ' active' : '');
   item.dataset.id = '__local__';
   item.innerHTML = `
     <div class="status-dot disconnected" id="dot-__local__"></div>
@@ -70,20 +85,35 @@ function renderList(filter) {
   const container = document.getElementById('session-list');
   container.innerHTML = '';
 
-  // Always show local terminal at the top (not filtered)
-  renderLocalTerminal(container);
+  const localMatch = !filter ||
+    ('local terminal ' + LOCAL_SHELL_NAME).toLowerCase().includes(filter);
+  const filteredSessions = filter
+    ? sessions.filter(s => matchFilter(s, filter))
+    : sessions;
+
+  // During search: highlight the first match; otherwise keep user's selection
+  let activeId = selectedProfileId;
+  if (filter) {
+    if (localMatch) activeId = '__local__';
+    else if (filteredSessions.length > 0) activeId = filteredSessions[0].id;
+    else activeId = null;
+    searchHighlightId = activeId;
+  } else {
+    searchHighlightId = null;
+  }
+
+  if (localMatch) renderLocalTerminal(container, activeId);
 
   // Group sessions
   const groups = {};
-  sessions.forEach(s => {
-    if (filter && !matchFilter(s, filter)) return;
+  filteredSessions.forEach(s => {
     const g = s.group || 'Ungrouped';
     if (!groups[g]) groups[g] = [];
     groups[g].push(s);
   });
 
   if (Object.keys(groups).length === 0) {
-    if (filter) {
+    if (filter && !localMatch) {
       const empty = document.createElement('div');
       empty.style.cssText = 'padding:12px;color:var(--text-muted);font-size:13px;text-align:center;';
       empty.textContent = 'No matches';
@@ -101,7 +131,7 @@ function renderList(filter) {
 
     groups[g].forEach(sess => {
       const item = document.createElement('div');
-      item.className = 'sidebar-item' + (sess.id === selectedProfileId ? ' active' : '');
+      item.className = 'sidebar-item' + (sess.id === activeId ? ' active' : '');
       item.dataset.id = sess.id;
       item.innerHTML = `
         <div class="status-dot disconnected" id="dot-${sess.id}"></div>
@@ -145,6 +175,12 @@ function renderList(filter) {
     div.className = 'divider';
     container.appendChild(div);
   });
+
+  // Scroll first match into view when searching
+  if (filter && activeId) {
+    container.querySelector(`.sidebar-item[data-id="${activeId}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }
 }
 
 function matchFilter(s, f) {

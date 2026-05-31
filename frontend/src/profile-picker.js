@@ -133,9 +133,13 @@ export async function openProfilePicker() {
 function buildItems(sessions, filter) {
   const items = [];
 
-  // Local terminal always shown, not filtered
-  items.push({ kind: 'item', isLocal: true, sess: LOCAL_SESSION });
-  items.push({ kind: 'divider' });
+  // Local terminal shown when no filter or when filter matches label/sublabel
+  const localMatch = !filter ||
+    (LOCAL_SESSION.label + ' ' + LOCAL_SESSION.sublabel).toLowerCase().includes(filter);
+  if (localMatch) {
+    items.push({ kind: 'item', isLocal: true, sess: LOCAL_SESSION });
+    items.push({ kind: 'divider' });
+  }
 
   const filtered = filter
     ? sessions.filter(s =>
