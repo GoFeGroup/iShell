@@ -6,14 +6,18 @@ export async function initSettings() {
   const settings = await getSettings().catch(() => ({}));
   const kh = await getKnownHosts().catch(() => []);
 
+  const isMac = navigator.platform.startsWith('Mac');
+  const mod = isMac ? '⌘' : 'Ctrl';
+  const alt = isMac ? '⌘' : 'Alt';
+
   panel.innerHTML = `
 <div class="settings-layout">
   <nav class="settings-nav">
-    <div class="nav-pill active" data-page="appearance">🎨 Appearance</div>
-    <div class="nav-pill" data-page="terminal">⌨ Terminal</div>
-    <div class="nav-pill" data-page="ssh">🔐 SSH / Security</div>
-    <div class="nav-pill" data-page="shortcuts">⌘ Shortcuts</div>
-    <div class="nav-pill" data-page="about">ℹ About</div>
+    <div class="nav-pill active" data-page="appearance"><span class="nav-pill-icon">🎨</span>Appearance</div>
+    <div class="nav-pill" data-page="terminal"><span class="nav-pill-icon">💻</span>Terminal</div>
+    <div class="nav-pill" data-page="ssh"><span class="nav-pill-icon">🔒</span>SSH / Security</div>
+    <div class="nav-pill" data-page="shortcuts"><span class="nav-pill-icon">⌨️</span>Shortcuts</div>
+    <div class="nav-pill" data-page="about"><span class="nav-pill-icon">ℹ️</span>About</div>
   </nav>
   <div class="settings-content">
 
@@ -110,19 +114,33 @@ export async function initSettings() {
     <!-- Shortcuts -->
     <div class="settings-page" id="sp-shortcuts">
       <div class="settings-page-title">Keyboard Shortcuts</div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px;">
-        <thead><tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:11px;text-transform:uppercase;">Action</th><th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:11px;text-transform:uppercase;">Shortcut</th></tr></thead>
-        <tbody>
-          ${[
-            ['Switch to tab 1–9','Alt+1 … Alt+9'],
-            ['Toggle fullscreen','Alt+Enter'],
-            ['Toggle sidebar','Ctrl+B'],
-            ['New session','Ctrl+N'],
-            ['Close tab','Ctrl+W'],
-            ['Find in terminal','Ctrl+F'],
-          ].map(([a,s])=>`<tr><td style="padding:8px 10px;border-bottom:1px solid var(--border-subtle);">${a}</td><td style="padding:8px 10px;border-bottom:1px solid var(--border-subtle);"><kbd style="padding:2px 7px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:3px;font-family:var(--font-mono);font-size:12px;">${s}</kbd></td></tr>`).join('')}
-        </tbody>
-      </table>
+      ${[
+        { group: 'Navigation' },
+        ['Switch to tab 1–9',      `${alt}+1 … ${alt}+9`],
+        ['Toggle sidebar',         `${mod}+B`],
+        ['Toggle fullscreen',      isMac ? '⌘+Enter' : 'Alt+Enter'],
+        { group: 'Profiles' },
+        ['Open profile picker',    `${alt}+O`],
+        ['Connect (in search)',    'Enter'],
+        { group: 'Terminal' },
+        ['Find in terminal',       `${mod}+F`],
+        ['Close current tab',      isMac ? '⌘+W' : 'Alt+W'],
+      ].map(item => {
+        if (item.group) return `
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+                      color:var(--text-muted);padding:14px 10px 6px;border-bottom:1px solid var(--border);">
+            ${item.group}
+          </div>`;
+        const [action, shortcut] = item;
+        return `
+          <div style="display:flex;align-items:center;justify-content:space-between;
+                      padding:9px 10px;border-bottom:1px solid var(--border-subtle);font-size:13px;">
+            <span style="color:var(--text-primary);">${action}</span>
+            <kbd style="padding:2px 8px;background:var(--bg-elevated);border:1px solid var(--border);
+                        border-radius:4px;font-family:var(--font-mono);font-size:12px;
+                        color:var(--text-secondary);white-space:nowrap;">${shortcut}</kbd>
+          </div>`;
+      }).join('')}
     </div>
 
     <!-- About -->
