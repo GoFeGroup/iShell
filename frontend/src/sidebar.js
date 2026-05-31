@@ -1,5 +1,5 @@
 import { getSessions, deleteSession } from './api.js';
-import { openSessionForm } from './session-form.js';
+import { openProfileForm } from './profile-form.js';
 import { showToast } from './toast.js';
 
 const isWindows = navigator.platform.startsWith('Win');
@@ -20,19 +20,19 @@ let selectedProfileId = null;
 export function initSidebar(onConnect) {
   onConnectCb = onConnect;
   document.getElementById('btn-new-session').addEventListener('click', () => {
-    openSessionForm(null, (saved) => { loadSessions(); });
+    openProfileForm(null, (saved) => { loadProfiles(); });
   });
   document.getElementById('session-search').addEventListener('input', (e) => {
     renderList(e.target.value.toLowerCase());
   });
-  loadSessions();
+  loadProfiles();
 }
 
-export async function loadSessions() {
+export async function loadProfiles() {
   try {
     sessions = (await getSessions()) || [];
   } catch (e) {
-    console.error('loadSessions:', e);
+    console.error('loadProfiles:', e);
     sessions = [];
   }
   renderList('');
@@ -118,14 +118,14 @@ function renderList(filter) {
       item.addEventListener('click', (e) => {
         const action = e.target.closest('[data-action]')?.dataset.action;
         if (action === 'edit') {
-          openSessionForm(sess, () => loadSessions());
+          openProfileForm(sess, () => loadProfiles());
           return;
         }
         if (action === 'delete') {
           if (!confirm(`Delete profile "${sess.label || sess.host}"?`)) return;
           deleteSession(sess.id).then(() => {
             if (selectedProfileId === sess.id) selectedProfileId = null;
-            loadSessions();
+            loadProfiles();
           }).catch(console.error);
           return;
         }

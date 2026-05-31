@@ -6,7 +6,7 @@ import { showToast } from './toast.js';
  * @param {Object|null} existing - existing session object (null = new)
  * @param {Function} onSaved - called with the saved session
  */
-export function openSessionForm(existing, onSaved) {
+export function openProfileForm(existing, onSaved) {
   const isNew = !existing;
   const sess = existing || {
     label: '', host: '', port: 22, username: '',
@@ -112,7 +112,7 @@ export function openSessionForm(existing, onSaved) {
   </div>
   <div class="modal-footer">
     <button class="btn btn-secondary" id="sf-cancel">Cancel</button>
-    <button class="btn btn-primary" id="sf-save">Save Session</button>
+    <button class="btn btn-primary" id="sf-save">Save Profile</button>
   </div>
 </div>`;
 
@@ -206,7 +206,7 @@ export function openSessionForm(existing, onSaved) {
       const saved = await saveSession(updated);
       close();
       onSaved(saved);
-      showToast(`✅ Session saved: ${saved.label || saved.host}`);
+      showToast(`✅ Profile saved: ${saved.label || saved.host}`);
     } catch (e) {
       $('sf-err').textContent = '❌ ' + (e.message || String(e));
       $('sf-err').style.display = '';

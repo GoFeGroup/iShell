@@ -1,6 +1,6 @@
 import '@xterm/xterm/css/xterm.css';
 import { connect, connectLocal, disconnect, on, off, getSettings, sendInput } from './api.js';
-import { initSidebar, loadSessions, setSessionStatus } from './sidebar.js';
+import { initSidebar, loadProfiles, setSessionStatus } from './sidebar.js';
 import { createTerminal, destroyTerminal, focusTerminal } from './terminal.js';
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
