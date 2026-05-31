@@ -1,6 +1,7 @@
 import '@xterm/xterm/css/xterm.css';
 import { connect, connectLocal, disconnect, on, off, getSettings, sendInput } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus } from './sidebar.js';
+import { initProfilePicker } from './profile-picker.js';
 import { createTerminal, destroyTerminal, focusTerminal } from './terminal.js';
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
@@ -22,6 +23,7 @@ window.addEventListener('load', async () => {
   if (settings?.theme) document.documentElement.setAttribute('data-theme', settings.theme);
 
   initSidebar(onConnectRequest);
+  initProfilePicker(onConnectRequest);
 
   // Toolbar buttons
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
