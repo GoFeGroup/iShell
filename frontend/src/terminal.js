@@ -242,8 +242,8 @@ export function fitTerminal(connID) {
 
 function buildTheme(scheme) {
   return {
-    background:    '#1E1E2E',
-    foreground:    '#FEFFFF',
+    background:    '#15151F',
+    foreground:    '#FFFFFF',
     cursor:        '#F5E0DC',
     selectionBackground: 'rgba(124,140,248,0.3)',
     black:         '#14191E', brightBlack:   '#676767',

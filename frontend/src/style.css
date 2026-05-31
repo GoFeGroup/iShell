@@ -1,7 +1,7 @@
 /* iShell — Global Styles */
 :root {
-  --bg-primary: #1E1E2E; --bg-surface: #2A2A3C; --bg-elevated: #313145;
-  --bg-hover: #363650; --bg-active: #3D3D58;
+  --bg-primary: #15151F; --bg-surface: #232334; --bg-elevated: #2B2B40;
+  --bg-hover: #32324A; --bg-active: #383854;
   --border: #404060; --border-subtle: #2E2E45;
   --text-primary: #CDD6F4; --text-secondary: #A6ADC8; --text-muted: #6C7086;
   --accent: #7C8CF8; --accent-hover: #8E9EFF; --accent-dim: rgba(124,140,248,.15);
