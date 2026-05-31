@@ -119,6 +119,7 @@ export async function initSettings() {
         ['Switch to tab 1–9',      `${alt}+1 … ${alt}+9`],
         ['Toggle sidebar',         `${mod}+B`],
         ['Toggle fullscreen',      isMac ? '⌘+Enter' : 'Alt+Enter'],
+        ['Open settings',          `${alt}+,`],
         { group: 'Profiles' },
         ['Open profile picker',    `${alt}+O`],
         ['Connect (in search)',    'Enter'],

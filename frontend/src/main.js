@@ -338,6 +338,11 @@ function handleKeydown(e) {
     }
     return;
   }
+  if ((isMac ? e.metaKey : e.altKey) && e.key === ',') {
+    e.preventDefault();
+    openSettingsPanel();
+    return;
+  }
 }
 
 function handleNativeEsc() {
