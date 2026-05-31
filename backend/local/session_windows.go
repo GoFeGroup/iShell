@@ -7,54 +7,37 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
-	"os/exec"
-	"syscall"
 
+	"github.com/UserExistsError/conpty"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const createNoWindow = 0x08000000
-
-func startSession(ctx context.Context, connID string, _ int, _ int) (*session, error) {
-	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile")
-	cmd.Env = os.Environ()
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: createNoWindow,
+func startSession(ctx context.Context, connID string, cols, rows int) (*session, error) {
+	if cols <= 0 {
+		cols = 220
 	}
+	if rows <= 0 {
+		rows = 50
+	}
+	workDir := ""
 	if home, err := os.UserHomeDir(); err == nil {
-		cmd.Dir = home
+		workDir = home
 	}
 
-	stdinR, stdinW, err := os.Pipe()
+	cpty, err := conpty.Start(
+		"powershell.exe -NoLogo -NoProfile",
+		conpty.ConPtyDimensions(cols, rows),
+		conpty.ConPtyWorkDir(workDir),
+		conpty.ConPtyEnv(os.Environ()),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("create stdin pipe: %w", err)
+		return nil, fmt.Errorf("start powershell conpty: %w", err)
 	}
-	stdoutR, stdoutW, err := os.Pipe()
-	if err != nil {
-		stdinR.Close()
-		stdinW.Close()
-		return nil, fmt.Errorf("create stdout pipe: %w", err)
-	}
-
-	cmd.Stdin = stdinR
-	cmd.Stdout = stdoutW
-	cmd.Stderr = stdoutW
-
-	if err := cmd.Start(); err != nil {
-		stdinR.Close()
-		stdinW.Close()
-		stdoutR.Close()
-		stdoutW.Close()
-		return nil, fmt.Errorf("start powershell: %w", err)
-	}
-	stdinR.Close()
-	stdoutW.Close()
 
 	go func() {
 		buf := make([]byte, 8192)
 		for {
-			n, readErr := stdoutR.Read(buf)
+			n, readErr := cpty.Read(buf)
 			if n > 0 {
 				encoded := base64.StdEncoding.EncodeToString(buf[:n])
 				wailsRuntime.EventsEmit(ctx, "terminal:data:"+connID, encoded)
@@ -66,23 +49,18 @@ func startSession(ctx context.Context, connID string, _ int, _ int) (*session, e
 		wailsRuntime.EventsEmit(ctx, "terminal:closed:"+connID, nil)
 	}()
 
-	go func() { _ = cmd.Wait() }()
+	go func() { _, _ = cpty.Wait(ctx) }()
 
 	return &session{
 		write: func(data []byte) error {
-			_, err := stdinW.Write(data)
+			_, err := cpty.Write(data)
 			return err
 		},
 		resize: func(c, r int) error {
-			return nil
+			return cpty.Resize(c, r)
 		},
 		close: func() error {
-			stdinW.Close()
-			stdoutR.Close()
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-			return nil
+			return cpty.Close()
 		},
 	}, nil
 }

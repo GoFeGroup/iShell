@@ -47,6 +47,8 @@ window.addEventListener('load', async () => {
   // Keyboard shortcuts
   document.addEventListener('keydown', handleKeydown);
   window.addEventListener('ishell:toggleFullscreen', toggleFullscreen);
+  window.addEventListener('ishell:toggleSidebar', toggleSidebar);
+  window.addEventListener('ishell:toggleFind', toggleFind);
   window.addEventListener('ishell:switchTab', (e) => switchToTabByIndex(e.detail));
   window.addEventListener('ishell:closeTab', () => closeTab(activeTab));
   window.addEventListener('ishell:closeSettings', closeSettingsTab);
@@ -363,12 +365,12 @@ function handleKeydown(e) {
     toggleFullscreen();
     return;
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+  if ((isMac ? e.metaKey : e.altKey) && e.key.toLowerCase() === 'b') {
     e.preventDefault();
     toggleSidebar();
     return;
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+  if ((isMac ? e.metaKey : e.altKey) && e.key.toLowerCase() === 'f') {
     const panelTerm = document.getElementById('panel-terminal');
     if (panelTerm && panelTerm.style.display !== 'none') {
       e.preventDefault();

@@ -3,6 +3,7 @@ module ishell
 go 1.23.0
 
 require (
+	github.com/UserExistsError/conpty v0.1.4
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
 	github.com/pkg/sftp v1.13.9

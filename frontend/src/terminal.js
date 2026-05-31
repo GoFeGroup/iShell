@@ -185,6 +185,16 @@ export function createTerminal(connID, settings) {
       return false;
     }
 
+    if (!isMac && e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'b') {
+      window.dispatchEvent(new CustomEvent('ishell:toggleSidebar'));
+      return false;
+    }
+
+    if (!isMac && e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'f') {
+      window.dispatchEvent(new CustomEvent('ishell:toggleFind'));
+      return false;
+    }
+
     // Tab switching: Cmd+1-9 (Mac) or Alt+1-9 (Win/Linux)
     const isTabSwitch = isMac
       ? (e.metaKey && !e.ctrlKey && !e.altKey && e.key >= '1' && e.key <= '9')

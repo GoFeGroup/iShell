@@ -118,14 +118,14 @@ export async function initSettings() {
       ${[
         { group: 'Navigation' },
         ['Switch to tab 1–9',      `${alt}+1 … ${alt}+9`],
-        ['Toggle sidebar',         `${mod}+B`],
+        ['Toggle sidebar',         isMac ? `${mod}+B` : 'Alt+B'],
         ['Toggle fullscreen',      isMac ? '⌘+Enter' : 'Alt+Enter'],
         ['Open settings',          `${alt}+,`],
         { group: 'Profiles' },
         ['Open profile picker',    `${alt}+O`],
         ['Connect (in search)',    'Enter'],
         { group: 'Terminal' },
-        ['Find in terminal',       `${mod}+F`],
+        ['Find in terminal',       isMac ? `${mod}+F` : 'Alt+F'],
         ['Close current tab',      isMac ? '⌘+W' : 'Alt+W'],
       ].map(item => {
         if (item.group) return `
