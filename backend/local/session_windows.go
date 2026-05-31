@@ -15,6 +15,9 @@ import (
 func startSession(ctx context.Context, connID string, _ int, _ int) (*session, error) {
 	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile")
 	cmd.Env = os.Environ()
+	if home, err := os.UserHomeDir(); err == nil {
+		cmd.Dir = home
+	}
 
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {

@@ -30,6 +30,9 @@ func startSession(ctx context.Context, connID string, cols, rows int) (*session,
 	shell := defaultShell()
 	cmd := exec.Command(shell)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	if home, err := os.UserHomeDir(); err == nil {
+		cmd.Dir = home
+	}
 
 	if cols <= 0 {
 		cols = 220
