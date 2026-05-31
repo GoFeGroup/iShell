@@ -341,6 +341,7 @@ function handleKeydown(e) {
 }
 
 function handleNativeEsc() {
+  if (document.getElementById('pp-overlay')) return; // profile picker handles it
   if (!activeTab) return;
   sendInput(activeTab.connID, '\x1b').catch(e => console.error('nativeEsc sendInput:', e));
 }

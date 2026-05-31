@@ -93,13 +93,19 @@ export async function openProfilePicker() {
 
   function close() {
     document.removeEventListener('keydown', docEscHandler, true);
+    window.removeEventListener('ishell:nativeEsc', nativeEscHandler);
     overlay.remove();
   }
 
+  // Non-fullscreen: DOM keydown captured before other handlers
   function docEscHandler(e) {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
   }
   document.addEventListener('keydown', docEscHandler, true);
+
+  // Fullscreen: native guard consumes ESC and emits this event instead of DOM keydown
+  function nativeEscHandler() { close(); }
+  window.addEventListener('ishell:nativeEsc', nativeEscHandler);
 
   function moveSelection(dir) {
     let idx = selectedIdx + dir;
