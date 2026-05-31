@@ -191,8 +191,7 @@ export async function initSettings() {
   panel.appendChild(footer);
 
   document.getElementById('st-discard').addEventListener('click', () => {
-    document.getElementById('panel-settings').style.display = 'none';
-    document.getElementById('panel-terminal').style.display = '';
+    window.dispatchEvent(new CustomEvent('ishell:closeSettings'));
   });
   document.getElementById('st-save').addEventListener('click', async () => {
     const updated = {

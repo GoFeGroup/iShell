@@ -94,7 +94,14 @@ export function createTerminal(connID, settings) {
     if (inst.fontFamily === resolvedFont && inst.fontSize === resolvedSize) {
       container.innerHTML = '';
       container.appendChild(inst.xtermEl);
-      inst.fitAddon.fit();
+      // Defer fit to after layout; ResizeObserver won't fire if container size
+      // is unchanged, so we must call resizeTerm explicitly here.
+      requestAnimationFrame(() => {
+        inst.fitAddon.fit();
+        resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
+        const sizeEl = document.getElementById('sb-size');
+        if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
+      });
       return inst.term;
     }
     // Font changed: tear down old instance and fall through to rebuild.
@@ -133,6 +140,8 @@ export function createTerminal(connID, settings) {
   term.loadAddon(new WebLinksAddon());
   term.open(xtermEl);
   fitAddon.fit();
+  // Sync initial PTY size immediately; ResizeObserver handles subsequent resizes.
+  resizeTerm(connID, term.cols, term.rows).catch(() => {});
 
   const flushInput = makeInputSender(connID);
   let pasteFromKeyboard = false;

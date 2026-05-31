@@ -8,11 +8,9 @@ import { initSettings } from './settings.js';
 import { showToast } from './toast.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let tabs = [];          // { id, connID, sessionID, sessionLabel, host, username }
+let tabs = [];          // terminal: { type, id, connID, sessionID, sessionLabel, host, username }; settings: { type, id, sessionLabel }
 let activeTab = null;
 let sftpActive = false;
-let timerInterval = null;
-let connStartTime = null;
 let settings = null;
 let isFullscreen = false;
 const pendingConnects = {}; // sessionID → { sess, req } — kept until host key dialog resolves
@@ -30,7 +28,7 @@ window.addEventListener('load', async () => {
 
   // Toolbar buttons
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
-  document.getElementById('btn-disconnect').addEventListener('click', () => activeTab && doDisconnect(activeTab.connID));
+  document.getElementById('btn-disconnect').addEventListener('click', () => isTerminalTab(activeTab) && doDisconnect(activeTab.connID));
   document.getElementById('btn-sftp').addEventListener('click', toggleSFTP);
   document.getElementById('btn-settings').addEventListener('click', openSettingsPanel);
   document.getElementById('btn-search-term').addEventListener('click', toggleFind);
@@ -50,7 +48,8 @@ window.addEventListener('load', async () => {
   document.addEventListener('keydown', handleKeydown);
   window.addEventListener('ishell:toggleFullscreen', toggleFullscreen);
   window.addEventListener('ishell:switchTab', (e) => switchToTabByIndex(e.detail));
-  window.addEventListener('ishell:closeTab', () => activeTab && doDisconnect(activeTab.connID));
+  window.addEventListener('ishell:closeTab', () => closeTab(activeTab));
+  window.addEventListener('ishell:closeSettings', closeSettingsTab);
   window.addEventListener('ishell:nativeEsc', handleNativeEsc);
 
   // Host key events
@@ -121,6 +120,7 @@ async function onLocalConnectRequest(localSess) {
 
 async function afterConnect(connID, sess) {
   const tab = {
+    type: 'terminal',
     id: 'tab-' + Date.now(),
     connID,
     sessionID: sess.id,
@@ -141,6 +141,8 @@ async function afterConnect(connID, sess) {
 async function doDisconnect(connID) {
   try { await disconnect(connID); } catch {}
   const tab = tabs.find(t => t.connID === connID);
+  const closedIndex = tabs.indexOf(tab);
+  const wasActive = tab === activeTab;
   const sessionID = tab?.sessionID;
   tabs = tabs.filter(t => t.connID !== connID);
   // Only mark disconnected when no remaining tabs for this profile
@@ -150,8 +152,9 @@ async function doDisconnect(connID) {
   off('terminal:closed:' + connID);
   destroyTerminal(connID);
   renderTabs();
-  if (tabs.length > 0) switchToTab(tabs[tabs.length - 1]);
-  else { activeTab = null; stopTimer(); showPanel('welcome'); updateConnUI(null); }
+  if (wasActive) activateFallbackTab(closedIndex);
+  else if (activeTab) updateConnUI(isTerminalTab(activeTab) ? activeTab : null);
+  else showWelcome();
   showToast(`Disconnected`);
 }
 
@@ -161,16 +164,17 @@ function renderTabs() {
   const scroll = document.getElementById('tabs-scroll');
   scroll.innerHTML = '';
   tabs.forEach((tab, idx) => {
+    const isSettings = tab.type === 'settings';
     const el = document.createElement('div');
     el.className = 'tab' + (tab === activeTab ? ' active' : '');
     el.dataset.tabId = tab.id;
     el.innerHTML = `
-      <div class="status-dot connected" style="width:6px;height:6px;"></div>
+      ${isSettings ? '<span class="tab-icon">⚙</span>' : '<div class="status-dot connected" style="width:6px;height:6px;"></div>'}
       <span>${escHtml(tab.sessionLabel)}</span>
       <span class="tab-num">${idx + 1}</span>
       <button class="tab-close">✕</button>`;
     el.addEventListener('click', e => {
-      if (e.target.classList.contains('tab-close')) { doDisconnect(tab.connID); return; }
+      if (e.target.classList.contains('tab-close')) { closeTab(tab); return; }
       switchToTab(tab);
     });
     scroll.appendChild(el);
@@ -181,11 +185,21 @@ function renderTabs() {
   addBtn.className = 'tab-add';
   addBtn.title = 'New connection';
   addBtn.textContent = '+';
-  addBtn.addEventListener('click', () => { showPanel('welcome'); updateConnUI(null); });
+  addBtn.addEventListener('click', showWelcome);
   scroll.appendChild(addBtn);
 }
 
-function switchToTab(tab) {
+async function switchToTab(tab) {
+  if (!tab) return;
+  if (tab.type === 'settings') {
+    activeTab = tab;
+    sftpActive = false;
+    renderTabs();
+    showPanel('settings');
+    updateConnUI(null);
+    await initSettings();
+    return;
+  }
   activeTab = tab;
   sftpActive = false;
   renderTabs();
@@ -193,14 +207,52 @@ function switchToTab(tab) {
   updateConnUI(tab);
   createTerminal(tab.connID, settings);
   focusTerminal(tab.connID);
-  startTimer();
 }
 
 function switchToTabByIndex(n) {
   if (n < 1 || n > tabs.length) { showToast(`No tab ${n}`); return; }
   const tab = tabs[n - 1];
   switchToTab(tab);
-  showToast(`⌥${n}  ${tab.sessionLabel}`);
+  showToast(`${isMac ? '⌘' : '⌥'}${n}  ${tab.sessionLabel}`);
+}
+
+function closeTab(tab) {
+  if (!tab) return;
+  if (tab.type === 'settings') {
+    closeSettingsTab();
+    return;
+  }
+  if (isTerminalTab(tab)) doDisconnect(tab.connID);
+}
+
+function closeSettingsTab() {
+  const tab = tabs.find(t => t.type === 'settings');
+  if (!tab) return;
+  const closedIndex = tabs.indexOf(tab);
+  const wasActive = tab === activeTab;
+  tabs = tabs.filter(t => t !== tab);
+  renderTabs();
+  if (wasActive) activateFallbackTab(closedIndex);
+}
+
+function activateFallbackTab(closedIndex) {
+  if (tabs.length > 0) {
+    switchToTab(tabs[Math.min(closedIndex, tabs.length - 1)]);
+  } else {
+    showWelcome();
+  }
+}
+
+function showWelcome() {
+  activeTab = null;
+  sftpActive = false;
+  renderTabs();
+  showPanel('welcome');
+  updateConnUI(null);
+}
+
+function isTerminalTab(tab) {
+  return !!tab && tab.type !== 'settings' && !!tab.connID;
 }
 
 // ── Panel management ──────────────────────────────────────────────────────────
@@ -214,39 +266,14 @@ function showPanel(name) {
 
 function updateConnUI(tab) {
   const hasConn = !!tab;
-  const divider = document.getElementById('conn-info-divider');
-  const connInfo = document.getElementById('conn-info');
   const actions = document.getElementById('topbar-actions');
-  divider.style.display = hasConn ? '' : 'none';
-  connInfo.style.display = hasConn ? '' : 'none';
   actions.style.display = hasConn ? '' : 'none';
-  if (tab) {
-    document.getElementById('conn-label').textContent = `${tab.username}@${tab.host}`;
-  }
-}
-
-// ── Timer ─────────────────────────────────────────────────────────────────────
-
-function startTimer() {
-  stopTimer();
-  connStartTime = Date.now();
-  timerInterval = setInterval(() => {
-    const secs = Math.floor((Date.now() - connStartTime) / 1000);
-    const h = String(Math.floor(secs / 3600)).padStart(2, '0');
-    const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
-    const s = String(secs % 60).padStart(2, '0');
-    const el = document.getElementById('conn-timer');
-    if (el) el.textContent = `${h}:${m}:${s}`;
-  }, 1000);
-}
-function stopTimer() {
-  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
 }
 
 // ── SFTP toggle ───────────────────────────────────────────────────────────────
 
 async function toggleSFTP() {
-  if (!activeTab) { showToast('Connect to a session first'); return; }
+  if (!isTerminalTab(activeTab)) { showToast('Connect to a session first'); return; }
   sftpActive = !sftpActive;
   if (sftpActive) {
     showPanel('sftp');
@@ -260,8 +287,16 @@ async function toggleSFTP() {
 // ── Settings panel ────────────────────────────────────────────────────────────
 
 async function openSettingsPanel() {
-  showPanel('settings');
-  await initSettings();
+  let tab = tabs.find(t => t.type === 'settings');
+  if (!tab) {
+    tab = {
+      type: 'settings',
+      id: 'tab-settings',
+      sessionLabel: 'Settings',
+    };
+    tabs.push(tab);
+  }
+  await switchToTab(tab);
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -308,7 +343,7 @@ function toggleFullscreen() {
 function handleKeydown(e) {
   if ((isMac ? e.metaKey : e.altKey) && e.key === 'w') {
     e.preventDefault();
-    if (activeTab) doDisconnect(activeTab.connID);
+    closeTab(activeTab);
     return;
   }
   const isTabSwitch = isMac
@@ -346,7 +381,7 @@ function handleKeydown(e) {
 
 function handleNativeEsc() {
   if (document.getElementById('pp-overlay')) return; // profile picker handles it
-  if (!activeTab) return;
+  if (!isTerminalTab(activeTab)) return;
   sendInput(activeTab.connID, '\x1b').catch(e => console.error('nativeEsc sendInput:', e));
 }
 
