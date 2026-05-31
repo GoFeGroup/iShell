@@ -8,13 +8,20 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+const createNoWindow = 0x08000000
+
 func startSession(ctx context.Context, connID string, _ int, _ int) (*session, error) {
 	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile")
 	cmd.Env = os.Environ()
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
+	}
 	if home, err := os.UserHomeDir(); err == nil {
 		cmd.Dir = home
 	}
