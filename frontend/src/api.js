@@ -11,6 +11,7 @@ export const saveSession    = (sess)  => go().SaveSession(sess);
 export const deleteSession  = (id)    => go().DeleteSession(id);
 
 export const connect        = (req)   => go().Connect(req);
+export const connectLocal   = (c, r)  => go().ConnectLocal(c, r);
 export const disconnect     = (id)    => go().Disconnect(id);
 export const getActiveConns = ()      => go().GetActiveConnections();
 export const sendInput      = (id, d) => go().SendInput(id, d);

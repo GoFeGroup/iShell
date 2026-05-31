@@ -2,6 +2,17 @@ import { getSessions, deleteSession } from './api.js';
 import { openSessionForm } from './session-form.js';
 import { showToast } from './toast.js';
 
+const isWindows = navigator.platform.startsWith('Win');
+const isMac = navigator.platform.startsWith('Mac');
+const LOCAL_SHELL_NAME = isWindows ? 'PowerShell' : (isMac ? 'zsh' : 'bash');
+
+export const LOCAL_SESSION = {
+  type: 'local',
+  id: '__local__',
+  label: 'Local Terminal',
+  sublabel: LOCAL_SHELL_NAME,
+};
+
 let sessions = [];
 let onConnectCb = null;
 let selectedProfileId = null;
@@ -34,9 +45,33 @@ function setSelectedProfile(id) {
   });
 }
 
+function renderLocalTerminal(container) {
+  const item = document.createElement('div');
+  item.className = 'sidebar-item' + (selectedProfileId === '__local__' ? ' active' : '');
+  item.dataset.id = '__local__';
+  item.innerHTML = `
+    <div class="status-dot disconnected" id="dot-__local__"></div>
+    <div class="item-info">
+      <div class="item-name">Local Terminal</div>
+      <div class="item-sub">${LOCAL_SHELL_NAME}</div>
+    </div>`;
+
+  item.addEventListener('click', () => setSelectedProfile('__local__'));
+  item.addEventListener('dblclick', () => onConnectCb && onConnectCb(LOCAL_SESSION));
+
+  container.appendChild(item);
+
+  const divider = document.createElement('div');
+  divider.className = 'divider';
+  container.appendChild(divider);
+}
+
 function renderList(filter) {
   const container = document.getElementById('session-list');
   container.innerHTML = '';
+
+  // Always show local terminal at the top (not filtered)
+  renderLocalTerminal(container);
 
   // Group sessions
   const groups = {};
@@ -48,7 +83,12 @@ function renderList(filter) {
   });
 
   if (Object.keys(groups).length === 0) {
-    container.innerHTML = `<div style="padding:20px 12px;color:var(--text-muted);font-size:13px;text-align:center;">${filter ? 'No matches' : 'No profiles yet'}</div>`;
+    if (filter) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:12px;color:var(--text-muted);font-size:13px;text-align:center;';
+      empty.textContent = 'No matches';
+      container.appendChild(empty);
+    }
     return;
   }
 

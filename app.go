@@ -8,16 +8,18 @@ import (
 	"runtime"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"ishell/backend/local"
 	"ishell/backend/ssh"
 	"ishell/backend/storage"
 )
 
 // App is the central struct bound to the Wails frontend.
 type App struct {
-	ctx     context.Context
-	store   *storage.Store
-	sshMgr  *ssh.Manager
-	dataDir string
+	ctx      context.Context
+	store    *storage.Store
+	sshMgr   *ssh.Manager
+	localMgr *local.Manager
+	dataDir  string
 }
 
 func NewApp() *App {
@@ -35,10 +37,12 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.store = store
 	a.sshMgr = ssh.NewManager(ctx)
+	a.localMgr = local.NewManager(ctx)
 }
 
 func (a *App) shutdown(_ context.Context) {
 	a.sshMgr.CloseAll()
+	a.localMgr.CloseAll()
 	if a.store != nil {
 		_ = a.store.Close()
 	}
@@ -135,7 +139,14 @@ func (a *App) Connect(req ConnectRequest) (string, error) {
 	return connID, err
 }
 
+func (a *App) ConnectLocal(cols, rows int) (string, error) {
+	return a.localMgr.Connect(cols, rows)
+}
+
 func (a *App) Disconnect(connID string) error {
+	if a.localMgr.Has(connID) {
+		return a.localMgr.Disconnect(connID)
+	}
 	return a.sshMgr.Disconnect(connID)
 }
 
@@ -144,10 +155,16 @@ func (a *App) GetActiveConnections() map[string]string {
 }
 
 func (a *App) SendInput(connID, data string) error {
+	if a.localMgr.Has(connID) {
+		return a.localMgr.SendInput(connID, []byte(data))
+	}
 	return a.sshMgr.SendInput(connID, []byte(data))
 }
 
 func (a *App) ResizeTerminal(connID string, cols, rows int) error {
+	if a.localMgr.Has(connID) {
+		return a.localMgr.ResizeTerminal(connID, cols, rows)
+	}
 	return a.sshMgr.ResizeTerminal(connID, cols, rows)
 }
 

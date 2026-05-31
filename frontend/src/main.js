@@ -1,5 +1,5 @@
 import '@xterm/xterm/css/xterm.css';
-import { connect, disconnect, on, off, getSettings, sendInput } from './api.js';
+import { connect, connectLocal, disconnect, on, off, getSettings, sendInput } from './api.js';
 import { initSidebar, loadSessions, setSessionStatus } from './sidebar.js';
 import { createTerminal, destroyTerminal, focusTerminal } from './terminal.js';
 import { initSFTP } from './sftp.js';
@@ -57,6 +57,9 @@ window.addEventListener('load', async () => {
 // ── Connect flow ──────────────────────────────────────────────────────────────
 
 async function onConnectRequest(sess) {
+  if (sess.type === 'local') {
+    return onLocalConnectRequest(sess);
+  }
   showToast(`🔌 Connecting to ${sess.host}…`);
   setSessionStatus(sess.id, 'connecting');
 
@@ -85,6 +88,29 @@ async function onConnectRequest(sess) {
     delete pendingConnects[sess.id];
     showToast(`❌ ${e}`);
     alert('Connection failed:\n' + e);
+  }
+}
+
+async function onLocalConnectRequest(localSess) {
+  showToast(`🖥 Opening ${localSess.sublabel}…`);
+  setSessionStatus('__local__', 'connecting');
+
+  const el = document.getElementById('terminal-container');
+  const cols = Math.floor((el?.clientWidth || 800) / 8);
+  const rows = Math.floor((el?.clientHeight || 400) / 17);
+
+  try {
+    const connID = await connectLocal(cols, rows);
+    await afterConnect(connID, {
+      id: '__local__',
+      label: localSess.label,
+      host: 'localhost',
+      username: localSess.sublabel,
+    });
+    setSessionStatus('__local__', 'connected');
+  } catch (e) {
+    setSessionStatus('__local__', 'disconnected');
+    showToast(`❌ ${e}`);
   }
 }
 
