@@ -24,7 +24,8 @@ export const renameRemote   = (id, o, n) => go().RenameRemote(id, o, n);
 export const setPermissions = (id, p, m) => go().SetRemotePermissions(id, p, m);
 export const uploadFiles    = (id, rp)   => go().UploadFiles(id, rp);
 export const uploadSpecific = (id, lps, rp) => go().UploadSpecificFiles(id, lps, rp);
-export const downloadFiles  = (id, rps)  => go().DownloadFiles(id, rps);
+export const downloadFiles      = (id, rps)        => go().DownloadFiles(id, rps);
+export const downloadFilesToDir = (id, rps, dir)   => go().DownloadFilesToDir(id, rps, dir);
 
 export const listLocalDir   = (p)     => go().ListLocalDir(p);
 export const getHomeDir     = ()      => go().GetHomeDir();

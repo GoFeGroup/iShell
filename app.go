@@ -272,6 +272,11 @@ func (a *App) DownloadFiles(connID string, remotePaths []string) ([]string, erro
 	if err != nil || localDir == "" {
 		return nil, err
 	}
+	return a.DownloadFilesToDir(connID, remotePaths, localDir)
+}
+
+// DownloadFilesToDir downloads remotePaths into the specified localDir without a dialog.
+func (a *App) DownloadFilesToDir(connID string, remotePaths []string, localDir string) ([]string, error) {
 	cl, err := a.sshMgr.SFTPClient(connID)
 	if err != nil {
 		return nil, err

@@ -1,7 +1,7 @@
 import {
   listRemoteDir, listLocalDir, getHomeDir,
   makeRemoteDir, deleteRemote, renameRemote, setPermissions,
-  uploadFiles, downloadFiles, on,
+  uploadFiles, downloadFiles, downloadFilesToDir, on,
 } from './api.js';
 import { showToast } from './toast.js';
 
@@ -50,7 +50,7 @@ function renderSFTP() {
           <span>Name</span><span style="text-align:right;">Size</span><span>Modified</span><span>Type</span>
         </div>
       </div>
-      <div class="drop-overlay" id="drop-local"><div class="drop-msg">⬆ Drop to upload</div></div>
+      <div class="drop-overlay" id="drop-local"><div class="drop-msg">⬇ Drop to download</div></div>
     </div>
 
     <!-- Mid strip -->
@@ -289,9 +289,9 @@ window._sftp.onDrop = async (e, targetPane) => {
       const lps = dragState.files.map(f => f.path);
       await doUploadPaths(lps);
     } else {
-      // remote → local: download
+      // remote → local: download directly to current local directory
       const rps = dragState.files.map(f => f.path);
-      await doDownload(rps);
+      await doDownloadToDir(rps, localPath);
     }
     dragState = null;
   }
@@ -342,6 +342,19 @@ async function doDownload(remotePaths) {
         addQueueItem(ids[i] || 'id-'+i, name, 'download');
       });
     }
+  } catch (e) { showToast('❌ ' + e); }
+}
+
+async function doDownloadToDir(remotePaths, localDir) {
+  try {
+    const ids = await downloadFilesToDir(connID, remotePaths, localDir);
+    if (ids) {
+      remotePaths.forEach((rp, i) => {
+        const name = rp.split('/').pop();
+        addQueueItem(ids[i] || 'id-'+i, name, 'download');
+      });
+    }
+    setTimeout(loadLocal, 500);
   } catch (e) { showToast('❌ ' + e); }
 }
 
