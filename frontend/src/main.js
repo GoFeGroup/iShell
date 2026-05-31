@@ -17,6 +17,9 @@ const pendingConnects = {}; // sessionID → { sess, req } — kept until host k
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
+  // Bring window to front on startup; works around Windows foreground-steal restriction.
+  window.go.main.App.FocusWindow().catch(() => {});
+
   settings = await getSettings().catch(() => ({}));
   if (settings?.theme) {
     document.documentElement.setAttribute('data-theme', settings.theme);
@@ -45,7 +48,7 @@ window.addEventListener('load', async () => {
   if (tabSwitchEl) tabSwitchEl.textContent = isMac ? '⌘1…9' : 'Alt+1…9';
 
   // Keyboard shortcuts
-  document.addEventListener('keydown', handleKeydown);
+  document.addEventListener('keydown', handleKeydown, true);
   window.addEventListener('ishell:toggleFullscreen', toggleFullscreen);
   window.addEventListener('ishell:toggleSidebar', toggleSidebar);
   window.addEventListener('ishell:toggleFind', toggleFind);

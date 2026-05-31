@@ -84,6 +84,18 @@ function keyEventToInput(e) {
   }
 }
 
+function handleAppShortcut(e) {
+  if (e.type !== 'keydown' || isMac || !e.altKey || e.ctrlKey || e.metaKey) return false;
+  const key = e.key.toLowerCase();
+  if (key !== 'b' && key !== 'f') return false;
+  // main.js handleKeydown (document capture) already dispatches the toggle;
+  // here we only stop propagation so xterm doesn't send ESC+key to the shell.
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation?.();
+  return true;
+}
+
 export function createTerminal(connID, settings) {
   const container = document.getElementById('terminal-container');
 
@@ -163,16 +175,18 @@ export function createTerminal(connID, settings) {
   const flushInput = makeInputSender(connID);
   let pasteFromKeyboard = false;
 
-  const tabHandler = (e) => {
+  const keydownHandler = (e) => {
+    if (handleAppShortcut(e)) return;
     if (e.key !== 'Tab') return;
     e.preventDefault();
     e.stopPropagation();
     flushInput('\t');
   };
-  xtermEl.addEventListener('keydown', tabHandler, true);
+  xtermEl.addEventListener('keydown', keydownHandler, true);
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
+    if (handleAppShortcut(e)) return false;
 
     if (e.key === 'Enter' && (isMac ? e.metaKey : e.altKey)) {
       window.dispatchEvent(new CustomEvent('ishell:toggleFullscreen'));
@@ -182,16 +196,6 @@ export function createTerminal(connID, settings) {
     // Close current tab: Cmd+W (Mac) or Alt+W (Win/Linux)
     if (isMac ? (e.metaKey && e.key === 'w') : (e.altKey && e.key === 'w')) {
       window.dispatchEvent(new CustomEvent('ishell:closeTab'));
-      return false;
-    }
-
-    if (!isMac && e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'b') {
-      window.dispatchEvent(new CustomEvent('ishell:toggleSidebar'));
-      return false;
-    }
-
-    if (!isMac && e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'f') {
-      window.dispatchEvent(new CustomEvent('ishell:toggleFind'));
       return false;
     }
 
@@ -305,7 +309,7 @@ export function createTerminal(connID, settings) {
   resizeObs.observe(container);
 
   instances[connID] = {
-    term, fitAddon, resizeObs, dataHandler, tabHandler,
+    term, fitAddon, resizeObs, dataHandler, keydownHandler,
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
     xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize,
     oscDisposables: [osc7Disposable, osc1337Disposable],
@@ -319,7 +323,7 @@ export function destroyTerminal(connID) {
   if (!inst) return;
   off('terminal:data:' + connID);
   inst.oscDisposables?.forEach(d => d.dispose());
-  inst.xtermEl.removeEventListener('keydown',     inst.tabHandler,        true);
+  inst.xtermEl.removeEventListener('keydown',     inst.keydownHandler,    true);
   inst.xtermEl.removeEventListener('mousedown',   inst.mouseDownHandler,  true);
   inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
   document.removeEventListener('mousemove',       inst.mouseMoveHandler,  true);

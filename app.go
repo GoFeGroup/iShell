@@ -40,6 +40,13 @@ func (a *App) startup(ctx context.Context) {
 	a.localMgr = local.NewManager(ctx)
 }
 
+// FocusWindow brings the app window to the foreground and ensures it has
+// keyboard focus. Called from JS on page load to handle cases where the OS
+// does not automatically activate the window (e.g. launched from a terminal).
+func (a *App) FocusWindow() {
+	platformBringToFront()
+}
+
 func (a *App) shutdown(_ context.Context) {
 	a.sshMgr.CloseAll()
 	a.localMgr.CloseAll()
