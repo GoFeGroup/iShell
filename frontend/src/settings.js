@@ -209,6 +209,7 @@ export async function initSettings() {
     };
     try {
       await saveSettings(updated);
+      localStorage.setItem('theme', updated.theme);
       showToast('✅ Settings saved — restart connections to apply terminal changes');
       document.documentElement.setAttribute('data-theme', updated.theme);
     } catch(e) { showToast('❌ ' + e); }

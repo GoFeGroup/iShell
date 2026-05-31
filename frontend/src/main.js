@@ -20,14 +20,11 @@ const pendingConnects = {}; // sessionID → { sess, req } — kept until host k
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
   settings = await getSettings().catch(() => ({}));
-  if (settings?.theme) document.documentElement.setAttribute('data-theme', settings.theme);
-
-  if (localStorage.getItem('sidebar-collapsed') === '1') {
-    const sidebar = document.getElementById('sidebar');
-    sidebar.style.transition = 'none';
-    sidebar.classList.add('collapsed');
-    requestAnimationFrame(() => { sidebar.style.transition = ''; });
+  if (settings?.theme) {
+    document.documentElement.setAttribute('data-theme', settings.theme);
+    localStorage.setItem('theme', settings.theme);
   }
+
   initSidebar(onConnectRequest);
   initProfilePicker(onConnectRequest);
 
@@ -271,8 +268,10 @@ async function openSettingsPanel() {
 
 function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
-  sidebar.classList.toggle('collapsed');
-  localStorage.setItem('sidebar-collapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
+  const collapsed = !document.documentElement.classList.contains('sidebar-collapsed');
+  sidebar.classList.toggle('collapsed', collapsed);
+  document.documentElement.classList.toggle('sidebar-collapsed', collapsed);
+  localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
 }
 
 // ── Find bar ─────────────────────────────────────────────────────────────────

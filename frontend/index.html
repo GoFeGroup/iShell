@@ -12,6 +12,16 @@
       color-scheme: dark;
     }
   </style>
+  <script>
+    // Apply persisted state synchronously before CSS is loaded to prevent flash.
+    try {
+      const _t = localStorage.getItem('theme');
+      if (_t) document.documentElement.setAttribute('data-theme', _t);
+      if (localStorage.getItem('sidebar-collapsed') === '1') {
+        document.documentElement.classList.add('sidebar-collapsed');
+      }
+    } catch {}
+  </script>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
