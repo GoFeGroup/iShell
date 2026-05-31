@@ -99,6 +99,9 @@ export function createTerminal(connID, settings) {
     }
     // Font changed: tear down old instance and fall through to rebuild.
     off('terminal:data:' + connID);
+    inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
+    document.removeEventListener('mousemove', inst.mouseMoveHandler, true);
+    document.removeEventListener('mouseup',   inst.mouseUpHandler,   true);
     inst.resizeObs.disconnect();
     inst.term.dispose();
     delete instances[connID];
@@ -200,6 +203,54 @@ export function createTerminal(connID, settings) {
       .catch(() => {});
   });
 
+  // iTerm2-style selection: drag creates selection; single click just positions cursor.
+  const DRAG_THRESHOLD = 4;
+  let mouseDownPos = null;
+  let isDragging = false;
+
+  const mouseDownHandler = (e) => {
+    if (e.button !== 0) return;
+    if (e.shiftKey || e.detail >= 2) {
+      // Shift+click or double/triple-click: xterm handles extend/word/line selection.
+      // Mark as drag so mouseUpHandler won't clear the result.
+      isDragging = true;
+      return;
+    }
+    isDragging = false;
+    mouseDownPos = { x: e.clientX, y: e.clientY };
+  };
+
+  const mouseMoveHandler = (e) => {
+    if (!mouseDownPos || isDragging) return;
+    const dx = e.clientX - mouseDownPos.x;
+    const dy = e.clientY - mouseDownPos.y;
+    if (Math.sqrt(dx * dx + dy * dy) >= DRAG_THRESHOLD) isDragging = true;
+  };
+
+  const mouseUpHandler = (e) => {
+    if (e.button !== 0) return;
+    if (!isDragging) {
+      term.clearSelection();
+    } else {
+      const sel = term.getSelection();
+      if (sel) window.runtime.ClipboardSetText(sel).catch(() => {});
+    }
+    mouseDownPos = null;
+    isDragging = false;
+  };
+
+  xtermEl.addEventListener('mousedown',  mouseDownHandler,  true);
+  document.addEventListener('mousemove', mouseMoveHandler,  true);
+  document.addEventListener('mouseup',   mouseUpHandler,    true);
+
+  const contextMenuHandler = (e) => {
+    e.preventDefault();
+    window.runtime.ClipboardGetText()
+      .then(text => { if (text) flushInput(text); })
+      .catch(() => {});
+  };
+  xtermEl.addEventListener('contextmenu', contextMenuHandler);
+
   const dataHandler = (b64) => {
     try {
       term.write(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
@@ -217,7 +268,11 @@ export function createTerminal(connID, settings) {
   });
   resizeObs.observe(container);
 
-  instances[connID] = { term, fitAddon, resizeObs, dataHandler, tabHandler, xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize };
+  instances[connID] = {
+    term, fitAddon, resizeObs, dataHandler, tabHandler,
+    mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
+    xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize,
+  };
 
   return term;
 }
@@ -226,7 +281,11 @@ export function destroyTerminal(connID) {
   const inst = instances[connID];
   if (!inst) return;
   off('terminal:data:' + connID);
-  inst.xtermEl.removeEventListener('keydown', inst.tabHandler, true);
+  inst.xtermEl.removeEventListener('keydown',     inst.tabHandler,        true);
+  inst.xtermEl.removeEventListener('mousedown',   inst.mouseDownHandler,  true);
+  inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
+  document.removeEventListener('mousemove',       inst.mouseMoveHandler,  true);
+  document.removeEventListener('mouseup',         inst.mouseUpHandler,    true);
   inst.resizeObs.disconnect();
   inst.term.dispose();
   delete instances[connID];
