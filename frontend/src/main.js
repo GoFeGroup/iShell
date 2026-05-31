@@ -22,6 +22,12 @@ window.addEventListener('load', async () => {
   settings = await getSettings().catch(() => ({}));
   if (settings?.theme) document.documentElement.setAttribute('data-theme', settings.theme);
 
+  if (localStorage.getItem('sidebar-collapsed') === '1') {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.style.transition = 'none';
+    sidebar.classList.add('collapsed');
+    requestAnimationFrame(() => { sidebar.style.transition = ''; });
+  }
   initSidebar(onConnectRequest);
   initProfilePicker(onConnectRequest);
 
@@ -264,7 +270,9 @@ async function openSettingsPanel() {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
 function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('collapsed');
+  const sidebar = document.getElementById('sidebar');
+  sidebar.classList.toggle('collapsed');
+  localStorage.setItem('sidebar-collapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
 }
 
 // ── Find bar ─────────────────────────────────────────────────────────────────
