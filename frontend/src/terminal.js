@@ -247,7 +247,7 @@ function buildTheme(scheme) {
     cursor:        '#F5E0DC',
     selectionBackground: 'rgba(124,140,248,0.3)',
     black:         '#14191E', brightBlack:   '#676767',
-    red:           '#B43C29', brightRed:     '#DC7974',
+    red:           '#E04535', brightRed:     '#FF6B6B',
     green:         '#00C200', brightGreen:   '#57E690',
     yellow:        '#C7C400', brightYellow:  '#ECE100',
     blue:          '#2743C7', brightBlue:    '#A6AAF1',
