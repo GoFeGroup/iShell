@@ -58,6 +58,7 @@ function isGlobalAppShortcut(e) {
   return key === 'w' ||
     key === 'b' ||
     key === 'f' ||
+    key === 'o' ||
     key === ',' ||
     (e.key >= '1' && e.key <= '9');
 }
