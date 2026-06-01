@@ -6,90 +6,60 @@ import { sendInput, resizeTerm, on, off } from './api.js';
 const isMac = navigator.platform.startsWith('Mac');
 const instances = {};  // connID → { term, fitAddon, resizeObs, dataHandler, xtermEl }
 const cwdByConn = {};
-const INPUT_BATCH_DELAY_MS = 60;
 const DEFAULT_FONT_SIZE = 16;
+const TERMINAL_DEBUG_KEY = 'ishell-terminal-debug';
+
+function debugTerminal(...args) {
+  if (localStorage.getItem(TERMINAL_DEBUG_KEY) === '1') {
+    console.debug('[terminal]', ...args);
+  }
+}
 
 function makeInputSender(connID) {
-  let buffer = '';
-  let timer = null;
-  let chain = Promise.resolve();
+  let pending = '';
+  let draining = false;
 
-  function send(payload) {
-    chain = chain
-      .then(() => sendInput(connID, payload))
-      .catch(e => console.error('sendInput:', e));
-  }
-
-  function flush() {
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
+  async function drain() {
+    if (draining) return;
+    draining = true;
+    try {
+      while (pending) {
+        const payload = pending;
+        pending = '';
+        debugTerminal('sendInput', connID, payload, Array.from(new TextEncoder().encode(payload)));
+        await sendInput(connID, payload);
+      }
+    } catch (e) {
+      console.error('sendInput:', e);
+    } finally {
+      draining = false;
+      if (pending) drain();
     }
-    if (!buffer) return;
-    const payload = buffer;
-    buffer = '';
-    send(payload);
   }
 
   return (data) => {
-    buffer += data;
-    if (shouldFlushInput(data)) {
-      flush();
-      return;
-    }
-    if (!timer) timer = setTimeout(flush, INPUT_BATCH_DELAY_MS);
+    pending += data;
+    drain();
   };
 }
 
-function shouldFlushInput(data) {
-  return data.length > 1 ||
-    data === '\r' ||
-    data === '\n' ||
-    data === '\t' ||
-    data === '\x7f' ||
-    data === '\x1b';
-}
-
-function isPlainPrintableKey(e) {
-  return e.type === 'keydown' &&
-    e.key.length === 1 &&
-    !e.ctrlKey &&
-    !e.metaKey &&
-    !e.altKey;
-}
-
-function keyEventToInput(e) {
-  if (e.type !== 'keydown' || e.metaKey) return null;
-  if (e.altKey && e.key.length === 1 && !e.ctrlKey) return '\x1b' + e.key;
-  if (e.ctrlKey && e.key.length === 1) {
-    const ch = e.key.toUpperCase().charCodeAt(0);
-    if (ch >= 64 && ch <= 95) return String.fromCharCode(ch - 64);
-  }
-  if (isPlainPrintableKey(e)) return e.key;
-
-  switch (e.key) {
-    case 'Enter': return '\r';
-    case 'Backspace': return '\x7f';
-    case 'Escape': return '\x1b';
-    case 'ArrowUp': return '\x1b[A';
-    case 'ArrowDown': return '\x1b[B';
-    case 'ArrowRight': return '\x1b[C';
-    case 'ArrowLeft': return '\x1b[D';
-    case 'Home': return '\x1b[H';
-    case 'End': return '\x1b[F';
-    case 'Delete': return '\x1b[3~';
-    case 'PageUp': return '\x1b[5~';
-    case 'PageDown': return '\x1b[6~';
-    default: return null;
-  }
-}
-
-function handleAppShortcut(e) {
-  if (e.type !== 'keydown' || isMac || !e.altKey || e.ctrlKey || e.metaKey) return false;
+function isGlobalAppShortcut(e) {
+  if (e.type !== 'keydown') return false;
   const key = e.key.toLowerCase();
-  if (key !== 'b' && key !== 'f') return false;
-  // main.js handleKeydown (document capture) already dispatches the toggle;
-  // here we only stop propagation so xterm doesn't send ESC+key to the shell.
+  const appMod = isMac ? (e.metaKey && !e.ctrlKey && !e.altKey) : (e.altKey && !e.ctrlKey && !e.metaKey);
+  if (e.key === 'Enter' && (isMac ? e.metaKey : e.altKey)) return true;
+  if (!appMod) return false;
+  return key === 'w' ||
+    key === 'b' ||
+    key === 'f' ||
+    key === ',' ||
+    (e.key >= '1' && e.key <= '9');
+}
+
+function blockAppShortcut(e) {
+  if (!isGlobalAppShortcut(e)) return false;
+  // main.js handles global shortcuts during document capture; here we only stop
+  // xterm from sending the same key sequence to the shell.
   e.preventDefault();
   e.stopPropagation();
   e.stopImmediatePropagation?.();
@@ -120,6 +90,10 @@ export function createTerminal(connID, settings) {
     }
     // Font changed: tear down old instance and fall through to rebuild.
     off('terminal:data:' + connID);
+    inst.disposables?.forEach(d => d.dispose());
+    inst.xtermEl.removeEventListener('compositionstart', inst.compositionStartHandler, true);
+    inst.xtermEl.removeEventListener('compositionend', inst.compositionEndHandler, true);
+    inst.xtermEl.removeEventListener('mousedown', inst.mouseDownHandler, true);
     inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
     document.removeEventListener('mousemove', inst.mouseMoveHandler, true);
     document.removeEventListener('mouseup',   inst.mouseUpHandler,   true);
@@ -174,49 +148,72 @@ export function createTerminal(connID, settings) {
 
   const flushInput = makeInputSender(connID);
   let pasteFromKeyboard = false;
+  let composing = false;
+  let pendingComposition = null;
 
-  const keydownHandler = (e) => {
-    if (handleAppShortcut(e)) return;
-    if (e.key !== 'Tab') return;
-    e.preventDefault();
-    e.stopPropagation();
-    flushInput('\t');
+  const compositionStartHandler = () => {
+    composing = true;
+    pendingComposition = null;
+    debugTerminal('compositionstart', connID);
   };
-  xtermEl.addEventListener('keydown', keydownHandler, true);
+
+  const compositionEndHandler = (e) => {
+    composing = false;
+    const text = e.data || '';
+    debugTerminal('compositionend', connID, text);
+    if (!text) return;
+
+    // xterm normally emits the committed IME text through onData. In Wails on
+    // macOS that event can be missed, so send the composition result only if
+    // xterm does not report the same text immediately after compositionend.
+    const marker = { text, seenText: '' };
+    pendingComposition = marker;
+    setTimeout(() => {
+      if (pendingComposition === marker && marker.seenText !== text) {
+        debugTerminal('composition fallback', connID, text);
+        flushInput(text);
+      }
+      if (pendingComposition === marker) pendingComposition = null;
+    }, 30);
+  };
+
+  xtermEl.addEventListener('compositionstart', compositionStartHandler, true);
+  xtermEl.addEventListener('compositionend', compositionEndHandler, true);
+
+  // IME-composed text (Chinese, Japanese, etc.) should arrive here after composition ends.
+  const dataDisposable = term.onData(data => {
+    debugTerminal('onData', connID, data);
+    if (pendingComposition) {
+      const nextSeenText = pendingComposition.seenText + data;
+      if (pendingComposition.text.startsWith(nextSeenText)) {
+        pendingComposition.seenText = nextSeenText;
+        if (pendingComposition.seenText === pendingComposition.text) {
+          pendingComposition = null;
+        }
+      } else if (data === pendingComposition.text) {
+        pendingComposition = null;
+      }
+    }
+    flushInput(data);
+  });
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
-    if (handleAppShortcut(e)) return false;
+    // Let xterm handle IME composition natively; onData delivers the final composed text.
+    if (e.isComposing || composing || e.key === 'Process') return true;
+    if (blockAppShortcut(e)) return false;
 
-    if (e.key === 'Enter' && (isMac ? e.metaKey : e.altKey)) {
-      window.dispatchEvent(new CustomEvent('ishell:toggleFullscreen'));
-      return false;
-    }
-
-    // Close current tab: Cmd+W (Mac) or Alt+W (Win/Linux)
-    if (isMac ? (e.metaKey && e.key === 'w') : (e.altKey && e.key === 'w')) {
-      window.dispatchEvent(new CustomEvent('ishell:closeTab'));
-      return false;
-    }
-
-    // Tab switching: Cmd+1-9 (Mac) or Alt+1-9 (Win/Linux)
-    const isTabSwitch = isMac
-      ? (e.metaKey && !e.ctrlKey && !e.altKey && e.key >= '1' && e.key <= '9')
-      : (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= '1' && e.key <= '9');
-    if (isTabSwitch) {
-      window.dispatchEvent(new CustomEvent('ishell:switchTab', { detail: parseInt(e.key) }));
-      return false;
-    }
+    const key = e.key.toLowerCase();
 
     // Copy: Cmd+C (Mac) or Ctrl+Shift+C (Win/Linux)
-    if (isMac ? (e.metaKey && e.key === 'c') : (e.ctrlKey && e.shiftKey && e.key === 'C')) {
+    if (isMac ? (e.metaKey && key === 'c') : (e.ctrlKey && e.shiftKey && key === 'c')) {
       const sel = term.getSelection();
       if (sel) window.runtime.ClipboardSetText(sel).catch(() => {});
       return false;
     }
 
     // Paste: Cmd+V (Mac) or Ctrl+Shift+V (Win/Linux)
-    if (isMac ? (e.metaKey && e.key === 'v') : (e.ctrlKey && e.shiftKey && e.key === 'V')) {
+    if (isMac ? (e.metaKey && key === 'v') : (e.ctrlKey && e.shiftKey && key === 'v')) {
       pasteFromKeyboard = true;
       window.runtime.ClipboardGetText()
         .then(text => { pasteFromKeyboard = false; if (text) flushInput(text); })
@@ -224,11 +221,8 @@ export function createTerminal(connID, settings) {
       return false;
     }
 
-    const input = keyEventToInput(e);
-    if (input) {
-      flushInput(input);
-      return false;
-    }
+    // Let xterm translate all ordinary input for the current OS, keyboard layout,
+    // modifier state, and IME. The resulting bytes are sent by onData above.
     return true;
   });
 
@@ -309,10 +303,11 @@ export function createTerminal(connID, settings) {
   resizeObs.observe(container);
 
   instances[connID] = {
-    term, fitAddon, resizeObs, dataHandler, keydownHandler,
+    term, fitAddon, resizeObs, dataHandler,
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
+    compositionStartHandler, compositionEndHandler,
     xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize,
-    oscDisposables: [osc7Disposable, osc1337Disposable],
+    disposables: [osc7Disposable, osc1337Disposable, dataDisposable],
   };
 
   return term;
@@ -322,8 +317,9 @@ export function destroyTerminal(connID) {
   const inst = instances[connID];
   if (!inst) return;
   off('terminal:data:' + connID);
-  inst.oscDisposables?.forEach(d => d.dispose());
-  inst.xtermEl.removeEventListener('keydown',     inst.keydownHandler,    true);
+  inst.disposables?.forEach(d => d.dispose());
+  inst.xtermEl.removeEventListener('compositionstart', inst.compositionStartHandler, true);
+  inst.xtermEl.removeEventListener('compositionend',   inst.compositionEndHandler,   true);
   inst.xtermEl.removeEventListener('mousedown',   inst.mouseDownHandler,  true);
   inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
   document.removeEventListener('mousemove',       inst.mouseMoveHandler,  true);

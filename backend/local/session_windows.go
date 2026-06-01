@@ -6,11 +6,26 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/UserExistsError/conpty"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
+}
 
 func startSession(ctx context.Context, connID string, cols, rows int) (*session, error) {
 	if cols <= 0 {
@@ -53,8 +68,7 @@ func startSession(ctx context.Context, connID string, cols, rows int) (*session,
 
 	return &session{
 		write: func(data []byte) error {
-			_, err := cpty.Write(data)
-			return err
+			return writeAll(cpty, data)
 		},
 		resize: func(c, r int) error {
 			return cpty.Resize(c, r)

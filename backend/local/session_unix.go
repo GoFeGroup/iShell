@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/creack/pty"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -26,10 +28,58 @@ func defaultShell() string {
 	return "bash"
 }
 
+func terminalEnv() []string {
+	env := os.Environ()
+	if !hasUTF8Locale(env, "LANG") {
+		env = upsertEnv(env, "LANG", "en_US.UTF-8")
+	}
+	if !hasUTF8Locale(env, "LC_CTYPE") {
+		env = upsertEnv(env, "LC_CTYPE", "en_US.UTF-8")
+	}
+	return append(env, "TERM=xterm-256color")
+}
+
+func hasUTF8Locale(env []string, key string) bool {
+	prefix := key + "="
+	for _, item := range env {
+		if len(item) <= len(prefix) || item[:len(prefix)] != prefix {
+			continue
+		}
+		value := strings.ToUpper(item[len(prefix):])
+		return strings.Contains(value, "UTF-8") || strings.Contains(value, "UTF8")
+	}
+	return false
+}
+
+func upsertEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	for i, item := range env {
+		if len(item) >= len(prefix) && item[:len(prefix)] == prefix {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
+}
+
 func startSession(ctx context.Context, connID string, cols, rows int) (*session, error) {
 	shell := defaultShell()
 	cmd := exec.Command(shell)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = terminalEnv()
 	if home, err := os.UserHomeDir(); err == nil {
 		cmd.Dir = home
 	}
@@ -66,8 +116,7 @@ func startSession(ctx context.Context, connID string, cols, rows int) (*session,
 
 	return &session{
 		write: func(data []byte) error {
-			_, err := ptmx.Write(data)
-			return err
+			return writeAll(ptmx, data)
 		},
 		resize: func(c, r int) error {
 			return pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(c), Rows: uint16(r)})

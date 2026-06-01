@@ -9,6 +9,7 @@ import (
 )
 
 type session struct {
+	mu     sync.Mutex
 	write  func([]byte) error
 	resize func(cols, rows int) error
 	close  func() error
@@ -69,6 +70,8 @@ func (m *Manager) SendInput(connID string, data []byte) error {
 	if sess == nil {
 		return fmt.Errorf("local session %s not found", connID)
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	return sess.write(data)
 }
 
