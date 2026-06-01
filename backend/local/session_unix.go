@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -18,13 +20,16 @@ import (
 )
 
 func defaultShell() string {
-	if runtime.GOOS == "darwin" {
-		if _, err := exec.LookPath("zsh"); err == nil {
-			return "zsh"
-		}
-	}
 	if shell := os.Getenv("SHELL"); shell != "" {
 		return shell
+	}
+	if runtime.GOOS == "darwin" {
+		if shell := macOSUserShell(); shell != "" {
+			return shell
+		}
+		if _, err := os.Stat("/bin/zsh"); err == nil {
+			return "/bin/zsh"
+		}
 	}
 	return "bash"
 }
@@ -63,6 +68,36 @@ func upsertEnv(env []string, key, value string) []string {
 	return append(env, prefix+value)
 }
 
+func macOSUserShell() string {
+	u, err := user.Current()
+	if err != nil || u.Username == "" {
+		return ""
+	}
+
+	out, err := exec.Command("/usr/bin/dscl", ".", "-read", "/Users/"+u.Username, "UserShell").Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "UserShell:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "UserShell:"))
+		}
+	}
+	return ""
+}
+
+func shellCommand(shell string) *exec.Cmd {
+	cmd := exec.Command(shell)
+	if runtime.GOOS == "darwin" {
+		base := filepath.Base(shell)
+		if base != "" {
+			cmd.Args = []string{"-" + base}
+		}
+	}
+	return cmd
+}
+
 func writeAll(w io.Writer, data []byte) error {
 	for len(data) > 0 {
 		n, err := w.Write(data)
@@ -79,7 +114,7 @@ func writeAll(w io.Writer, data []byte) error {
 
 func startSession(ctx context.Context, connID string, cols, rows int) (*session, error) {
 	shell := defaultShell()
-	cmd := exec.Command(shell)
+	cmd := shellCommand(shell)
 	cmd.Env = terminalEnv()
 	if home, err := os.UserHomeDir(); err == nil {
 		cmd.Dir = home

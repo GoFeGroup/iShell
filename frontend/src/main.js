@@ -1,6 +1,6 @@
 import '@xterm/xterm/css/xterm.css';
 import { connect, connectLocal, disconnect, on, off, getSettings, sendInput } from './api.js';
-import { initSidebar, loadProfiles, setSessionStatus } from './sidebar.js';
+import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { initProfilePicker } from './profile-picker.js';
 import { createTerminal, destroyTerminal, focusTerminal } from './terminal.js';
 import { initSFTP } from './sftp.js';
@@ -361,6 +361,11 @@ function handleKeydown(e) {
   if (isTabSwitch) {
     e.preventDefault();
     switchToTabByIndex(parseInt(e.key));
+    return;
+  }
+  if ((isMac ? e.metaKey : e.altKey) && e.key.toLowerCase() === 't') {
+    e.preventDefault();
+    onLocalConnectRequest(LOCAL_SESSION);
     return;
   }
   if (e.key === 'Enter' && (isMac ? e.metaKey : e.altKey)) {

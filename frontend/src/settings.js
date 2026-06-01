@@ -125,6 +125,7 @@ export async function initSettings() {
         ['Open profile picker',    `${alt}+O`],
         ['Connect (in search)',    'Enter'],
         { group: 'Terminal' },
+        ['Open local terminal',    isMac ? '⌘+T' : 'Alt+T'],
         ['Find in terminal',       isMac ? `${mod}+F` : 'Alt+F'],
         ['Close current tab',      isMac ? '⌘+W' : 'Alt+W'],
       ].map(item => {
