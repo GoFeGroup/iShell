@@ -154,7 +154,7 @@ export function createTerminal(connID, settings) {
   resizeTerm(connID, term.cols, term.rows).catch(() => {});
 
   const flushInput = makeInputSender(connID);
-  let pasteFromKeyboard = false;
+  let suppressPasteUntil = 0;
   let composing = false;
   let pendingComposition = null;
 
@@ -221,10 +221,13 @@ export function createTerminal(connID, settings) {
 
     // Paste: Cmd+V (Mac) or Ctrl+Shift+V (Win/Linux)
     if (isMac ? (e.metaKey && key === 'v') : (e.ctrlKey && e.shiftKey && key === 'v')) {
-      pasteFromKeyboard = true;
+      suppressPasteUntil = Date.now() + 500;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
       window.runtime.ClipboardGetText()
-        .then(text => { pasteFromKeyboard = false; if (text) flushInput(text); })
-        .catch(() => { pasteFromKeyboard = false; });
+        .then(text => { if (text) flushInput(text); })
+        .catch(() => {});
       return false;
     }
 
@@ -260,7 +263,11 @@ export function createTerminal(connID, settings) {
   // Handles right-click "Paste" from context menu; keyboard paste is handled above.
   xtermEl.addEventListener('paste', e => {
     e.preventDefault();
-    if (pasteFromKeyboard) return;
+    if (Date.now() < suppressPasteUntil) {
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      return;
+    }
     const text = e.clipboardData?.getData('text');
     if (text) { flushInput(text); return; }
     window.runtime.ClipboardGetText()
