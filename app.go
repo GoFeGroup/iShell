@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"ishell/backend/local"
@@ -45,6 +47,46 @@ func (a *App) startup(ctx context.Context) {
 // does not automatically activate the window (e.g. launched from a terminal).
 func (a *App) FocusWindow() {
 	platformBringToFront()
+}
+
+// LaunchNewInstance starts a separate iShell process. On macOS, LaunchServices
+// needs `open -n` for a second instance of the same .app bundle.
+func (a *App) LaunchNewInstance() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+
+	if runtime.GOOS == "darwin" {
+		if bundle := appBundlePath(exe); bundle != "" {
+			if output, err := exec.Command("open", "-n", bundle).CombinedOutput(); err != nil {
+				msg := strings.TrimSpace(string(output))
+				if msg != "" {
+					return fmt.Errorf("open new instance: %w: %s", err, msg)
+				}
+				return fmt.Errorf("open new instance: %w", err)
+			}
+			return nil
+		}
+	}
+
+	cmd := exec.Command(exe)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start new instance: %w", err)
+	}
+	return cmd.Process.Release()
+}
+
+func appBundlePath(exe string) string {
+	for dir := filepath.Dir(exe); dir != "." && dir != string(filepath.Separator); dir = filepath.Dir(dir) {
+		if strings.HasSuffix(dir, ".app") {
+			return dir
+		}
+	}
+	return ""
 }
 
 func (a *App) shutdown(_ context.Context) {

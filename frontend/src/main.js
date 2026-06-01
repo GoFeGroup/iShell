@@ -1,5 +1,5 @@
 import '@xterm/xterm/css/xterm.css';
-import { connect, connectLocal, disconnect, on, off, getSettings, sendInput } from './api.js';
+import { connect, connectLocal, disconnect, on, off, getSettings, sendInput, launchNewInstance } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { initProfilePicker } from './profile-picker.js';
 import { createTerminal, destroyTerminal, focusTerminal } from './terminal.js';
@@ -34,6 +34,7 @@ window.addEventListener('load', async () => {
   document.getElementById('btn-disconnect').addEventListener('click', () => isTerminalTab(activeTab) && doDisconnect(activeTab.connID));
   document.getElementById('btn-sftp').addEventListener('click', toggleSFTP);
   document.getElementById('btn-settings').addEventListener('click', openSettingsPanel);
+  document.getElementById('btn-new-instance').addEventListener('click', openNewInstance);
   document.getElementById('btn-search-term').addEventListener('click', toggleFind);
   document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
   document.getElementById('find-close').addEventListener('click', () => setFindBar(false));
@@ -62,6 +63,14 @@ window.addEventListener('load', async () => {
 
   showPanel('welcome');
 });
+
+async function openNewInstance() {
+  try {
+    await launchNewInstance();
+  } catch (e) {
+    showToast(`❌ ${e}`);
+  }
+}
 
 // ── Connect flow ──────────────────────────────────────────────────────────────
 
