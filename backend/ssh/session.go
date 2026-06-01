@@ -2,12 +2,13 @@ package ssh
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	gossh "golang.org/x/crypto/ssh"
+
+	"ishell/backend/termout"
 )
 
 // TermSession wraps an interactive SSH shell session with a PTY.
@@ -16,6 +17,7 @@ type TermSession struct {
 	session *gossh.Session
 	stdin   io.WriteCloser
 	inputCh chan []byte
+	out     *termout.Emitter
 	ctx     context.Context
 }
 
@@ -70,6 +72,7 @@ func newTermSession(ctx context.Context, connID string, client *gossh.Client, co
 		session: sess,
 		stdin:   stdin,
 		inputCh: make(chan []byte, 256),
+		out:     termout.New(ctx, connID),
 		ctx:     ctx,
 	}
 
@@ -81,6 +84,7 @@ func newTermSession(ctx context.Context, connID string, client *gossh.Client, co
 	go ts.pumpOutput(stderr)
 	go func() {
 		_ = sess.Wait()
+		ts.out.Close() // flush any buffered tail before signalling close
 		runtime.EventsEmit(ctx, "terminal:closed:"+connID, nil)
 	}()
 
@@ -101,8 +105,9 @@ func (ts *TermSession) pumpOutput(r io.Reader) {
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
-			encoded := base64.StdEncoding.EncodeToString(buf[:n])
-			runtime.EventsEmit(ts.ctx, "terminal:data:"+ts.connID, encoded)
+			// Both stdout and stderr readers share ts.out; its mutex serialises
+			// them into a single ordered, coalesced event stream.
+			ts.out.Write(buf[:n])
 		}
 		if err != nil {
 			return

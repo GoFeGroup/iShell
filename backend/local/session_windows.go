@@ -4,13 +4,14 @@ package local
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/UserExistsError/conpty"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"ishell/backend/termout"
 )
 
 func writeAll(w io.Writer, data []byte) error {
@@ -49,18 +50,19 @@ func startSession(ctx context.Context, connID string, cols, rows int) (*session,
 		return nil, fmt.Errorf("start powershell conpty: %w", err)
 	}
 
+	em := termout.New(ctx, connID)
 	go func() {
 		buf := make([]byte, 8192)
 		for {
 			n, readErr := cpty.Read(buf)
 			if n > 0 {
-				encoded := base64.StdEncoding.EncodeToString(buf[:n])
-				wailsRuntime.EventsEmit(ctx, "terminal:data:"+connID, encoded)
+				em.Write(buf[:n])
 			}
 			if readErr != nil {
 				break
 			}
 		}
+		em.Close() // flush any buffered tail before signalling close
 		wailsRuntime.EventsEmit(ctx, "terminal:closed:"+connID, nil)
 	}()
 

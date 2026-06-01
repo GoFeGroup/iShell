@@ -27,10 +27,16 @@ function makeInputSender(connID) {
         const payload = pending;
         pending = '';
         debugTerminal('sendInput', connID, payload, Array.from(new TextEncoder().encode(payload)));
-        await sendInput(connID, payload);
+        try {
+          await sendInput(connID, payload);
+        } catch (e) {
+          // Re-queue the bytes we already took so a transient IPC failure never
+          // drops input, then back off briefly to avoid a busy retry loop.
+          pending = payload + pending;
+          console.error('sendInput:', e);
+          await new Promise(r => setTimeout(r, 8));
+        }
       }
-    } catch (e) {
-      console.error('sendInput:', e);
     } finally {
       draining = false;
       if (pending) drain();
@@ -93,6 +99,7 @@ export function createTerminal(connID, settings) {
     inst.disposables?.forEach(d => d.dispose());
     inst.xtermEl.removeEventListener('compositionstart', inst.compositionStartHandler, true);
     inst.xtermEl.removeEventListener('compositionend', inst.compositionEndHandler, true);
+    inst.xtermEl.removeEventListener('beforeinput', inst.beforeInputHandler, true);
     inst.xtermEl.removeEventListener('mousedown', inst.mouseDownHandler, true);
     inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
     document.removeEventListener('mousemove', inst.mouseMoveHandler, true);
@@ -221,10 +228,34 @@ export function createTerminal(connID, settings) {
       return false;
     }
 
-    // Let xterm translate all ordinary input for the current OS, keyboard layout,
-    // modifier state, and IME. The resulting bytes are sent by onData above.
+    // Fast path for ordinary printable characters: send them ourselves and
+    // prevent xterm's hidden-textarea input path, which drops keystrokes under
+    // fast typing in WKWebView (measured: keydowns registered but onData short).
+    // IME input arrives as keyCode 229 / 'Process' / isComposing and is handled
+    // by the composition path above, so it never reaches here — Chinese/IME
+    // input is unaffected. We also skip Ctrl/Meta/Alt combos so control codes,
+    // app shortcuts, and Alt-as-meta keep going through xterm's translation.
+    // Ordinary printable characters are NOT sent from here: when a CJK input
+    // source is active, WebKit reports keyCode 229 for every key and xterm
+    // ignores such keydowns, routing text through the hidden textarea's input
+    // events — which drop characters under fast typing in WKWebView. We instead
+    // capture them in the beforeinput handler below, which reliably distinguishes
+    // direct typing (insertText) from IME composition (insertCompositionText).
     return true;
   });
+
+  // Direct-typing fast path: handle "insertText" ourselves so it never goes
+  // through xterm's lossy textarea path. IME composition (insertCompositionText,
+  // insertFromComposition) is left for xterm, so Chinese/Japanese input is
+  // unaffected. Capture phase runs before xterm's own textarea listener.
+  const beforeInputHandler = (e) => {
+    if (composing) return;
+    if (e.inputType === 'insertText' && e.data) {
+      e.preventDefault();
+      flushInput(e.data);
+    }
+  };
+  xtermEl.addEventListener('beforeinput', beforeInputHandler, true);
 
   // Handles right-click "Paste" from context menu; keyboard paste is handled above.
   xtermEl.addEventListener('paste', e => {
@@ -305,7 +336,7 @@ export function createTerminal(connID, settings) {
   instances[connID] = {
     term, fitAddon, resizeObs, dataHandler,
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
-    compositionStartHandler, compositionEndHandler,
+    compositionStartHandler, compositionEndHandler, beforeInputHandler,
     xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize,
     disposables: [osc7Disposable, osc1337Disposable, dataDisposable],
   };
@@ -320,6 +351,7 @@ export function destroyTerminal(connID) {
   inst.disposables?.forEach(d => d.dispose());
   inst.xtermEl.removeEventListener('compositionstart', inst.compositionStartHandler, true);
   inst.xtermEl.removeEventListener('compositionend',   inst.compositionEndHandler,   true);
+  inst.xtermEl.removeEventListener('beforeinput',      inst.beforeInputHandler,      true);
   inst.xtermEl.removeEventListener('mousedown',   inst.mouseDownHandler,  true);
   inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
   document.removeEventListener('mousemove',       inst.mouseMoveHandler,  true);

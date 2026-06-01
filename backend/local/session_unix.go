@@ -4,7 +4,6 @@ package local
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +13,8 @@ import (
 
 	"github.com/creack/pty"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"ishell/backend/termout"
 )
 
 func defaultShell() string {
@@ -99,18 +100,19 @@ func startSession(ctx context.Context, connID string, cols, rows int) (*session,
 		return nil, fmt.Errorf("start pty: %w", err)
 	}
 
+	em := termout.New(ctx, connID)
 	go func() {
 		buf := make([]byte, 8192)
 		for {
 			n, readErr := ptmx.Read(buf)
 			if n > 0 {
-				encoded := base64.StdEncoding.EncodeToString(buf[:n])
-				wailsRuntime.EventsEmit(ctx, "terminal:data:"+connID, encoded)
+				em.Write(buf[:n])
 			}
 			if readErr != nil {
 				break
 			}
 		}
+		em.Close() // flush any buffered tail before signalling close
 		wailsRuntime.EventsEmit(ctx, "terminal:closed:"+connID, nil)
 	}()
 
