@@ -73,7 +73,11 @@ export async function openProfilePicker() {
             <div class="pp-item-sub">${esc(sess.username)}@${esc(sess.host)}:${sess.port}</div>
           </div>`;
       }
-      el.addEventListener('click', () => doConnect(item));
+      el.addEventListener('click', () => {
+        selectedIdx = idx;
+        render();
+      });
+      el.addEventListener('dblclick', () => doConnect(item));
       el.addEventListener('mouseenter', () => { selectedIdx = idx; render(); });
       listEl.appendChild(el);
     });

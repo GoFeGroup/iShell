@@ -71,17 +71,20 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 	var authMethods []gossh.AuthMethod
 
 	authType := sess.AuthType
-	if opts.Password != "" || authType == storage.AuthPassword {
-		pw := opts.Password
-		if pw == "" {
-			pw = sess.Password
-		}
+	pw := opts.Password
+	if pw == "" {
+		pw = sess.Password
+	}
+	if pw != "" {
 		authMethods = append(authMethods, gossh.Password(pw))
 	}
 
 	keyPath := opts.KeyPath
 	if keyPath == "" {
 		keyPath = sess.KeyPath
+	}
+	if keyPath == "" && pw == "" {
+		keyPath = DefaultPrivateKeyPath
 	}
 	passphrase := opts.Passphrase
 	if passphrase == "" {
