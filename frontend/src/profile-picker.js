@@ -6,12 +6,6 @@ let onConnectCb = null;
 
 export function initProfilePicker(onConnect) {
   onConnectCb = onConnect;
-  document.addEventListener('keydown', (e) => {
-    const trigger = isMac
-      ? (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === 'o')
-      : (e.altKey  && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key === 'o');
-    if (trigger) { e.preventDefault(); openProfilePicker(); }
-  });
 }
 
 export async function openProfilePicker() {

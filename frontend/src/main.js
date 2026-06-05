@@ -1,7 +1,7 @@
 import '@xterm/xterm/css/xterm.css';
 import { connect, connectLocal, disconnect, on, off, getSettings, sendInput, launchNewInstance } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
-import { initProfilePicker } from './profile-picker.js';
+import { initProfilePicker, openProfilePicker } from './profile-picker.js';
 import { createTerminal, destroyTerminal, focusTerminal, fitTerminal } from './terminal.js';
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
@@ -394,6 +394,11 @@ function handleKeydown(e) {
   if ((isMac ? e.metaKey : e.altKey) && e.key.toLowerCase() === 't') {
     e.preventDefault();
     onLocalConnectRequest(LOCAL_SESSION);
+    return;
+  }
+  if ((isMac ? e.metaKey : e.altKey) && e.key.toLowerCase() === 'o') {
+    e.preventDefault();
+    openProfilePicker();
     return;
   }
   if (e.key === 'Enter' && (isMac ? e.metaKey : e.altKey)) {
