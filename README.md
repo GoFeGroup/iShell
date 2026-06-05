@@ -139,9 +139,9 @@ Do not commit local databases, private keys, passwords, or known-host data.
 | Action | macOS | Windows/Linux |
 | --- | --- | --- |
 | Switch tab | `Cmd+1` ... `Cmd+9` | `Alt+1` ... `Alt+9` |
-| Toggle sidebar | `Cmd+B` | `Ctrl+B` |
+| Toggle sidebar | `Cmd+B` | `Alt+B` |
 | Fullscreen | `Cmd+Enter` | `Alt+Enter` |
-| Find in terminal | `Cmd+F` | `Ctrl+F` |
+| Find in terminal | `Cmd+F` | `Alt+F` |
 | Close current tab | `Cmd+W` | `Alt+W` |
 
 ## Troubleshooting

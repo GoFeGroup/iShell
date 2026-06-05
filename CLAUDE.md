@@ -64,7 +64,7 @@ Every exported method on `App` in `app.go` is callable from JS as `window.go.mai
 ### Keyboard shortcuts
 
 - Mac: `Cmd+Enter` fullscreen, `Cmd+B` sidebar, `Cmd+F` find
-- Windows/Linux: `Alt+Enter` fullscreen, `Ctrl+B` sidebar, `Ctrl+F` find
+- Windows/Linux: `Alt+Enter` fullscreen, `Alt+B` sidebar, `Alt+F` find
 - Platform detected via `navigator.platform.startsWith('Mac')`
 - `attachCustomKeyEventHandler` intercepts `Cmd/Alt+Enter` in xterm before it reaches SSH
 
