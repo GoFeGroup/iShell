@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package osutil
 
 import (
 	"syscall"
@@ -23,9 +23,9 @@ const (
 	swpShowwindow = 0x0040
 )
 
-// platformBringToFront forces the iShell window to the foreground using the
+// PlatformBringToFront forces the iShell window to the foreground using the
 // HWND_TOPMOST trick, which bypasses Windows' foreground-steal restriction.
-func platformBringToFront() {
+func PlatformBringToFront() {
 	titlePtr, err := syscall.UTF16PtrFromString("iShell")
 	if err != nil {
 		return

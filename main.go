@@ -10,13 +10,14 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"ishell/backend"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
-	app := NewApp()
+	app := backend.NewApp()
 
 	err := wails.Run(&options.App{
 		Title:            "iShell",
@@ -29,11 +30,11 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		OnStartup: app.startup,
+		OnStartup: app.Startup,
 		OnDomReady: func(ctx context.Context) {
 			wailsRuntime.WindowShow(ctx)
 		},
-		OnShutdown: app.shutdown,
+		OnShutdown: app.Shutdown,
 		Bind: []interface{}{
 			app,
 		},

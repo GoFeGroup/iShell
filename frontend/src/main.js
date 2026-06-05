@@ -1,5 +1,5 @@
 import '@xterm/xterm/css/xterm.css';
-import { connect, connectLocal, disconnect, on, off, getSettings, sendInput, launchNewInstance } from './api.js';
+import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off, getSettings, sendInput, launchNewInstance } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { initProfilePicker, openProfilePicker } from './profile-picker.js';
 import { createTerminal, destroyTerminal, focusTerminal, fitTerminal } from './terminal.js';
@@ -18,7 +18,7 @@ const pendingConnects = {}; // sessionID → { sess, req } — kept until host k
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
   // Bring window to front on startup; works around Windows foreground-steal restriction.
-  window.go.main.App.FocusWindow().catch(() => {});
+  focusWindow().catch(() => {});
 
   settings = await getSettings().catch(() => ({}));
   if (settings?.theme) {
@@ -472,7 +472,7 @@ function showHostKeyDialog(data) {
     if (!pending) { showToast('❌ No pending connection'); return; }
     delete pendingConnects[pending.sess.id];
     try {
-      await window.go.main.App.AcceptHostKey(hostname);
+      await acceptHostKey(hostname);
     } catch (e) {
       showToast(`⚠️ Could not save host key: ${e}`);
     }

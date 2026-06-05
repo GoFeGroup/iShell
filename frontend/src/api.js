@@ -1,14 +1,15 @@
 /**
- * api.js — typed wrappers around window.go.main.App.*
+ * api.js — typed wrappers around window.go.backend.App.*
  * All methods return Promises.
  */
 
-const go = () => window.go.main.App;
+const go = () => window.go.backend?.App || window.go.main.App;
 
 export const getSessions    = ()      => go().GetSessions();
 export const getSession     = (id)    => go().GetSession(id);
 export const saveSession    = (sess)  => go().SaveSession(sess);
 export const deleteSession  = (id)    => go().DeleteSession(id);
+export const focusWindow    = ()      => go().FocusWindow();
 export const launchNewInstance = ()   => go().LaunchNewInstance();
 
 export const connect        = (req)   => go().Connect(req);
@@ -37,6 +38,7 @@ export const getSettings    = ()      => go().GetSettings();
 export const saveSettings   = (s)     => go().SaveSettings(s);
 
 export const getKnownHosts  = ()      => go().GetKnownHosts();
+export const acceptHostKey  = (h)     => go().AcceptHostKey(h);
 export const removeKnownHost= (h)     => go().RemoveKnownHost(h);
 export const validateKey    = (p, pp) => go().ValidateKey(p, pp);
 export const openKeyDialog  = ()      => go().OpenKeyFileDialog();

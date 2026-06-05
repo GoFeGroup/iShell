@@ -1,4 +1,4 @@
-package main
+package backend
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"ishell/backend/local"
+	"ishell/backend/osutil"
 	"ishell/backend/ssh"
 	"ishell/backend/storage"
 )
@@ -28,9 +29,9 @@ func NewApp() *App {
 	return &App{}
 }
 
-func (a *App) startup(ctx context.Context) {
+func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
-	installEscGuard()
+	osutil.InstallEscGuard()
 	a.dataDir = dataDir()
 	store, err := storage.Open(a.dataDir)
 	if err != nil {
@@ -46,7 +47,7 @@ func (a *App) startup(ctx context.Context) {
 // keyboard focus. Called from JS on page load to handle cases where the OS
 // does not automatically activate the window (e.g. launched from a terminal).
 func (a *App) FocusWindow() {
-	platformBringToFront()
+	osutil.PlatformBringToFront()
 }
 
 // LaunchNewInstance starts a separate iShell process. On macOS, LaunchServices
@@ -89,7 +90,7 @@ func appBundlePath(exe string) string {
 	return ""
 }
 
-func (a *App) shutdown(_ context.Context) {
+func (a *App) Shutdown(_ context.Context) {
 	a.sshMgr.CloseAll()
 	a.localMgr.CloseAll()
 	if a.store != nil {

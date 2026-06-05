@@ -1,6 +1,6 @@
 //go:build darwin
 
-package main
+package osutil
 
 /*
 #cgo CFLAGS: -x objective-c
@@ -158,4 +158,4 @@ void InstallEscGuard(void) {
 */
 import "C"
 
-func installEscGuard() { C.InstallEscGuard() }
+func InstallEscGuard() { C.InstallEscGuard() }
