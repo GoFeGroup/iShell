@@ -74,11 +74,16 @@ export async function openProfilePicker() {
           </div>`;
       }
       el.addEventListener('click', () => {
+        listEl.querySelectorAll('.pp-item.selected').forEach(e => e.classList.remove('selected'));
+        el.classList.add('selected');
         selectedIdx = idx;
-        render();
       });
       el.addEventListener('dblclick', () => doConnect(item));
-      el.addEventListener('mouseenter', () => { selectedIdx = idx; render(); });
+      el.addEventListener('mouseenter', () => {
+        listEl.querySelectorAll('.pp-item.selected').forEach(e => e.classList.remove('selected'));
+        el.classList.add('selected');
+        selectedIdx = idx;
+      });
       listEl.appendChild(el);
     });
     listEl.querySelector('.pp-item.selected')?.scrollIntoView({ block: 'nearest' });
