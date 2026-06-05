@@ -2,7 +2,7 @@ import '@xterm/xterm/css/xterm.css';
 import { connect, connectLocal, disconnect, on, off, getSettings, sendInput, launchNewInstance } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { initProfilePicker } from './profile-picker.js';
-import { createTerminal, destroyTerminal, focusTerminal } from './terminal.js';
+import { createTerminal, destroyTerminal, focusTerminal, fitTerminal } from './terminal.js';
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
 import { showToast } from './toast.js';
@@ -221,6 +221,7 @@ async function switchToTab(tab) {
   showPanel('terminal');
   updateConnUI(tab);
   createTerminal(tab.connID, settings);
+  refitActiveTerminal();
   focusTerminal(tab.connID);
 }
 
@@ -279,6 +280,20 @@ function showPanel(name) {
   });
 }
 
+function refitActiveTerminal() {
+  if (!isTerminalTab(activeTab)) return;
+  requestAnimationFrame(() => {
+    if (!isTerminalTab(activeTab)) return;
+    if (document.getElementById('panel-terminal')?.style.display === 'none') return;
+    fitTerminal(activeTab.connID);
+  });
+}
+
+function refitActiveTerminalAfterLayout() {
+  refitActiveTerminal();
+  setTimeout(refitActiveTerminal, 260);
+}
+
 function updateConnUI(tab) {
   const hasConn = !!tab;
   const actions = document.getElementById('topbar-actions');
@@ -298,6 +313,7 @@ async function toggleSFTP() {
     await initSFTP(activeTab.connID);
   } else {
     showPanel('terminal');
+    refitActiveTerminal();
     focusTerminal(activeTab.connID);
   }
 }
@@ -325,6 +341,7 @@ function toggleSidebar() {
   sidebar.classList.toggle('collapsed', collapsed);
   document.documentElement.classList.toggle('sidebar-collapsed', collapsed);
   localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
+  refitActiveTerminalAfterLayout();
 }
 
 // ── Find bar ─────────────────────────────────────────────────────────────────
@@ -335,6 +352,7 @@ function toggleFind() {
 function setFindBar(show) {
   document.getElementById('find-bar').style.display = show ? '' : 'none';
   if (show) document.getElementById('find-input').focus();
+  refitActiveTerminal();
 }
 
 // ── Fullscreen ────────────────────────────────────────────────────────────────
@@ -354,6 +372,7 @@ function toggleFullscreen() {
     if (btn) btn.textContent = '⊡';
     showToast(`Fullscreen — ${isMac ? 'Cmd+Enter' : 'Alt+Enter'} to exit`);
   }
+  refitActiveTerminalAfterLayout();
 }
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────

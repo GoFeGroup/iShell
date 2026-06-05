@@ -379,7 +379,12 @@ export function getTerminalCWD(connID) {
 }
 
 export function fitTerminal(connID) {
-  instances[connID]?.fitAddon.fit();
+  const inst = instances[connID];
+  if (!inst) return;
+  inst.fitAddon.fit();
+  resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
+  const sizeEl = document.getElementById('sb-size');
+  if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
 }
 
 function setTerminalCWD(connID, cwd) {

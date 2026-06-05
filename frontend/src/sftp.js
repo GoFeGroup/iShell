@@ -477,11 +477,14 @@ window._sftp.refreshRemote = loadRemote;
 function setBreadcrumb(pane, path) {
   const el = document.getElementById('bc-' + pane);
   if (!el) return;
-  const parts = path.replace(/\\/g,'/').split('/').filter(Boolean);
-  el.innerHTML = parts.map((p, i) => {
+  const normalized = (path || '/').replace(/\\/g,'/');
+  const parts = normalized.split('/').filter(Boolean);
+  const root = `<span class="breadcrumb-seg" onclick="window._sftp.navTo('${pane}','/')">/</span>`;
+  const rest = parts.map((p, i) => {
     const sub = '/' + parts.slice(0, i+1).join('/');
     return `<span class="breadcrumb-seg" onclick="window._sftp.navTo('${pane}','${escAttr(sub)}')">${escHtml(p)}</span><span class="breadcrumb-sep">/</span>`;
-  }).join('') || '<span class="breadcrumb-seg">/</span>';
+  }).join('');
+  el.innerHTML = root + rest;
 }
 window._sftp.navTo = (pane, path) => {
   if (pane === 'local') { localPath = path; loadLocal(); }
