@@ -83,10 +83,6 @@ export async function initSettings() {
           <div class="settings-row-label">Scrollback lines</div>
           <div class="settings-row-control"><input class="input" id="st-scrollback" type="number" value="${settings.scrollback||10000}" style="width:100px;" /></div>
         </div>
-        <div class="settings-row">
-          <div class="settings-row-label">Copy on select</div>
-          <div class="settings-row-control"><div class="toggle-switch ${settings.copy_on_select?'on':''}" id="st-copysel"></div></div>
-        </div>
       </div>
     </div>
 
@@ -204,7 +200,6 @@ export async function initSettings() {
       cursor_style: document.getElementById('st-cursor')?.value || settings.cursor_style,
       cursor_blink: document.getElementById('st-blink')?.classList.contains('on'),
       scrollback: parseInt(document.getElementById('st-scrollback')?.value) || settings.scrollback,
-      copy_on_select: document.getElementById('st-copysel')?.classList.contains('on'),
       strict_host_key: document.getElementById('st-strict')?.classList.contains('on'),
       known_hosts_path: document.getElementById('st-khpath')?.value || '',
     };

@@ -101,6 +101,7 @@ export function createTerminal(connID, settings) {
     inst.xtermEl.removeEventListener('compositionstart', inst.compositionStartHandler, true);
     inst.xtermEl.removeEventListener('compositionend', inst.compositionEndHandler, true);
     inst.xtermEl.removeEventListener('beforeinput', inst.beforeInputHandler, true);
+    inst.xtermEl.removeEventListener('paste', inst.pasteHandler, true);
     inst.xtermEl.removeEventListener('mousedown', inst.mouseDownHandler, true);
     inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
     document.removeEventListener('mousemove', inst.mouseMoveHandler, true);
@@ -126,7 +127,7 @@ export function createTerminal(connID, settings) {
     cursorBlink: settings?.cursor_blink !== false,
     cursorStyle: settings?.cursor_style || 'block',
     scrollback: settings?.scrollback || 10000,
-    theme: buildTheme(settings?.color_scheme),
+    theme: buildTheme(),
     allowTransparency: false,
     convertEol: true,
   });
@@ -213,6 +214,15 @@ export function createTerminal(connID, settings) {
 
     const key = e.key.toLowerCase();
 
+    // Any keypress while selection is active: copy selection to clipboard first.
+    // Exclude modifier-only keys and the paste shortcut (which should use clipboard, not replace it).
+    const isModifierOnly = ['Meta', 'Control', 'Alt', 'Shift', 'AltGraph', 'CapsLock'].includes(e.key);
+    const isPasteShortcut = isMac ? (e.metaKey && key === 'v') : (e.ctrlKey && e.shiftKey && key === 'v');
+    if (!isModifierOnly && !isPasteShortcut) {
+      const sel = term.getSelection();
+      if (sel) window.runtime.ClipboardSetText(sel).catch(() => {});
+    }
+
     // Copy: Cmd+C (Mac) or Ctrl+Shift+C (Win/Linux)
     if (isMac ? (e.metaKey && key === 'c') : (e.ctrlKey && e.shiftKey && key === 'c')) {
       const sel = term.getSelection();
@@ -226,25 +236,13 @@ export function createTerminal(connID, settings) {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation?.();
+      term.clearSelection();
       window.runtime.ClipboardGetText()
         .then(text => { if (text) flushInput(text); })
         .catch(() => {});
       return false;
     }
 
-    // Fast path for ordinary printable characters: send them ourselves and
-    // prevent xterm's hidden-textarea input path, which drops keystrokes under
-    // fast typing in WKWebView (measured: keydowns registered but onData short).
-    // IME input arrives as keyCode 229 / 'Process' / isComposing and is handled
-    // by the composition path above, so it never reaches here — Chinese/IME
-    // input is unaffected. We also skip Ctrl/Meta/Alt combos so control codes,
-    // app shortcuts, and Alt-as-meta keep going through xterm's translation.
-    // Ordinary printable characters are NOT sent from here: when a CJK input
-    // source is active, WebKit reports keyCode 229 for every key and xterm
-    // ignores such keydowns, routing text through the hidden textarea's input
-    // events — which drop characters under fast typing in WKWebView. We instead
-    // capture them in the beforeinput handler below, which reliably distinguishes
-    // direct typing (insertText) from IME composition (insertCompositionText).
     return true;
   });
 
@@ -262,11 +260,12 @@ export function createTerminal(connID, settings) {
   xtermEl.addEventListener('beforeinput', beforeInputHandler, true);
 
   // Handles right-click "Paste" from context menu; keyboard paste is handled above.
-  xtermEl.addEventListener('paste', e => {
+  const pasteHandler = (e) => {
     e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    term.clearSelection();
     if (Date.now() < suppressPasteUntil) {
-      e.stopPropagation();
-      e.stopImmediatePropagation?.();
       return;
     }
     const text = e.clipboardData?.getData('text');
@@ -274,41 +273,187 @@ export function createTerminal(connID, settings) {
     window.runtime.ClipboardGetText()
       .then(text => { if (text) flushInput(text); })
       .catch(() => {});
-  });
+  };
+  xtermEl.addEventListener('paste', pasteHandler, true);
 
   // iTerm2-style selection: drag creates selection; single click just positions cursor.
   const DRAG_THRESHOLD = 4;
+  const CLICK_CLUSTER_RADIUS = 4;
+  const MULTI_CLICK_THRESHOLD = 500;
+  // How long the finger must be held after a multi-click before a move is treated
+  // as intentional drag (word-by-word extend) rather than touchpad tap jitter.
+  const MULTI_CLICK_DRAG_HOLD_MS = 300;
   let mouseDownPos = null;
+  let mouseDownTarget = null;
+  let lastClickInfo = null;
+  let replayingMouseEvent = false;
   let isDragging = false;
+  const isMouseTrackingActive = () => {
+    const mode = term.modes?.mouseTrackingMode;
+    return !!mode && mode !== 'none';
+  };
+
+  const getClickDetail = (e) => {
+    const nativeDetail = Math.max(1, e.detail);
+    if (!lastClickInfo) {
+      debugTerminal('getClickDetail native=%d (no lastClickInfo)', nativeDetail);
+      return nativeDetail;
+    }
+
+    const dx = e.clientX - lastClickInfo.clientX;
+    const dy = e.clientY - lastClickInfo.clientY;
+    const dt = e.timeStamp - lastClickInfo.timeStamp;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const isSameClickCluster = dt <= MULTI_CLICK_THRESHOLD && dist < CLICK_CLUSTER_RADIUS;
+
+    if (!isSameClickCluster) {
+      debugTerminal('getClickDetail native=%d → %d (new cluster dt=%dms dist=%dpx)', nativeDetail, nativeDetail, Math.round(dt), Math.round(dist));
+      return nativeDetail;
+    }
+    if (nativeDetail === 1 && lastClickInfo.detail >= 2) {
+      debugTerminal('getClickDetail native=%d lastDetail=%d → 1 (post-multiclick single tap)', nativeDetail, lastClickInfo.detail);
+      return 1;
+    }
+    const result = Math.max(nativeDetail, lastClickInfo.detail + 1);
+    debugTerminal('getClickDetail native=%d lastDetail=%d → %d (cluster inflate)', nativeDetail, lastClickInfo.detail, result);
+    return result;
+  };
+
+  const replayMouseEvent = (target, sourceEvent, type, buttons, detail = sourceEvent.detail) => {
+    replayingMouseEvent = true;
+    try {
+      target.dispatchEvent(new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        detail,
+        screenX: sourceEvent.screenX,
+        screenY: sourceEvent.screenY,
+        clientX: sourceEvent.clientX,
+        clientY: sourceEvent.clientY,
+        button: sourceEvent.button,
+        buttons,
+        ctrlKey: sourceEvent.ctrlKey,
+        shiftKey: sourceEvent.shiftKey,
+        altKey: sourceEvent.altKey,
+        metaKey: sourceEvent.metaKey,
+      }));
+    } finally {
+      replayingMouseEvent = false;
+    }
+  };
 
   const mouseDownHandler = (e) => {
+    if (replayingMouseEvent) return;
     if (e.button !== 0) return;
-    if (e.shiftKey || e.detail >= 2) {
-      // Shift+click or double/triple-click: xterm handles extend/word/line selection.
-      // Mark as drag so mouseUpHandler won't clear the result.
+    if (isMouseTrackingActive()) return;
+    if (e.shiftKey) {
+      // Shift+click: xterm handles extending the existing selection.
       isDragging = true;
       return;
     }
     isDragging = false;
-    mouseDownPos = { x: e.clientX, y: e.clientY };
+    const detail = getClickDetail(e);
+    mouseDownPos = {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      screenX: e.screenX,
+      screenY: e.screenY,
+      timeStamp: e.timeStamp,
+      detail,
+      button: e.button,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey,
+    };
+    mouseDownTarget = e.target;
+    term.focus();
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
   };
 
   const mouseMoveHandler = (e) => {
+    if (replayingMouseEvent) return;
+    // when isDragging: return without stopping so native events reach xterm's own handlers
     if (!mouseDownPos || isDragging) return;
-    const dx = e.clientX - mouseDownPos.x;
-    const dy = e.clientY - mouseDownPos.y;
-    if (Math.sqrt(dx * dx + dy * dy) >= DRAG_THRESHOLD) isDragging = true;
+    if (isMouseTrackingActive()) return;
+    if ((e.buttons & 1) === 0) return;
+    if (mouseDownPos.detail >= 2 &&
+        e.timeStamp - mouseDownPos.timeStamp < MULTI_CLICK_DRAG_HOLD_MS) {
+      // Suppress drag from a quick multi-tap (touchpad jitter between taps).
+      // A deliberate hold-then-drag (>MULTI_CLICK_DRAG_HOLD_MS) falls through
+      // so iTerm2-style word-by-word drag selection still works.
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      return;
+    }
+    const dx = e.clientX - mouseDownPos.clientX;
+    const dy = e.clientY - mouseDownPos.clientY;
+    if (Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      return;
+    }
+
+    isDragging = true;
+    const target = mouseDownTarget?.isConnected ? mouseDownTarget : xtermEl;
+    replayMouseEvent(target, mouseDownPos, 'mousedown', 1);
+    replayMouseEvent(target, e, 'mousemove', e.buttons || 1, 0);
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
   };
 
   const mouseUpHandler = (e) => {
+    if (replayingMouseEvent) return;
     if (e.button !== 0) return;
-    if (!isDragging) {
-      term.clearSelection();
-    } else {
-      const sel = term.getSelection();
-      if (sel) window.runtime.ClipboardSetText(sel).catch(() => {});
+    if (isMouseTrackingActive()) {
+      mouseDownPos = null;
+      mouseDownTarget = null;
+      isDragging = false;
+      return;
+    }
+    if (isDragging) {
+      // Drag selection: keep selection visible, no auto-copy.
+    } else if (mouseDownPos) {
+      // Replay click events to xterm only after mouseup. This keeps click-based
+      // cursor positioning while preventing double-tap from entering sticky
+      // word/line selection during the pressed phase.
+      const target = mouseDownTarget?.isConnected ? mouseDownTarget : xtermEl;
+      debugTerminal('mouseup replay detail=%d', mouseDownPos.detail);
+      if (mouseDownPos.detail < 2) {
+        // Single click: if there is an existing selection, copy it before xterm clears it.
+        const selBefore = term.getSelection();
+        if (selBefore) {
+          debugTerminal('mouseup single-click copy selection');
+          window.runtime.ClipboardSetText(selBefore).catch(() => {});
+        }
+        replayMouseEvent(target, mouseDownPos, 'mousedown', 1);
+        replayMouseEvent(target, e, 'mouseup', 0, mouseDownPos.detail);
+        debugTerminal('mouseup clearSelection');
+        term.clearSelection();
+      } else {
+        // Double/triple click: replay to create word/line selection; no auto-copy.
+        debugTerminal('mouseup multi-click, keep selection without auto-copy');
+        replayMouseEvent(target, mouseDownPos, 'mousedown', 1);
+        replayMouseEvent(target, e, 'mouseup', 0, mouseDownPos.detail);
+      }
+      lastClickInfo = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        timeStamp: e.timeStamp,
+        detail: mouseDownPos.detail,
+      };
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
     }
     mouseDownPos = null;
+    mouseDownTarget = null;
     isDragging = false;
   };
 
@@ -318,9 +463,20 @@ export function createTerminal(connID, settings) {
 
   const contextMenuHandler = (e) => {
     e.preventDefault();
-    window.runtime.ClipboardGetText()
-      .then(text => { if (text) flushInput(text); })
-      .catch(() => {});
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    term.focus();
+    const sel = term.getSelection();
+    if (sel) {
+      // Has selection: right-click copies it.
+      window.runtime.ClipboardSetText(sel).catch(() => {});
+      term.clearSelection();
+    } else {
+      // No selection: right-click pastes from clipboard.
+      window.runtime.ClipboardGetText()
+        .then(text => { if (text) flushInput(text); })
+        .catch(() => {});
+    }
   };
   xtermEl.addEventListener('contextmenu', contextMenuHandler);
 
@@ -344,7 +500,7 @@ export function createTerminal(connID, settings) {
   instances[connID] = {
     term, fitAddon, resizeObs, dataHandler,
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
-    compositionStartHandler, compositionEndHandler, beforeInputHandler,
+    compositionStartHandler, compositionEndHandler, beforeInputHandler, pasteHandler,
     xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize,
     disposables: [osc7Disposable, osc1337Disposable, dataDisposable],
   };
@@ -360,6 +516,7 @@ export function destroyTerminal(connID) {
   inst.xtermEl.removeEventListener('compositionstart', inst.compositionStartHandler, true);
   inst.xtermEl.removeEventListener('compositionend',   inst.compositionEndHandler,   true);
   inst.xtermEl.removeEventListener('beforeinput',      inst.beforeInputHandler,      true);
+  inst.xtermEl.removeEventListener('paste',            inst.pasteHandler,            true);
   inst.xtermEl.removeEventListener('mousedown',   inst.mouseDownHandler,  true);
   inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
   document.removeEventListener('mousemove',       inst.mouseMoveHandler,  true);
@@ -405,7 +562,7 @@ function parseCurrentDir(data) {
   }
 }
 
-function buildTheme(scheme) {
+function buildTheme() {
   return {
     background:    '#15151F',
     foreground:    '#FFFFFF',
