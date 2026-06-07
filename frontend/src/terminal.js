@@ -292,6 +292,17 @@ export function createTerminal(connID, settings) {
     const mode = term.modes?.mouseTrackingMode;
     return !!mode && mode !== 'none';
   };
+  const copySelectionToClipboard = ({ defer = false } = {}) => {
+    const copy = () => {
+      const sel = term.getSelection();
+      if (sel) window.runtime.ClipboardSetText(sel).catch(() => {});
+    };
+    if (defer) {
+      requestAnimationFrame(copy);
+    } else {
+      copy();
+    }
+  };
 
   const getClickDetail = (e) => {
     const nativeDetail = Math.max(1, e.detail);
@@ -310,12 +321,17 @@ export function createTerminal(connID, settings) {
       debugTerminal('getClickDetail native=%d → %d (new cluster dt=%dms dist=%dpx)', nativeDetail, nativeDetail, Math.round(dt), Math.round(dist));
       return nativeDetail;
     }
-    if (nativeDetail === 1 && lastClickInfo.detail >= 2) {
+    if (nativeDetail > 1) {
+      const result = Math.min(3, nativeDetail);
+      debugTerminal('getClickDetail native=%d lastDetail=%d → %d (native cluster)', nativeDetail, lastClickInfo.detail, result);
+      return result;
+    }
+    if (lastClickInfo.detail >= 2) {
       debugTerminal('getClickDetail native=%d lastDetail=%d → 1 (post-multiclick single tap)', nativeDetail, lastClickInfo.detail);
       return 1;
     }
-    const result = Math.max(nativeDetail, lastClickInfo.detail + 1);
-    debugTerminal('getClickDetail native=%d lastDetail=%d → %d (cluster inflate)', nativeDetail, lastClickInfo.detail, result);
+    const result = 2;
+    debugTerminal('getClickDetail native=%d lastDetail=%d → %d (synthetic double-click)', nativeDetail, lastClickInfo.detail, result);
     return result;
   };
 
@@ -418,7 +434,8 @@ export function createTerminal(connID, settings) {
       return;
     }
     if (isDragging) {
-      // Drag selection: keep selection visible, no auto-copy.
+      // Drag selection: keep selection visible and copy it when selection completes.
+      copySelectionToClipboard({ defer: true });
     } else if (mouseDownPos) {
       // Replay click events to xterm only after mouseup. This keeps click-based
       // cursor positioning while preventing double-tap from entering sticky
@@ -430,21 +447,22 @@ export function createTerminal(connID, settings) {
         const selBefore = term.getSelection();
         if (selBefore) {
           debugTerminal('mouseup single-click copy selection');
-          window.runtime.ClipboardSetText(selBefore).catch(() => {});
+          copySelectionToClipboard();
         }
         replayMouseEvent(target, mouseDownPos, 'mousedown', 1);
         replayMouseEvent(target, e, 'mouseup', 0, mouseDownPos.detail);
         debugTerminal('mouseup clearSelection');
         term.clearSelection();
       } else {
-        // Double/triple click: replay to create word/line selection; no auto-copy.
-        debugTerminal('mouseup multi-click, keep selection without auto-copy');
+        // Double/triple click: replay to create word/line selection.
+        debugTerminal('mouseup multi-click, keep selection and copy');
         replayMouseEvent(target, mouseDownPos, 'mousedown', 1);
         replayMouseEvent(target, e, 'mouseup', 0, mouseDownPos.detail);
+        copySelectionToClipboard({ defer: true });
       }
       lastClickInfo = {
-        clientX: e.clientX,
-        clientY: e.clientY,
+        clientX: mouseDownPos.clientX,
+        clientY: mouseDownPos.clientY,
         timeStamp: e.timeStamp,
         detail: mouseDownPos.detail,
       };
