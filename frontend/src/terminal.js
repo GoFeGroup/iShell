@@ -189,6 +189,14 @@ export function createTerminal(connID, settings) {
   xtermEl.addEventListener('compositionstart', compositionStartHandler, true);
   xtermEl.addEventListener('compositionend', compositionEndHandler, true);
 
+  // Tracks the last single char sent by onData so beforeInputHandler can skip
+  // it and avoid sending it twice (xterm fires onData from keydown; beforeinput
+  // fires afterwards in the same task; both would call flushInput otherwise).
+  // When CJK IME is active WebKit reports keyCode 229 for every keydown and
+  // xterm ignores it, so onData does NOT fire — beforeInputHandler is the only
+  // path and must still call flushInput.
+  let onDataHandledChar = null;
+
   // IME-composed text (Chinese, Japanese, etc.) should arrive here after composition ends.
   const dataDisposable = term.onData(data => {
     debugTerminal('onData', connID, data);
@@ -203,6 +211,7 @@ export function createTerminal(connID, settings) {
         pendingComposition = null;
       }
     }
+    if (data.length === 1) onDataHandledChar = data;
     flushInput(data);
   });
 
@@ -254,7 +263,11 @@ export function createTerminal(connID, settings) {
     if (composing) return;
     if (e.inputType === 'insertText' && e.data) {
       e.preventDefault();
-      flushInput(e.data);
+      // onData already handled this char via xterm's keydown path; skip to
+      // avoid sending it twice. Clear the flag regardless so it doesn't persist.
+      const alreadySent = onDataHandledChar === e.data;
+      onDataHandledChar = null;
+      if (!alreadySent) flushInput(e.data);
     }
   };
   xtermEl.addEventListener('beforeinput', beforeInputHandler, true);
