@@ -497,17 +497,10 @@ export function createTerminal(connID, settings) {
     e.stopPropagation();
     e.stopImmediatePropagation?.();
     term.focus();
-    const sel = term.getSelection();
-    if (sel) {
-      // Has selection: right-click copies it.
-      window.runtime.ClipboardSetText(sel).catch(() => {});
-      term.clearSelection();
-    } else {
-      // No selection: right-click pastes from clipboard.
-      window.runtime.ClipboardGetText()
-        .then(text => { if (text) flushInput(text); })
-        .catch(() => {});
-    }
+    term.clearSelection();
+    window.runtime.ClipboardGetText()
+      .then(text => { if (text) flushInput(text); })
+      .catch(() => {});
   };
   xtermEl.addEventListener('contextmenu', contextMenuHandler);
 
