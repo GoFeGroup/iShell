@@ -7,13 +7,6 @@ const isMac = navigator.platform.startsWith('Mac');
 const instances = {};  // connID → { term, fitAddon, resizeObs, dataHandler, xtermEl }
 const cwdByConn = {};
 const DEFAULT_FONT_SIZE = 16;
-const TERMINAL_DEBUG_KEY = 'ishell-terminal-debug';
-
-function debugTerminal(...args) {
-  if (localStorage.getItem(TERMINAL_DEBUG_KEY) === '1') {
-    console.debug('[terminal]', ...args);
-  }
-}
 
 function makeInputSender(connID) {
   let pending = '';
@@ -26,7 +19,6 @@ function makeInputSender(connID) {
       while (pending) {
         const payload = pending;
         pending = '';
-        debugTerminal('sendInput', connID, payload, Array.from(new TextEncoder().encode(payload)));
         try {
           await sendInput(connID, payload);
         } catch (e) {
@@ -83,6 +75,7 @@ export function createTerminal(connID, settings) {
   if (instances[connID]) {
     const inst = instances[connID];
     if (inst.fontFamily === resolvedFont && inst.fontSize === resolvedSize) {
+      inst._lastTabSwitch = Date.now();
       container.innerHTML = '';
       container.appendChild(inst.xtermEl);
       // Defer fit to after layout; ResizeObserver won't fire if container size
@@ -92,6 +85,16 @@ export function createTerminal(connID, settings) {
         resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
         const sizeEl = document.getElementById('sb-size');
         if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
+        // DOM re-attach resets .xterm-viewport scrollTop to 0. Run scrollToBottom
+        // in a second frame so any browser-queued scroll events fire first, then
+        // force domScrollTop to the bottom (scrollToBottom() skips the DOM update
+        // when viewportY is already at the correct line — a no-op — leaving the
+        // viewport desynced from internal state).
+        requestAnimationFrame(() => {
+          inst.term.scrollToBottom();
+          const vp = inst.xtermEl.querySelector('.xterm-viewport');
+          if (vp) vp.scrollTop = vp.scrollHeight;
+        });
       });
       return inst.term;
     }
@@ -163,13 +166,11 @@ export function createTerminal(connID, settings) {
   const compositionStartHandler = () => {
     composing = true;
     pendingComposition = null;
-    debugTerminal('compositionstart', connID);
   };
 
   const compositionEndHandler = (e) => {
     composing = false;
     const text = e.data || '';
-    debugTerminal('compositionend', connID, text);
     if (!text) return;
 
     // xterm normally emits the committed IME text through onData. In Wails on
@@ -179,7 +180,6 @@ export function createTerminal(connID, settings) {
     pendingComposition = marker;
     setTimeout(() => {
       if (pendingComposition === marker && marker.seenText !== text) {
-        debugTerminal('composition fallback', connID, text);
         flushInput(text);
       }
       if (pendingComposition === marker) pendingComposition = null;
@@ -199,7 +199,6 @@ export function createTerminal(connID, settings) {
 
   // IME-composed text (Chinese, Japanese, etc.) should arrive here after composition ends.
   const dataDisposable = term.onData(data => {
-    debugTerminal('onData', connID, data);
     if (pendingComposition) {
       const nextSeenText = pendingComposition.seenText + data;
       if (pendingComposition.text.startsWith(nextSeenText)) {
@@ -320,7 +319,6 @@ export function createTerminal(connID, settings) {
   const getClickDetail = (e) => {
     const nativeDetail = Math.max(1, e.detail);
     if (!lastClickInfo) {
-      debugTerminal('getClickDetail native=%d (no lastClickInfo)', nativeDetail);
       return nativeDetail;
     }
 
@@ -331,21 +329,15 @@ export function createTerminal(connID, settings) {
     const isSameClickCluster = dt <= MULTI_CLICK_THRESHOLD && dist < CLICK_CLUSTER_RADIUS;
 
     if (!isSameClickCluster) {
-      debugTerminal('getClickDetail native=%d → %d (new cluster dt=%dms dist=%dpx)', nativeDetail, nativeDetail, Math.round(dt), Math.round(dist));
       return nativeDetail;
     }
     if (nativeDetail > 1) {
-      const result = Math.min(3, nativeDetail);
-      debugTerminal('getClickDetail native=%d lastDetail=%d → %d (native cluster)', nativeDetail, lastClickInfo.detail, result);
-      return result;
+      return Math.min(3, nativeDetail);
     }
     if (lastClickInfo.detail >= 2) {
-      debugTerminal('getClickDetail native=%d lastDetail=%d → 1 (post-multiclick single tap)', nativeDetail, lastClickInfo.detail);
       return 1;
     }
-    const result = 2;
-    debugTerminal('getClickDetail native=%d lastDetail=%d → %d (synthetic double-click)', nativeDetail, lastClickInfo.detail, result);
-    return result;
+    return 2;
   };
 
   const replayMouseEvent = (target, sourceEvent, type, buttons, detail = sourceEvent.detail) => {
@@ -454,21 +446,15 @@ export function createTerminal(connID, settings) {
       // cursor positioning while preventing double-tap from entering sticky
       // word/line selection during the pressed phase.
       const target = mouseDownTarget?.isConnected ? mouseDownTarget : xtermEl;
-      debugTerminal('mouseup replay detail=%d', mouseDownPos.detail);
       if (mouseDownPos.detail < 2) {
         // Single click: if there is an existing selection, copy it before xterm clears it.
         const selBefore = term.getSelection();
-        if (selBefore) {
-          debugTerminal('mouseup single-click copy selection');
-          copySelectionToClipboard();
-        }
+        if (selBefore) copySelectionToClipboard();
         replayMouseEvent(target, mouseDownPos, 'mousedown', 1);
         replayMouseEvent(target, e, 'mouseup', 0, mouseDownPos.detail);
-        debugTerminal('mouseup clearSelection');
         term.clearSelection();
       } else {
         // Double/triple click: replay to create word/line selection.
-        debugTerminal('mouseup multi-click, keep selection and copy');
         replayMouseEvent(target, mouseDownPos, 'mousedown', 1);
         replayMouseEvent(target, e, 'mouseup', 0, mouseDownPos.detail);
         copySelectionToClipboard({ defer: true });
@@ -516,6 +502,13 @@ export function createTerminal(connID, settings) {
   const resizeObs = new ResizeObserver(() => {
     fitAddon.fit();
     resizeTerm(connID, term.cols, term.rows).catch(() => {});
+    // After a tab switch the container often resizes due to layout settling; apply
+    // the same force-scroll so the user always lands on the most recent output.
+    if (Date.now() - (instances[connID]?._lastTabSwitch ?? 0) < 500) {
+      term.scrollToBottom();
+      const vp = xtermEl.querySelector('.xterm-viewport');
+      if (vp) vp.scrollTop = vp.scrollHeight;
+    }
     const el = document.getElementById('sb-size');
     if (el) el.textContent = `${term.cols}×${term.rows}`;
   });
