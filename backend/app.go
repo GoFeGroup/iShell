@@ -176,8 +176,14 @@ func (a *App) Connect(req ConnectRequest) (string, error) {
 		strictHK = false
 	}
 
+	var jumpSess *storage.Session
+	if sess.JumpProfileID != "" {
+		jumpSess, _ = a.store.GetSession(sess.JumpProfileID)
+	}
+
 	connID, err := a.sshMgr.Connect(ssh.ConnectOptions{
 		Session:        *sess,
+		JumpSession:    jumpSess,
 		Password:       req.Password,
 		KeyPath:        req.KeyPath,
 		Passphrase:     req.Passphrase,

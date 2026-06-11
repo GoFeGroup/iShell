@@ -22,8 +22,9 @@ type Session struct {
 	Keepalive   int       `json:"keepalive"`
 	Timeout     int       `json:"timeout"`
 	Encoding    string    `json:"encoding"`
-	JumpHost    string    `json:"jump_host,omitempty"`
-	InitCommand string    `json:"init_command,omitempty"`
+	JumpHost      string `json:"jump_host,omitempty"`
+	JumpProfileID string `json:"jump_profile_id,omitempty"`
+	InitCommand   string `json:"init_command,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }

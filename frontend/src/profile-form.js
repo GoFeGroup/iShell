@@ -1,4 +1,4 @@
-import { saveSession, openKeyDialog, validateKey } from './api.js';
+import { saveSession, getSessions, openKeyDialog, validateKey } from './api.js';
 import { showToast } from './toast.js';
 
 /**
@@ -12,7 +12,7 @@ export function openProfileForm(existing, onSaved) {
     label: '', host: '', port: 22, username: '',
     auth_type: 'password', password: '', key_path: '', passphrase: '',
     group: '', keepalive: 60, timeout: 30, encoding: 'UTF-8',
-    jump_host: '', init_command: '',
+    jump_host: '', jump_profile_id: '', init_command: '',
   };
 
   const overlay = document.createElement('div');
@@ -104,7 +104,12 @@ export function openProfileForm(existing, onSaved) {
             ${['UTF-8','GBK','ISO-8859-1','Shift-JIS'].map(e=>`<option value="${e}" ${sess.encoding===e?'selected':''}>${e}</option>`).join('')}
           </select>
         </div>
-        <div class="form-field"><label class="form-label">Jump Host</label><input class="input" id="sf-jump" value="${esc(sess.jump_host)}" placeholder="user@bastion:22" /></div>
+        <div class="form-field">
+          <label class="form-label">⤵ Jump Host (Bastion Profile)</label>
+          <select class="input" id="sf-jump-profile">
+            <option value="">— None (direct connection) —</option>
+          </select>
+        </div>
         <div class="form-field"><label class="form-label">Initial Command</label><input class="input" id="sf-init" value="${esc(sess.init_command)}" placeholder="tmux attach" /></div>
       </div>
     </div>
@@ -161,6 +166,19 @@ export function openProfileForm(existing, onSaved) {
     }
   });
 
+  // Populate jump profile dropdown
+  getSessions().then(sessions => {
+    const sel = $('sf-jump-profile');
+    (sessions || []).forEach(s => {
+      if (s.id === sess.id) return; // exclude self
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = s.label ? `${s.label} (${s.username}@${s.host})` : `${s.username}@${s.host}`;
+      if (s.id === sess.jump_profile_id) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }).catch(() => {});
+
   // Advanced toggle
   $('sf-adv-toggle').addEventListener('click', () => {
     const body = $('sf-adv-body');
@@ -199,7 +217,8 @@ export function openProfileForm(existing, onSaved) {
       timeout: parseInt($('sf-timeout').value) || 30,
       keepalive: parseInt($('sf-keepalive').value) || 60,
       encoding: $('sf-encoding').value,
-      jump_host: $('sf-jump').value.trim(),
+      jump_host: '',
+      jump_profile_id: $('sf-jump-profile').value,
       init_command: $('sf-init').value.trim(),
     };
     try {

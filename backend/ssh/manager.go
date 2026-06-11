@@ -16,12 +16,13 @@ import (
 
 // Conn holds an active SSH connection and its sub-resources.
 type Conn struct {
-	ID        string
-	SessionID string
-	client    *gossh.Client
-	term      *TermSession
-	sftpCl    *sftp.Client
-	mu        sync.Mutex
+	ID         string
+	SessionID  string
+	client     *gossh.Client
+	jumpClient *gossh.Client
+	term       *TermSession
+	sftpCl     *sftp.Client
+	mu         sync.Mutex
 }
 
 // Manager manages all active SSH connections.
@@ -45,9 +46,10 @@ func NewManager(ctx context.Context) *Manager {
 
 type ConnectOptions struct {
 	Session        storage.Session
-	Password       string // override password (from connect dialog)
-	KeyPath        string // override key path
-	Passphrase     string // override passphrase
+	JumpSession    *storage.Session // nil = direct connection
+	Password       string           // override password (from connect dialog)
+	KeyPath        string           // override key path
+	Passphrase     string           // override passphrase
 	KnownHostsPath string
 	StrictHostKey  bool
 	Cols, Rows     int
@@ -149,9 +151,66 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 		Timeout:         timeout,
 	}
 
-	client, err := gossh.Dial("tcp", host, cfg)
-	if err != nil {
-		return "", fmt.Errorf("dial %s: %w", host, err)
+	var client *gossh.Client
+	var jumpClient *gossh.Client
+
+	if opts.JumpSession != nil {
+		j := opts.JumpSession
+		var jumpAuth []gossh.AuthMethod
+		jumpPW := j.Password
+		if jumpPW != "" {
+			jumpAuth = append(jumpAuth, gossh.Password(jumpPW))
+		}
+		if j.KeyPath != "" {
+			signer, err := LoadPrivateKey(j.KeyPath, j.Passphrase)
+			if err != nil {
+				return "", fmt.Errorf("load jump host key: %w", err)
+			}
+			jumpAuth = append(jumpAuth, gossh.PublicKeys(signer))
+		}
+		if len(jumpAuth) == 0 {
+			jumpAuth = append(jumpAuth, gossh.KeyboardInteractive(func(_, _ string, qs []string, _ []bool) ([]string, error) {
+				return make([]string, len(qs)), nil
+			}))
+		}
+		jumpUser := j.Username
+		if jumpUser == "" {
+			jumpUser = "root"
+		}
+		jumpPort := j.Port
+		if jumpPort == 0 {
+			jumpPort = 22
+		}
+		jumpAddr := fmt.Sprintf("%s:%d", j.Host, jumpPort)
+		jumpCfg := &gossh.ClientConfig{
+			User:            jumpUser,
+			Auth:            jumpAuth,
+			HostKeyCallback: hkCallback,
+			Timeout:         timeout,
+		}
+		var err error
+		jumpClient, err = gossh.Dial("tcp", jumpAddr, jumpCfg)
+		if err != nil {
+			return "", fmt.Errorf("dial jump host %s: %w", jumpAddr, err)
+		}
+		tunnelConn, err := jumpClient.Dial("tcp", host)
+		if err != nil {
+			jumpClient.Close()
+			return "", fmt.Errorf("tunnel to %s via jump host: %w", host, err)
+		}
+		ncc, chans, reqs, err := gossh.NewClientConn(tunnelConn, host, cfg)
+		if err != nil {
+			tunnelConn.Close()
+			jumpClient.Close()
+			return "", fmt.Errorf("ssh handshake with %s: %w", host, err)
+		}
+		client = gossh.NewClient(ncc, chans, reqs)
+	} else {
+		var err error
+		client, err = gossh.Dial("tcp", host, cfg)
+		if err != nil {
+			return "", fmt.Errorf("dial %s: %w", host, err)
+		}
 	}
 
 	// ── Start keepalive ───────────────────────────────────────────────────────
@@ -177,10 +236,11 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 	}
 
 	conn := &Conn{
-		ID:        connID,
-		SessionID: sess.ID,
-		client:    client,
-		term:      term,
+		ID:         connID,
+		SessionID:  sess.ID,
+		client:     client,
+		jumpClient: jumpClient,
+		term:       term,
 	}
 	m.mu.Lock()
 	m.conns[connID] = conn
@@ -214,7 +274,11 @@ func (m *Manager) Disconnect(connID string) error {
 	if conn.sftpCl != nil {
 		conn.sftpCl.Close()
 	}
-	return conn.client.Close()
+	err := conn.client.Close()
+	if conn.jumpClient != nil {
+		conn.jumpClient.Close()
+	}
+	return err
 }
 
 // ── Terminal ──────────────────────────────────────────────────────────────────

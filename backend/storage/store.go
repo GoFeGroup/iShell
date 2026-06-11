@@ -27,8 +27,9 @@ CREATE TABLE IF NOT EXISTS sessions (
 	keepalive   INTEGER NOT NULL DEFAULT 60,
 	timeout     INTEGER NOT NULL DEFAULT 30,
 	encoding    TEXT    NOT NULL DEFAULT 'UTF-8',
-	jump_host   TEXT    NOT NULL DEFAULT '',
-	init_command TEXT   NOT NULL DEFAULT '',
+	jump_host       TEXT    NOT NULL DEFAULT '',
+	jump_profile_id TEXT    NOT NULL DEFAULT '',
+	init_command    TEXT    NOT NULL DEFAULT '',
 	created_at  DATETIME NOT NULL,
 	updated_at  DATETIME NOT NULL
 );
@@ -60,7 +61,12 @@ func Open(dataDir string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
-	return &Store{db: db}, nil
+	st := &Store{db: db}
+	if err = st.runMigrations(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrations: %w", err)
+	}
+	return st, nil
 }
 
 func configureSQLite(db *sql.DB) error {
@@ -81,13 +87,47 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+func (s *Store) runMigrations() error {
+	type col struct{ name, def string }
+	migrations := []col{
+		{"jump_profile_id", "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, m := range migrations {
+		rows, err := s.db.Query("PRAGMA table_info(sessions)")
+		if err != nil {
+			return err
+		}
+		exists := false
+		for rows.Next() {
+			var cid, notnull, pk int
+			var name, typ string
+			var dflt any
+			if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+				rows.Close()
+				return err
+			}
+			if name == m.name {
+				exists = true
+				break
+			}
+		}
+		rows.Close()
+		if !exists {
+			if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE sessions ADD COLUMN %s %s", m.name, m.def)); err != nil {
+				return fmt.Errorf("add column %s: %w", m.name, err)
+			}
+		}
+	}
+	return nil
+}
+
 // ── Sessions ──────────────────────────────────────────────────────────────────
 
 func (s *Store) ListSessions() ([]Session, error) {
 	rows, err := s.db.Query(`
 		SELECT id, label, host, port, username, auth_type,
 		       password, key_path, passphrase, group_name,
-		       keepalive, timeout, encoding, jump_host, init_command,
+		       keepalive, timeout, encoding, jump_host, jump_profile_id, init_command,
 		       created_at, updated_at
 		FROM sessions ORDER BY group_name, label, host`)
 	if err != nil {
@@ -103,7 +143,7 @@ func (s *Store) ListSessions() ([]Session, error) {
 			&sess.Username, &sess.AuthType,
 			&sess.Password, &sess.KeyPath, &sess.Passphrase, &sess.Group,
 			&sess.Keepalive, &sess.Timeout, &sess.Encoding,
-			&sess.JumpHost, &sess.InitCommand,
+			&sess.JumpHost, &sess.JumpProfileID, &sess.InitCommand,
 			&sess.CreatedAt, &sess.UpdatedAt,
 		)
 		if err != nil {
@@ -119,14 +159,14 @@ func (s *Store) GetSession(id string) (*Session, error) {
 	err := s.db.QueryRow(`
 		SELECT id, label, host, port, username, auth_type,
 		       password, key_path, passphrase, group_name,
-		       keepalive, timeout, encoding, jump_host, init_command,
+		       keepalive, timeout, encoding, jump_host, jump_profile_id, init_command,
 		       created_at, updated_at
 		FROM sessions WHERE id = ?`, id).Scan(
 		&sess.ID, &sess.Label, &sess.Host, &sess.Port,
 		&sess.Username, &sess.AuthType,
 		&sess.Password, &sess.KeyPath, &sess.Passphrase, &sess.Group,
 		&sess.Keepalive, &sess.Timeout, &sess.Encoding,
-		&sess.JumpHost, &sess.InitCommand,
+		&sess.JumpHost, &sess.JumpProfileID, &sess.InitCommand,
 		&sess.CreatedAt, &sess.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -162,8 +202,8 @@ func (s *Store) SaveSession(sess Session) (*Session, error) {
 		INSERT INTO sessions
 			(id, label, host, port, username, auth_type, password, key_path,
 			 passphrase, group_name, keepalive, timeout, encoding,
-			 jump_host, init_command, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			 jump_host, jump_profile_id, init_command, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			label=excluded.label, host=excluded.host, port=excluded.port,
 			username=excluded.username, auth_type=excluded.auth_type,
@@ -171,11 +211,12 @@ func (s *Store) SaveSession(sess Session) (*Session, error) {
 			passphrase=excluded.passphrase, group_name=excluded.group_name,
 			keepalive=excluded.keepalive, timeout=excluded.timeout,
 			encoding=excluded.encoding, jump_host=excluded.jump_host,
+			jump_profile_id=excluded.jump_profile_id,
 			init_command=excluded.init_command, updated_at=excluded.updated_at`,
 		sess.ID, sess.Label, sess.Host, sess.Port, sess.Username,
 		string(sess.AuthType), sess.Password, sess.KeyPath, sess.Passphrase,
 		sess.Group, sess.Keepalive, sess.Timeout, sess.Encoding,
-		sess.JumpHost, sess.InitCommand,
+		sess.JumpHost, sess.JumpProfileID, sess.InitCommand,
 		sess.CreatedAt,
 		sess.UpdatedAt,
 	)
