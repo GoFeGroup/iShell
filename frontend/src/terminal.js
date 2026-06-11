@@ -96,6 +96,13 @@ export function createTerminal(connID, settings) {
           if (vp) vp.scrollTop = vp.scrollHeight;
         });
       });
+      // Belt-and-suspenders: fire after xterm's own RAF rendering pipeline to
+      // cover WKWebView edge cases where the second RAF still races xterm.
+      setTimeout(() => {
+        inst.term.scrollToBottom();
+        const vp = inst.xtermEl.querySelector('.xterm-viewport');
+        if (vp) vp.scrollTop = vp.scrollHeight;
+      }, 50);
       return inst.term;
     }
     // Font changed: tear down old instance and fall through to rebuild.
@@ -523,6 +530,16 @@ export function createTerminal(connID, settings) {
   };
 
   return term;
+}
+
+export function scrollTerminalToBottom(connID) {
+  const inst = instances[connID];
+  if (!inst) return;
+  setTimeout(() => {
+    inst.term.scrollToBottom();
+    const vp = inst.xtermEl.querySelector('.xterm-viewport');
+    if (vp) vp.scrollTop = vp.scrollHeight;
+  }, 0);
 }
 
 export function destroyTerminal(connID) {

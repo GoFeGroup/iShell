@@ -2,7 +2,7 @@ import '@xterm/xterm/css/xterm.css';
 import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off, getSettings, sendInput, launchNewInstance } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { initProfilePicker, openProfilePicker } from './profile-picker.js';
-import { createTerminal, destroyTerminal, focusTerminal, fitTerminal } from './terminal.js';
+import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, scrollTerminalToBottom } from './terminal.js';
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
 import { showToast } from './toast.js';
@@ -314,6 +314,7 @@ async function toggleSFTP() {
   } else {
     showPanel('terminal');
     refitActiveTerminal();
+    scrollTerminalToBottom(activeTab.connID);
     focusTerminal(activeTab.connID);
   }
 }
