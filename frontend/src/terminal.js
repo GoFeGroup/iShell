@@ -238,15 +238,6 @@ export function createTerminal(connID, settings) {
 
     const key = e.key.toLowerCase();
 
-    // Any keypress while selection is active: copy selection to clipboard first.
-    // Exclude modifier-only keys and the paste shortcut (which should use clipboard, not replace it).
-    const isModifierOnly = ['Meta', 'Control', 'Alt', 'Shift', 'AltGraph', 'CapsLock'].includes(e.key);
-    const isPasteShortcut = isMac ? (e.metaKey && key === 'v') : (e.ctrlKey && e.shiftKey && key === 'v');
-    if (!isModifierOnly && !isPasteShortcut) {
-      const sel = term.getSelection();
-      if (sel) window.runtime.ClipboardSetText(sel).catch(() => {});
-    }
-
     // Copy: Cmd+C (Mac) or Ctrl+Shift+C (Win/Linux)
     if (isMac ? (e.metaKey && key === 'c') : (e.ctrlKey && e.shiftKey && key === 'c')) {
       const sel = term.getSelection();
@@ -463,9 +454,8 @@ export function createTerminal(connID, settings) {
       // word/line selection during the pressed phase.
       const target = mouseDownTarget?.isConnected ? mouseDownTarget : xtermEl;
       if (mouseDownPos.detail < 2) {
-        // Single click: if there is an existing selection, copy it before xterm clears it.
-        const selBefore = term.getSelection();
-        if (selBefore) copySelectionToClipboard();
+        // Single click: just position the cursor and clear any existing selection.
+        // The selection was already copied when it was completed (drag/multi-click mouseup).
         replayMouseEvent(target, mouseDownPos, 'mousedown', 1);
         replayMouseEvent(target, e, 'mouseup', 0, mouseDownPos.detail);
         term.clearSelection();
