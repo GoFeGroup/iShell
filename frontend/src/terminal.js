@@ -41,6 +41,24 @@ function makeInputSender(connID) {
   };
 }
 
+// After a DOM re-attach the .xterm-viewport scrollTop is reset to 0 while
+// xterm's internal viewportY is preserved. Re-sync the DOM to that internal
+// state: if the user was following the bottom, pin to the latest output; if
+// they had scrolled up to a historical line, restore that exact position.
+function syncViewportScroll(inst) {
+  if (!inst) return;
+  const buf = inst.term.buffer.active;
+  const vp = inst.xtermEl.querySelector('.xterm-viewport');
+  if (!vp) return;
+  if (buf.viewportY >= buf.baseY) {
+    inst.term.scrollToBottom();
+    vp.scrollTop = vp.scrollHeight;
+  } else {
+    const maxScroll = vp.scrollHeight - vp.clientHeight;
+    vp.scrollTop = buf.baseY > 0 ? (buf.viewportY / buf.baseY) * maxScroll : 0;
+  }
+}
+
 function isGlobalAppShortcut(e) {
   if (e.type !== 'keydown') return false;
   const key = e.key.toLowerCase();
@@ -85,24 +103,15 @@ export function createTerminal(connID, settings) {
         resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
         const sizeEl = document.getElementById('sb-size');
         if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
-        // DOM re-attach resets .xterm-viewport scrollTop to 0. Run scrollToBottom
-        // in a second frame so any browser-queued scroll events fire first, then
-        // force domScrollTop to the bottom (scrollToBottom() skips the DOM update
-        // when viewportY is already at the correct line — a no-op — leaving the
-        // viewport desynced from internal state).
-        requestAnimationFrame(() => {
-          inst.term.scrollToBottom();
-          const vp = inst.xtermEl.querySelector('.xterm-viewport');
-          if (vp) vp.scrollTop = vp.scrollHeight;
-        });
+        // DOM re-attach resets .xterm-viewport scrollTop to 0. Re-sync in a
+        // second frame so any browser-queued scroll events fire first, then
+        // restore the viewport to xterm's preserved internal scroll state
+        // (bottom if following, otherwise the historical line).
+        requestAnimationFrame(() => syncViewportScroll(inst));
       });
       // Belt-and-suspenders: fire after xterm's own RAF rendering pipeline to
       // cover WKWebView edge cases where the second RAF still races xterm.
-      setTimeout(() => {
-        inst.term.scrollToBottom();
-        const vp = inst.xtermEl.querySelector('.xterm-viewport');
-        if (vp) vp.scrollTop = vp.scrollHeight;
-      }, 50);
+      setTimeout(() => syncViewportScroll(inst), 50);
       return inst.term;
     }
     // Font changed: tear down old instance and fall through to rebuild.
@@ -509,12 +518,11 @@ export function createTerminal(connID, settings) {
   const resizeObs = new ResizeObserver(() => {
     fitAddon.fit();
     resizeTerm(connID, term.cols, term.rows).catch(() => {});
-    // After a tab switch the container often resizes due to layout settling; apply
-    // the same force-scroll so the user always lands on the most recent output.
+    // After a tab switch the container often resizes due to layout settling;
+    // re-sync the viewport so the user lands back where they were (bottom if
+    // following, otherwise the historical line).
     if (Date.now() - (instances[connID]?._lastTabSwitch ?? 0) < 500) {
-      term.scrollToBottom();
-      const vp = xtermEl.querySelector('.xterm-viewport');
-      if (vp) vp.scrollTop = vp.scrollHeight;
+      syncViewportScroll(instances[connID]);
     }
     const el = document.getElementById('sb-size');
     if (el) el.textContent = `${term.cols}×${term.rows}`;
