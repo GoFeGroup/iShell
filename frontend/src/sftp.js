@@ -141,13 +141,8 @@ function renderSFTP() {
   </div>
 </div>`;
 
-  // Header checkboxes
-  document.getElementById('cb-all-local').addEventListener('change', e => {
-    getRows('local').forEach(r => setRowSelected(r, e.target.checked));
-  });
-  document.getElementById('cb-all-remote').addEventListener('change', e => {
-    getRows('remote').forEach(r => setRowSelected(r, e.target.checked));
-  });
+  bindHeaderCb('local');
+  bindHeaderCb('remote');
 }
 
 // ── File loading ──────────────────────────────────────────────────────────────
@@ -156,6 +151,7 @@ async function loadLocal() {
   setBreadcrumb('local', localPath);
   const list = document.getElementById('list-local');
   list.innerHTML = '<div class="file-list-header"><span><input type="checkbox" id="cb-all-local" style="accent-color:var(--accent);" /></span><span>Name</span><span style="text-align:right;">Size</span><span>Modified</span><span>Type</span></div>';
+  bindHeaderCb('local');
   try {
     const files = await listLocalDir(localPath);
     renderFiles(list, files, 'local');
@@ -168,6 +164,7 @@ async function loadRemote() {
   setBreadcrumb('remote', remotePath);
   const list = document.getElementById('list-remote');
   list.innerHTML = '<div class="file-list-header"><span><input type="checkbox" id="cb-all-remote" style="accent-color:var(--accent);" /></span><span>Name</span><span style="text-align:right;">Size</span><span>Modified</span><span>Perms</span></div>';
+  bindHeaderCb('remote');
   try {
     const files = await listRemoteDir(connID, remotePath);
     renderFiles(list, files, 'remote');
@@ -202,11 +199,6 @@ function renderFiles(listEl, files, pane) {
 
     // Click = toggle selection
     row.addEventListener('click', e => {
-      if (e.target.type === 'checkbox') {
-        setRowSelected(row, e.target.checked);
-        updateHeaderCb(pane);
-        return;
-      }
       if (e.shiftKey) {
         rangeSelect(row, pane);
       } else {
@@ -214,8 +206,6 @@ function renderFiles(listEl, files, pane) {
       }
       updateHeaderCb(pane);
     });
-    // Checkbox sync
-    row.querySelector('input[type="checkbox"]').addEventListener('click', e => e.stopPropagation());
 
     // Double-click = navigate into dir
     row.addEventListener('dblclick', () => {
@@ -273,6 +263,16 @@ function updateHeaderCb(pane) {
   const sel = rows.filter(r=>r.classList.contains('selected')).length;
   cb.checked = sel === rows.length && rows.length > 0;
   cb.indeterminate = sel > 0 && sel < rows.length;
+}
+function bindHeaderCb(pane) {
+  const cb = document.getElementById('cb-all-' + pane);
+  if (!cb) return;
+  cb.addEventListener('change', e => {
+    const checked = e.target.checked;
+    getRows(pane).forEach(r => setRowSelected(r, checked));
+    lastSelected[pane] = checked ? getRows(pane).at(-1) || null : null;
+    updateHeaderCb(pane);
+  });
 }
 
 // ── Drag & drop ───────────────────────────────────────────────────────────────

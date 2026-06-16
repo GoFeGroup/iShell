@@ -2,15 +2,14 @@ import '@xterm/xterm/css/xterm.css';
 import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off, getSettings, sendInput, launchNewInstance } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { initProfilePicker, openProfilePicker } from './profile-picker.js';
-import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, scrollTerminalToBottom } from './terminal.js';
+import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTerminalViewport } from './terminal.js';
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
 import { showToast } from './toast.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let tabs = [];          // terminal: { type, id, connID, sessionID, sessionLabel, host, username }; settings: { type, id, sessionLabel }
+let tabs = [];          // terminal/sftp: { type, id, connID, sessionID, sessionLabel, host, username }; settings: { type, id, sessionLabel }
 let activeTab = null;
-let sftpActive = false;
 let settings = null;
 let isFullscreen = false;
 const pendingConnects = {}; // sessionID → { sess, req } — kept until host key dialog resolves
@@ -31,7 +30,7 @@ window.addEventListener('load', async () => {
 
   // Toolbar buttons
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
-  document.getElementById('btn-disconnect').addEventListener('click', () => isTerminalTab(activeTab) && doDisconnect(activeTab.connID));
+  document.getElementById('btn-disconnect').addEventListener('click', () => hasTerminalConn(activeTab) && doDisconnect(activeTab.connID));
   document.getElementById('btn-sftp').addEventListener('click', toggleSFTP);
   document.getElementById('btn-settings').addEventListener('click', openSettingsPanel);
   document.getElementById('btn-new-instance').addEventListener('click', openNewInstance);
@@ -147,7 +146,7 @@ async function afterConnect(connID, sess) {
   renderTabs();
   switchToTab(tab);
   on('terminal:closed:' + connID, () => {
-    if (tabs.some(t => t.connID === connID)) doDisconnect(connID);
+    if (tabs.some(t => isTerminalTab(t) && t.connID === connID)) doDisconnect(connID);
   });
   setSessionStatus(sess.id, 'connected');
   showToast(`✅ Connected to ${sess.host}`);
@@ -157,7 +156,7 @@ async function doDisconnect(connID) {
   try { await disconnect(connID); } catch {}
   const tab = tabs.find(t => t.connID === connID);
   const closedIndex = tabs.indexOf(tab);
-  const wasActive = tab === activeTab;
+  const wasActive = !!activeTab && activeTab.connID === connID;
   const sessionID = tab?.sessionID;
   tabs = tabs.filter(t => t.connID !== connID);
   // Only mark disconnected when no remaining tabs for this profile
@@ -168,7 +167,7 @@ async function doDisconnect(connID) {
   destroyTerminal(connID);
   renderTabs();
   if (wasActive) activateFallbackTab(closedIndex);
-  else if (activeTab) updateConnUI(isTerminalTab(activeTab) ? activeTab : null);
+  else if (activeTab) updateConnUI(tabForConnActions(activeTab));
   else showWelcome();
   showToast(`Disconnected`);
 }
@@ -180,11 +179,12 @@ function renderTabs() {
   scroll.innerHTML = '';
   tabs.forEach((tab, idx) => {
     const isSettings = tab.type === 'settings';
+    const isSFTP = tab.type === 'sftp';
     const el = document.createElement('div');
     el.className = 'tab' + (tab === activeTab ? ' active' : '');
     el.dataset.tabId = tab.id;
     el.innerHTML = `
-      ${isSettings ? '<span class="tab-icon">⚙</span>' : '<div class="status-dot connected" style="width:6px;height:6px;"></div>'}
+      ${isSettings ? '<span class="tab-icon">⚙</span>' : isSFTP ? '<span class="tab-icon">📁</span>' : '<div class="status-dot connected" style="width:6px;height:6px;"></div>'}
       <span>${escHtml(tab.sessionLabel)}</span>
       <span class="tab-num">${idx + 1}</span>
       <button class="tab-close">✕</button>`;
@@ -206,22 +206,29 @@ function renderTabs() {
 
 async function switchToTab(tab) {
   if (!tab) return;
+  if (hasTerminalConn(activeTab)) rememberTerminalViewport(activeTab.connID);
   if (tab.type === 'settings') {
     activeTab = tab;
-    sftpActive = false;
     renderTabs();
     showPanel('settings');
     updateConnUI(null);
     await initSettings();
     return;
   }
+  if (tab.type === 'sftp') {
+    activeTab = tab;
+    renderTabs();
+    showPanel('sftp');
+    updateConnUI(tab);
+    await initSFTP(tab.connID);
+    return;
+  }
   activeTab = tab;
-  sftpActive = false;
   renderTabs();
   showPanel('terminal');
   updateConnUI(tab);
   createTerminal(tab.connID, settings);
-  refitActiveTerminal();
+  refitActiveTerminal({ restoreScroll: true });
   focusTerminal(tab.connID);
 }
 
@@ -238,12 +245,24 @@ function closeTab(tab) {
     closeSettingsTab();
     return;
   }
+  if (tab.type === 'sftp') {
+    closeSFTPTab(tab);
+    return;
+  }
   if (isTerminalTab(tab)) doDisconnect(tab.connID);
 }
 
 function closeSettingsTab() {
   const tab = tabs.find(t => t.type === 'settings');
   if (!tab) return;
+  const closedIndex = tabs.indexOf(tab);
+  const wasActive = tab === activeTab;
+  tabs = tabs.filter(t => t !== tab);
+  renderTabs();
+  if (wasActive) activateFallbackTab(closedIndex);
+}
+
+function closeSFTPTab(tab) {
   const closedIndex = tabs.indexOf(tab);
   const wasActive = tab === activeTab;
   tabs = tabs.filter(t => t !== tab);
@@ -261,14 +280,21 @@ function activateFallbackTab(closedIndex) {
 
 function showWelcome() {
   activeTab = null;
-  sftpActive = false;
   renderTabs();
   showPanel('welcome');
   updateConnUI(null);
 }
 
 function isTerminalTab(tab) {
-  return !!tab && tab.type !== 'settings' && !!tab.connID;
+  return !!tab && tab.type === 'terminal' && !!tab.connID;
+}
+
+function hasTerminalConn(tab) {
+  return !!tab && (tab.type === 'terminal' || tab.type === 'sftp') && !!tab.connID;
+}
+
+function tabForConnActions(tab) {
+  return hasTerminalConn(tab) ? tab : null;
 }
 
 // ── Panel management ──────────────────────────────────────────────────────────
@@ -280,12 +306,12 @@ function showPanel(name) {
   });
 }
 
-function refitActiveTerminal() {
+function refitActiveTerminal(options = {}) {
   if (!isTerminalTab(activeTab)) return;
   requestAnimationFrame(() => {
     if (!isTerminalTab(activeTab)) return;
     if (document.getElementById('panel-terminal')?.style.display === 'none') return;
-    fitTerminal(activeTab.connID);
+    fitTerminal(activeTab.connID, options);
   });
 }
 
@@ -305,18 +331,24 @@ function updateConnUI(tab) {
 // ── SFTP toggle ───────────────────────────────────────────────────────────────
 
 async function toggleSFTP() {
-  if (!isTerminalTab(activeTab)) { showToast('Connect to a session first'); return; }
+  if (!hasTerminalConn(activeTab)) { showToast('Connect to a session first'); return; }
   if (activeTab.isLocal) { showToast('SFTP is only available for remote SSH sessions'); return; }
-  sftpActive = !sftpActive;
-  if (sftpActive) {
-    showPanel('sftp');
-    await initSFTP(activeTab.connID);
-  } else {
-    showPanel('terminal');
-    refitActiveTerminal();
-    scrollTerminalToBottom(activeTab.connID);
-    focusTerminal(activeTab.connID);
+  const connID = activeTab.connID;
+  let tab = tabs.find(t => t.type === 'sftp' && t.connID === connID);
+  if (!tab) {
+    tab = {
+      type: 'sftp',
+      id: 'tab-sftp-' + connID,
+      connID,
+      sessionID: activeTab.sessionID,
+      sessionLabel: `SFTP: ${activeTab.sessionLabel}`,
+      host: activeTab.host,
+      username: activeTab.username,
+      isLocal: activeTab.isLocal,
+    };
+    tabs.push(tab);
   }
+  await switchToTab(tab);
 }
 
 // ── Settings panel ────────────────────────────────────────────────────────────
@@ -429,7 +461,7 @@ function handleKeydown(e) {
 
 function handleNativeEsc() {
   if (document.getElementById('pp-overlay')) return; // profile picker handles it
-  if (!isTerminalTab(activeTab)) return;
+  if (!hasTerminalConn(activeTab)) return;
   sendInput(activeTab.connID, '\x1b').catch(e => console.error('nativeEsc sendInput:', e));
 }
 

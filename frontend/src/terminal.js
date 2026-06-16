@@ -7,6 +7,7 @@ const isMac = navigator.platform.startsWith('Mac');
 const instances = {};  // connID → { term, fitAddon, resizeObs, dataHandler, xtermEl }
 const cwdByConn = {};
 const DEFAULT_FONT_SIZE = 16;
+const RESTORE_DELAYS = [0, 50, 150, 300];
 
 function makeInputSender(connID) {
   let pending = '';
@@ -41,16 +42,24 @@ function makeInputSender(connID) {
   };
 }
 
-// After a DOM re-attach the .xterm-viewport scrollTop is reset to 0 while
-// xterm's internal viewportY is preserved. Re-sync the DOM to that internal
-// state: if the user was following the bottom, pin to the latest output; if
-// they had scrolled up to a historical line, restore that exact position.
-function syncViewportScroll(inst) {
+function rememberViewport(inst) {
+  if (!inst) return;
+  const buf = inst.term.buffer.active;
+  inst.savedViewportY = buf.viewportY;
+  inst.savedBaseY = buf.baseY;
+}
+
+// After a DOM re-attach or fit, .xterm-viewport.scrollTop can be reset while
+// xterm's internal ydisp is preserved. Restore from our last stable snapshot
+// instead of reading a possibly changing viewport during touchpad inertia.
+function syncViewportScroll(inst, snapshot = null) {
   if (!inst) return;
   const buf = inst.term.buffer.active;
   const vp = inst.xtermEl.querySelector('.xterm-viewport');
   if (!vp) return;
-  if (buf.viewportY >= buf.baseY) {
+  const targetViewportY = snapshot?.viewportY ?? inst.savedViewportY ?? buf.viewportY;
+  const targetBaseY = snapshot?.baseY ?? inst.savedBaseY ?? buf.baseY;
+  if (targetViewportY >= targetBaseY) {
     inst.term.scrollToBottom();
     vp.scrollTop = vp.scrollHeight;
   } else {
@@ -61,10 +70,40 @@ function syncViewportScroll(inst) {
     // stale in WKWebView right after re-attach. Nudge ydisp to an adjacent line
     // first to force xterm to re-sync the DOM scrollTop itself using its exact
     // rendered cell height, then land back on the saved line.
-    const target = buf.viewportY;
+    const target = Math.max(0, Math.min(targetViewportY, buf.baseY));
+    if (buf.baseY <= 0) {
+      vp.scrollTop = 0;
+      return;
+    }
     inst.term.scrollToLine(target > 0 ? target - 1 : 1);
     inst.term.scrollToLine(target);
   }
+}
+
+function scheduleViewportRestore(connID, delays = RESTORE_DELAYS, snapshot = null, markTabSwitch = false) {
+  const inst = instances[connID];
+  if (!inst) return;
+  if (!snapshot) {
+    rememberViewport(inst);
+  }
+  const restoreSeq = (inst.restoreSeq || 0) + 1;
+  inst.restoreSeq = restoreSeq;
+  if (markTabSwitch) inst._lastTabSwitch = Date.now();
+  const restoreSnapshot = snapshot || {
+    viewportY: inst.savedViewportY,
+    baseY: inst.savedBaseY,
+  };
+  inst.restoreSnapshot = restoreSnapshot;
+
+  delays.forEach(delay => {
+    const run = () => {
+      const current = instances[connID];
+      if (!current || current.restoreSeq !== restoreSeq) return;
+      syncViewportScroll(current, restoreSnapshot);
+    };
+    if (delay === 0) requestAnimationFrame(() => requestAnimationFrame(run));
+    else setTimeout(run, delay);
+  });
 }
 
 function isGlobalAppShortcut(e) {
@@ -91,8 +130,11 @@ function blockAppShortcut(e) {
   return true;
 }
 
-export function createTerminal(connID, settings) {
-  const container = document.getElementById('terminal-container');
+export function createTerminal(connID, settings, options = {}) {
+  const containerId = options.containerId || 'terminal-container';
+  const sizeElId = options.sizeElId || 'sb-size';
+  const container = document.getElementById(containerId);
+  if (!container) return null;
 
   const resolvedFont = settings?.font_family || "Menlo, Monaco, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace";
   const resolvedSize = connID.startsWith('local-') ? DEFAULT_FONT_SIZE : (settings?.font_size || DEFAULT_FONT_SIZE);
@@ -101,25 +143,29 @@ export function createTerminal(connID, settings) {
   if (instances[connID]) {
     const inst = instances[connID];
     if (inst.fontFamily === resolvedFont && inst.fontSize === resolvedSize) {
-      inst._lastTabSwitch = Date.now();
+      rememberViewport(inst);
+      const restoreSnapshot = {
+        viewportY: inst.savedViewportY,
+        baseY: inst.savedBaseY,
+      };
+      scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot, true);
       container.innerHTML = '';
       container.appendChild(inst.xtermEl);
+      inst.containerEl = container;
+      inst.containerId = containerId;
+      inst.sizeElId = sizeElId;
+      inst.resizeObs.disconnect();
+      inst.resizeObs.observe(container);
       // Defer fit to after layout; ResizeObserver won't fire if container size
       // is unchanged, so we must call resizeTerm explicitly here.
       requestAnimationFrame(() => {
+        if (instances[connID] !== inst) return;
         inst.fitAddon.fit();
         resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
-        const sizeEl = document.getElementById('sb-size');
+        const sizeEl = document.getElementById(inst.sizeElId);
         if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
-        // DOM re-attach resets .xterm-viewport scrollTop to 0. Re-sync in a
-        // second frame so any browser-queued scroll events fire first, then
-        // restore the viewport to xterm's preserved internal scroll state
-        // (bottom if following, otherwise the historical line).
-        requestAnimationFrame(() => syncViewportScroll(inst));
+        scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot);
       });
-      // Belt-and-suspenders: fire after xterm's own RAF rendering pipeline to
-      // cover WKWebView edge cases where the second RAF still races xterm.
-      setTimeout(() => syncViewportScroll(inst), 50);
       return inst.term;
     }
     // Font changed: tear down old instance and fall through to rebuild.
@@ -236,6 +282,10 @@ export function createTerminal(connID, settings) {
     }
     if (data.length === 1) onDataHandledChar = data;
     flushInput(data);
+  });
+  const scrollDisposable = term.onScroll(() => {
+    const inst = instances[connID];
+    if (inst) rememberViewport(inst);
   });
 
   term.attachCustomKeyEventHandler((e) => {
@@ -514,15 +564,18 @@ export function createTerminal(connID, settings) {
   on('terminal:data:' + connID, dataHandler);
 
   const resizeObs = new ResizeObserver(() => {
+    const inst = instances[connID];
+    if (!inst) return;
     fitAddon.fit();
     resizeTerm(connID, term.cols, term.rows).catch(() => {});
     // After a tab switch the container often resizes due to layout settling;
     // re-sync the viewport so the user lands back where they were (bottom if
     // following, otherwise the historical line).
-    if (Date.now() - (instances[connID]?._lastTabSwitch ?? 0) < 500) {
-      syncViewportScroll(instances[connID]);
+    if (Date.now() - (inst._lastTabSwitch ?? 0) < 500) {
+      const restoreSnapshot = inst.restoreSnapshot;
+      scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot);
     }
-    const el = document.getElementById('sb-size');
+    const el = document.getElementById(inst.sizeElId);
     if (el) el.textContent = `${term.cols}×${term.rows}`;
   });
   resizeObs.observe(container);
@@ -532,7 +585,12 @@ export function createTerminal(connID, settings) {
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
     compositionStartHandler, compositionEndHandler, beforeInputHandler, pasteHandler,
     xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize,
-    disposables: [osc7Disposable, osc1337Disposable, dataDisposable],
+    containerEl: container, containerId, sizeElId,
+    savedViewportY: term.buffer.active.viewportY,
+    savedBaseY: term.buffer.active.baseY,
+    restoreSnapshot: null,
+    restoreSeq: 0,
+    disposables: [osc7Disposable, osc1337Disposable, dataDisposable, scrollDisposable],
   };
 
   return term;
@@ -545,7 +603,12 @@ export function scrollTerminalToBottom(connID) {
     inst.term.scrollToBottom();
     const vp = inst.xtermEl.querySelector('.xterm-viewport');
     if (vp) vp.scrollTop = vp.scrollHeight;
+    rememberViewport(inst);
   }, 0);
+}
+
+export function rememberTerminalViewport(connID) {
+  rememberViewport(instances[connID]);
 }
 
 export function destroyTerminal(connID) {
@@ -576,13 +639,18 @@ export function getTerminalCWD(connID) {
   return instances[connID]?.cwd ?? cwdByConn[connID] ?? null;
 }
 
-export function fitTerminal(connID) {
+export function fitTerminal(connID, { restoreScroll = false } = {}) {
   const inst = instances[connID];
   if (!inst) return;
+  const restoreSnapshot = restoreScroll ? {
+    viewportY: inst.savedViewportY ?? inst.term.buffer.active.viewportY,
+    baseY: inst.savedBaseY ?? inst.term.buffer.active.baseY,
+  } : null;
   inst.fitAddon.fit();
   resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
-  const sizeEl = document.getElementById('sb-size');
+  const sizeEl = document.getElementById(inst.sizeElId || 'sb-size');
   if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
+  if (restoreScroll) scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot);
 }
 
 function setTerminalCWD(connID, cwd) {
