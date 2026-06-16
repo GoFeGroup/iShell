@@ -44,7 +44,12 @@ echo "${GITEA_TOKEN:-__unset__}"
 
 ## Step 3: Select Platforms
 
-Ask the user which platforms to build:
+If the user specified targets in their request, use exactly those targets and skip the prompt.
+
+Otherwise, choose defaults from the current platform:
+- On macOS (`darwin`), build `darwin/arm64` and `windows/amd64`.
+- On Windows, build `windows/amd64`.
+- On other platforms, ask the user which platforms to build:
 
 - **Question**: "选择要构建并发布的平台"
 - **Header**: "目标平台"
