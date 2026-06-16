@@ -1,0 +1,4 @@
+interface:
+  display_name: "Commit Push"
+  short_description: "Commit tracked work and push to origin main."
+  default_prompt: "Commit the current work with a generated or provided message and push it to origin/main."

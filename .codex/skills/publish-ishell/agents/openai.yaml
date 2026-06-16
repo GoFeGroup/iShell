@@ -1,0 +1,4 @@
+interface:
+  display_name: "Publish iShell"
+  short_description: "Build and publish iShell packages."
+  default_prompt: "Build and publish iShell packages to the configured Gitea registry."
