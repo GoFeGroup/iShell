@@ -1,7 +1,7 @@
 import {
   listRemoteDir, listLocalDir,
   makeRemoteDir, deleteRemote, renameRemote, setPermissions,
-  uploadFiles, uploadSpecific, downloadFiles, downloadFilesToDir, on,
+  uploadFiles, uploadSpecific, downloadFilesToDir, on,
   getDownloadsDir, getRemotePWD, getSFTPTransfers, clearFinishedSFTPTransfers,
 } from './api.js';
 import { getTerminalCWD } from './terminal.js';
@@ -381,7 +381,7 @@ window._sftp.downloadSelected = async () => {
   const sel = getSelectedRows('remote');
   if (sel.length === 0) { showToast('Select files to download'); return; }
   const rps = sel.map(r => r.dataset.path);
-  await doDownload(rps);
+  await doDownloadToDir(rps, localPath);
 };
 
 async function doUploadDialog() {
@@ -404,18 +404,6 @@ async function doUploadPaths(localPaths) {
     setTimeout(loadRemote, 500);
   } catch (e) { showToast('❌ ' + e); }
 }
-async function doDownload(remotePaths) {
-  try {
-    const ids = await downloadFiles(connID, remotePaths);
-    if (ids) {
-      remotePaths.forEach((rp, i) => {
-        const name = rp.split('/').pop();
-        addQueueItem(ids[i] || 'id-'+i, name, 'download');
-      });
-    }
-  } catch (e) { showToast('❌ ' + e); }
-}
-
 async function doDownloadToDir(remotePaths, localDir) {
   try {
     const ids = await downloadFilesToDir(connID, remotePaths, localDir);
@@ -604,7 +592,7 @@ function showCtxMenu(e, file, pane) {
     null,
     { label: '🗑 Delete', cls: 'danger', action: () => localDeletePrompt(file) },
   ] : [
-    { label: '⬇ Download to Local', action: () => doDownload([file.path]) },
+    { label: '⬇ Download to Local', action: () => doDownloadToDir([file.path], localPath) },
     { label: '✏ Rename', action: () => renamePrompt(file, pane) },
     { label: '🔒 Permissions…', action: () => permDialog(file) },
     null,
