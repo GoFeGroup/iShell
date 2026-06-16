@@ -28,6 +28,8 @@ export const uploadFiles    = (id, rp)   => go().UploadFiles(id, rp);
 export const uploadSpecific = (id, lps, rp) => go().UploadSpecificFiles(id, lps, rp);
 export const downloadFiles      = (id, rps)        => go().DownloadFiles(id, rps);
 export const downloadFilesToDir = (id, rps, dir)   => go().DownloadFilesToDir(id, rps, dir);
+export const getSFTPTransfers   = (id)             => go().GetSFTPTransfers(id);
+export const clearFinishedSFTPTransfers = (id)     => go().ClearFinishedSFTPTransfers(id);
 
 export const listLocalDir   = (p)     => go().ListLocalDir(p);
 export const getHomeDir     = ()      => go().GetHomeDir();

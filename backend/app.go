@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"ishell/backend/local"
@@ -18,11 +20,30 @@ import (
 
 // App is the central struct bound to the Wails frontend.
 type App struct {
-	ctx      context.Context
-	store    *storage.Store
-	sshMgr   *ssh.Manager
-	localMgr *local.Manager
-	dataDir  string
+	ctx       context.Context
+	store     *storage.Store
+	sshMgr    *ssh.Manager
+	localMgr  *local.Manager
+	dataDir   string
+	transfers map[string]TransferRecord
+	txMu      sync.RWMutex
+}
+
+type TransferRecord struct {
+	TransferID string  `json:"transfer_id"`
+	ConnID     string  `json:"conn_id"`
+	Name       string  `json:"name"`
+	Action     string  `json:"action"`
+	RemotePath string  `json:"remote_path,omitempty"`
+	LocalPath  string  `json:"local_path,omitempty"`
+	Total      int64   `json:"total"`
+	Done       int64   `json:"done"`
+	Percent    float64 `json:"percent"`
+	Speed      float64 `json:"speed_bps"`
+	Finished   bool    `json:"finished"`
+	ErrMsg     string  `json:"error,omitempty"`
+	StartedAt  string  `json:"started_at"`
+	UpdatedAt  string  `json:"updated_at"`
 }
 
 func NewApp() *App {
@@ -41,6 +62,7 @@ func (a *App) Startup(ctx context.Context) {
 	a.store = store
 	a.sshMgr = ssh.NewManager(ctx)
 	a.localMgr = local.NewManager(ctx)
+	a.transfers = make(map[string]TransferRecord)
 }
 
 // FocusWindow brings the app window to the foreground and ensures it has
@@ -292,7 +314,7 @@ func (a *App) UploadFiles(connID, remotePath string) ([]string, error) {
 	for _, lp := range localPaths {
 		name := filepath.Base(lp)
 		rp := remotePath + "/" + name
-		id, err := ssh.UploadFile(a.ctx, cl, lp, rp)
+		id, err := ssh.UploadFileWithProgress(a.ctx, cl, lp, rp, a.transferProgressHandler(connID, "upload", rp, lp))
 		if err != nil {
 			wailsRuntime.LogErrorf(a.ctx, "upload %s: %v", lp, err)
 		}
@@ -311,7 +333,7 @@ func (a *App) UploadSpecificFiles(connID string, localPaths []string, remotePath
 	for _, lp := range localPaths {
 		name := filepath.Base(lp)
 		rp := remotePath + "/" + name
-		id, err := ssh.UploadFile(a.ctx, cl, lp, rp)
+		id, err := ssh.UploadFileWithProgress(a.ctx, cl, lp, rp, a.transferProgressHandler(connID, "upload", rp, lp))
 		if err != nil {
 			wailsRuntime.LogErrorf(a.ctx, "upload %s: %v", lp, err)
 		}
@@ -339,13 +361,75 @@ func (a *App) DownloadFilesToDir(connID string, remotePaths []string, localDir s
 	}
 	var ids []string
 	for _, rp := range remotePaths {
-		id, err := ssh.DownloadFile(a.ctx, cl, rp, localDir)
+		localPath := filepath.Join(localDir, filepath.Base(rp))
+		id, err := ssh.DownloadFileWithProgress(a.ctx, cl, rp, localDir, a.transferProgressHandler(connID, "download", rp, localPath))
 		if err != nil {
 			wailsRuntime.LogErrorf(a.ctx, "download %s: %v", rp, err)
 		}
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+func (a *App) GetSFTPTransfers(connID string) []TransferRecord {
+	a.txMu.RLock()
+	defer a.txMu.RUnlock()
+
+	records := make([]TransferRecord, 0, len(a.transfers))
+	for _, rec := range a.transfers {
+		if connID == "" || rec.ConnID == connID {
+			records = append(records, rec)
+		}
+	}
+	return records
+}
+
+func (a *App) ClearFinishedSFTPTransfers(connID string) int {
+	a.txMu.Lock()
+	defer a.txMu.Unlock()
+
+	cleared := 0
+	for id, rec := range a.transfers {
+		if rec.Finished && (connID == "" || rec.ConnID == connID) {
+			delete(a.transfers, id)
+			cleared++
+		}
+	}
+	return cleared
+}
+
+func (a *App) transferProgressHandler(connID, action, remotePath, localPath string) ssh.ProgressHandler {
+	startedAt := time.Now().UTC().Format(time.RFC3339)
+	return func(progress ssh.TransferProgress) {
+		a.txMu.Lock()
+
+		rec, ok := a.transfers[progress.TransferID]
+		if !ok {
+			rec = TransferRecord{
+				TransferID: progress.TransferID,
+				ConnID:     connID,
+				Action:     action,
+				RemotePath: remotePath,
+				LocalPath:  localPath,
+				StartedAt:  startedAt,
+			}
+		}
+		rec.Name = progress.Name
+		rec.Total = progress.Total
+		rec.Done = progress.Done
+		rec.Percent = progress.Percent
+		rec.Speed = progress.Speed
+		rec.Finished = progress.Finished
+		rec.ErrMsg = progress.ErrMsg
+		rec.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		if progress.Action != "" {
+			rec.Action = progress.Action
+		}
+		a.transfers[progress.TransferID] = rec
+		a.txMu.Unlock()
+
+		wailsRuntime.EventsEmit(a.ctx, "sftp:progress", rec)
+	}
 }
 
 // ── Local filesystem ──────────────────────────────────────────────────────────

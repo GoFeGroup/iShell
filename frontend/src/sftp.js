@@ -2,7 +2,7 @@ import {
   listRemoteDir, listLocalDir,
   makeRemoteDir, deleteRemote, renameRemote, setPermissions,
   uploadFiles, uploadSpecific, downloadFiles, downloadFilesToDir, on,
-  getDownloadsDir, getRemotePWD,
+  getDownloadsDir, getRemotePWD, getSFTPTransfers, clearFinishedSFTPTransfers,
 } from './api.js';
 import { getTerminalCWD } from './terminal.js';
 import { showToast } from './toast.js';
@@ -14,6 +14,7 @@ const transfers = {};
 let lastSelected = { local: null, remote: null };
 let dragState = null;
 let cwdListener = null;
+let progressListenerRegistered = false;
 
 export async function initSFTP(cID) {
   // Clean up previous CWD listener before re-initializing
@@ -38,11 +39,16 @@ export async function initSFTP(cID) {
     }
   }
 
-  renderSFTP();
-  await Promise.all([loadLocal(), loadRemote()]);
+  // Listen for transfer progress before loading the queue to avoid missing
+  // updates that arrive while the panel is being rebuilt.
+  if (!progressListenerRegistered) {
+    on('sftp:progress', (prog) => handleProgress(prog));
+    progressListenerRegistered = true;
+  }
 
-  // Listen for transfer progress
-  on('sftp:progress', (prog) => handleProgress(prog));
+  renderSFTP();
+  await loadTransferQueue();
+  await Promise.all([loadLocal(), loadRemote()]);
 
   // Update remote pane when terminal CWD changes.
   const handler = (e) => {
@@ -126,7 +132,10 @@ function renderSFTP() {
   <div class="transfer-queue">
     <div class="queue-header" onclick="window._sftp.toggleQueue()">
       <div class="queue-title">📋 Transfers <span class="badge badge-blue" id="queue-badge" style="display:none;"></span></div>
-      <span id="queue-arrow" style="color:var(--text-muted);font-size:12px;">▼</span>
+      <div class="queue-actions">
+        <button class="queue-clear" id="queue-clear" onclick="event.stopPropagation(); window._sftp.clearFinishedTransfers()" disabled>Clear</button>
+        <span id="queue-arrow" style="color:var(--text-muted);font-size:12px;">▼</span>
+      </div>
     </div>
     <div class="queue-body" id="queue-body"></div>
   </div>
@@ -389,9 +398,35 @@ async function doDownloadToDir(remotePaths, localDir) {
   } catch (e) { showToast('❌ ' + e); }
 }
 
+async function loadTransferQueue() {
+  try {
+    const records = await getSFTPTransfers(connID);
+    Object.keys(transfers).forEach(id => delete transfers[id]);
+    const body = document.getElementById('queue-body');
+    if (body) body.innerHTML = '';
+    (records || [])
+      .sort((a, b) => (a.started_at || '').localeCompare(b.started_at || ''))
+      .forEach(rec => {
+        addQueueItem(rec.transfer_id, rec.name || rec.remote_path?.split('/').pop() || 'file', rec.action || 'download');
+        handleProgress(rec, { silent: true });
+      });
+  } catch (e) {
+    console.error('load SFTP transfers failed:', e);
+  }
+}
+
 function addQueueItem(transferID, name, action) {
+  if (!transferID) return;
+  transfers[transferID] = transfers[transferID] || { name, action, finished: false };
+  transfers[transferID].name = name;
+  transfers[transferID].action = action;
+
   const body = document.getElementById('queue-body');
-  if (!body) return;
+  if (!body || document.getElementById('qi-' + transferID)) {
+    updateQueueBadge();
+    return;
+  }
+
   const isUp = action === 'upload';
   const item = document.createElement('div');
   item.className = 'queue-item';
@@ -409,11 +444,23 @@ function addQueueItem(transferID, name, action) {
     <span class="queue-direction ${isUp?'up':'down'}" id="pd-${transferID}">${isUp?'⬆ Upload':'⬇ Download'}</span>
     <button class="queue-cancel" onclick="document.getElementById('qi-${transferID}')?.remove()">✕</button>`;
   body.insertBefore(item, body.firstChild);
-  transfers[transferID] = { name, action };
   updateQueueBadge();
 }
 
-function handleProgress(prog) {
+function handleProgress(prog, opts = {}) {
+  const transferID = prog.transfer_id;
+  if (!transferID) return;
+  if (prog.conn_id && connID && prog.conn_id !== connID) return;
+
+  const existing = transfers[transferID] || {};
+  const action = prog.action || existing.action || 'download';
+  const name = prog.name || existing.name || prog.remote_path?.split('/').pop() || 'file';
+  transfers[transferID] = { ...existing, name, action, finished: !!prog.finished, error: prog.error || '' };
+
+  if (!document.getElementById('qi-' + transferID) && document.getElementById('queue-body')) {
+    addQueueItem(transferID, name, action);
+  }
+
   const pf = document.getElementById('pf-' + prog.transfer_id);
   const pp = document.getElementById('pp-' + prog.transfer_id);
   const ps = document.getElementById('ps-' + prog.transfer_id);
@@ -427,22 +474,25 @@ function handleProgress(prog) {
     pf.className = 'progress-fill errored'; pf.style.width='100%';
     pp.textContent = 'Error'; pp.style.color = 'var(--red)';
     if (pd) { pd.className = 'queue-direction error'; pd.textContent = '✕ Failed'; }
-    showToast('❌ Transfer failed: ' + prog.error);
-    delete transfers[prog.transfer_id];
+    if (!opts.silent) showToast('❌ Transfer failed: ' + prog.error);
+    transfers[prog.transfer_id].finished = true;
+    transfers[prog.transfer_id].error = prog.error;
     updateQueueBadge();
   } else if (prog.finished) {
     pf.className = 'progress-fill done';
     if (pd) { pd.className = 'queue-direction done'; pd.textContent = '✓ Done'; }
-    delete transfers[prog.transfer_id];
+    transfers[prog.transfer_id].finished = true;
     updateQueueBadge();
-    if (prog.name) showToast(`✅ Done: ${prog.name}`);
+    if (!opts.silent && prog.name) showToast(`✅ Done: ${prog.name}`);
   }
 }
 
 function updateQueueBadge() {
   const badge = document.getElementById('queue-badge');
-  const n = Object.keys(transfers).length;
+  const n = Object.values(transfers).filter(t => !t.finished).length;
   if (badge) { badge.textContent = n + ' active'; badge.style.display = n > 0 ? '' : 'none'; }
+  const clear = document.getElementById('queue-clear');
+  if (clear) clear.disabled = !Object.values(transfers).some(t => t.finished);
 }
 
 window._sftp.toggleQueue = () => {
@@ -451,6 +501,21 @@ window._sftp.toggleQueue = () => {
   const open = body.style.display !== 'none';
   body.style.display = open ? 'none' : '';
   if (arrow) arrow.textContent = open ? '▶' : '▼';
+};
+
+window._sftp.clearFinishedTransfers = async () => {
+  try {
+    await clearFinishedSFTPTransfers(connID);
+    Object.entries(transfers).forEach(([id, transfer]) => {
+      if (transfer.finished) {
+        delete transfers[id];
+        document.getElementById('qi-' + id)?.remove();
+      }
+    });
+    updateQueueBadge();
+  } catch (e) {
+    showToast('❌ ' + e);
+  }
 };
 
 // ── Navigation ────────────────────────────────────────────────────────────────

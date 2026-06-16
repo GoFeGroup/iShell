@@ -15,11 +15,11 @@ import (
 
 // FileInfo is a JSON-serialisable directory entry.
 type FileInfo struct {
-	Name    string    `json:"name"`
-	Path    string    `json:"path"`
-	Size    int64     `json:"size"`
-	IsDir   bool      `json:"is_dir"`
-	Mode    string    `json:"mode"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	IsDir   bool   `json:"is_dir"`
+	Mode    string `json:"mode"`
 	ModTime string `json:"mod_time"`
 }
 
@@ -27,6 +27,7 @@ type FileInfo struct {
 type TransferProgress struct {
 	TransferID string  `json:"transfer_id"`
 	Name       string  `json:"name"`
+	Action     string  `json:"action,omitempty"`
 	Total      int64   `json:"total"`
 	Done       int64   `json:"done"`
 	Percent    float64 `json:"percent"`
@@ -34,6 +35,8 @@ type TransferProgress struct {
 	Finished   bool    `json:"finished"`
 	ErrMsg     string  `json:"error,omitempty"`
 }
+
+type ProgressHandler func(TransferProgress)
 
 // ── Directory listing ─────────────────────────────────────────────────────────
 
@@ -106,6 +109,10 @@ func SetRemotePermissions(client *sftp.Client, path string, mode os.FileMode) er
 // UploadFile uploads a single local file to remotePath on the SFTP server.
 // Progress is emitted as "sftp:progress" Wails events.
 func UploadFile(ctx context.Context, client *sftp.Client, localPath, remotePath string) (string, error) {
+	return UploadFileWithProgress(ctx, client, localPath, remotePath, nil)
+}
+
+func UploadFileWithProgress(ctx context.Context, client *sftp.Client, localPath, remotePath string, onProgress ProgressHandler) (string, error) {
 	transferID := uuid.NewString()
 
 	src, err := os.Open(localPath)
@@ -126,7 +133,7 @@ func UploadFile(ctx context.Context, client *sftp.Client, localPath, remotePath 
 	go func() {
 		defer src.Close()
 		defer dst.Close()
-		emitProgress(ctx, transferID, name, 0, total, 0, false, "")
+		emitProgress(ctx, onProgress, transferID, name, "upload", 0, total, 0, false, "")
 		start := time.Now()
 		var done int64
 		buf := make([]byte, 32*1024)
@@ -134,7 +141,7 @@ func UploadFile(ctx context.Context, client *sftp.Client, localPath, remotePath 
 			n, err := src.Read(buf)
 			if n > 0 {
 				if _, werr := dst.Write(buf[:n]); werr != nil {
-					emitProgress(ctx, transferID, name, done, total, 0, true, werr.Error())
+					emitProgress(ctx, onProgress, transferID, name, "upload", done, total, 0, true, werr.Error())
 					return
 				}
 				done += int64(n)
@@ -143,17 +150,17 @@ func UploadFile(ctx context.Context, client *sftp.Client, localPath, remotePath 
 				if elapsed > 0 {
 					speed = float64(done) / elapsed
 				}
-				emitProgress(ctx, transferID, name, done, total, speed, false, "")
+				emitProgress(ctx, onProgress, transferID, name, "upload", done, total, speed, false, "")
 			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				emitProgress(ctx, transferID, name, done, total, 0, true, err.Error())
+				emitProgress(ctx, onProgress, transferID, name, "upload", done, total, 0, true, err.Error())
 				return
 			}
 		}
-		emitProgress(ctx, transferID, name, total, total, 0, true, "")
+		emitProgress(ctx, onProgress, transferID, name, "upload", total, total, 0, true, "")
 	}()
 
 	return transferID, nil
@@ -163,6 +170,10 @@ func UploadFile(ctx context.Context, client *sftp.Client, localPath, remotePath 
 
 // DownloadFile downloads a single remote file to localDir.
 func DownloadFile(ctx context.Context, client *sftp.Client, remotePath, localDir string) (string, error) {
+	return DownloadFileWithProgress(ctx, client, remotePath, localDir, nil)
+}
+
+func DownloadFileWithProgress(ctx context.Context, client *sftp.Client, remotePath, localDir string, onProgress ProgressHandler) (string, error) {
 	transferID := uuid.NewString()
 
 	src, err := client.Open(remotePath)
@@ -184,7 +195,7 @@ func DownloadFile(ctx context.Context, client *sftp.Client, remotePath, localDir
 	go func() {
 		defer src.Close()
 		defer dst.Close()
-		emitProgress(ctx, transferID, name, 0, total, 0, false, "")
+		emitProgress(ctx, onProgress, transferID, name, "download", 0, total, 0, false, "")
 		start := time.Now()
 		var done int64
 		buf := make([]byte, 32*1024)
@@ -192,7 +203,7 @@ func DownloadFile(ctx context.Context, client *sftp.Client, remotePath, localDir
 			n, err := src.Read(buf)
 			if n > 0 {
 				if _, werr := dst.Write(buf[:n]); werr != nil {
-					emitProgress(ctx, transferID, name, done, total, 0, true, werr.Error())
+					emitProgress(ctx, onProgress, transferID, name, "download", done, total, 0, true, werr.Error())
 					return
 				}
 				done += int64(n)
@@ -201,35 +212,41 @@ func DownloadFile(ctx context.Context, client *sftp.Client, remotePath, localDir
 				if elapsed > 0 {
 					speed = float64(done) / elapsed
 				}
-				emitProgress(ctx, transferID, name, done, total, speed, false, "")
+				emitProgress(ctx, onProgress, transferID, name, "download", done, total, speed, false, "")
 			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				emitProgress(ctx, transferID, name, done, total, 0, true, err.Error())
+				emitProgress(ctx, onProgress, transferID, name, "download", done, total, 0, true, err.Error())
 				return
 			}
 		}
-		emitProgress(ctx, transferID, name, total, total, 0, true, "")
+		emitProgress(ctx, onProgress, transferID, name, "download", total, total, 0, true, "")
 	}()
 
 	return transferID, nil
 }
 
-func emitProgress(ctx context.Context, id, name string, done, total int64, speed float64, finished bool, errMsg string) {
+func emitProgress(ctx context.Context, onProgress ProgressHandler, id, name, action string, done, total int64, speed float64, finished bool, errMsg string) {
 	var pct float64
 	if total > 0 {
 		pct = float64(done) / float64(total) * 100
 	}
-	runtime.EventsEmit(ctx, "sftp:progress", TransferProgress{
+	progress := TransferProgress{
 		TransferID: id,
 		Name:       name,
+		Action:     action,
 		Total:      total,
 		Done:       done,
 		Percent:    pct,
 		Speed:      speed,
 		Finished:   finished,
 		ErrMsg:     errMsg,
-	})
+	}
+	if onProgress != nil {
+		onProgress(progress)
+		return
+	}
+	runtime.EventsEmit(ctx, "sftp:progress", progress)
 }

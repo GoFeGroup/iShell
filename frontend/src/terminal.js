@@ -54,8 +54,16 @@ function syncViewportScroll(inst) {
     inst.term.scrollToBottom();
     vp.scrollTop = vp.scrollHeight;
   } else {
-    const maxScroll = vp.scrollHeight - vp.clientHeight;
-    vp.scrollTop = buf.baseY > 0 ? (buf.viewportY / buf.baseY) * maxScroll : 0;
+    // User had scrolled up (e.g. via touchpad). The DOM viewport scrollTop was
+    // reset to 0 on re-attach while xterm's internal ydisp is unchanged, so
+    // scrollToLine(target) alone is a no-op (it short-circuits when the delta is
+    // 0) and proportional pixel math is unreliable because scrollHeight can be
+    // stale in WKWebView right after re-attach. Nudge ydisp to an adjacent line
+    // first to force xterm to re-sync the DOM scrollTop itself using its exact
+    // rendered cell height, then land back on the saved line.
+    const target = buf.viewportY;
+    inst.term.scrollToLine(target > 0 ? target - 1 : 1);
+    inst.term.scrollToLine(target);
   }
 }
 
