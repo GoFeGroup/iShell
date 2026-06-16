@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -226,6 +228,163 @@ func DownloadFileWithProgress(ctx context.Context, client *sftp.Client, remotePa
 	}()
 
 	return transferID, nil
+}
+
+// DownloadPathWithProgress downloads a remote file or directory into localDir.
+// Directory trees are processed one directory at a time, with heartbeat progress
+// while large directory listings are being read.
+func DownloadPathWithProgress(ctx context.Context, client *sftp.Client, remotePath, localDir string, onProgress ProgressHandler) (string, error) {
+	info, err := client.Stat(remotePath)
+	if err != nil {
+		return "", fmt.Errorf("stat remote path: %w", err)
+	}
+	if !info.IsDir() {
+		return DownloadFileWithProgress(ctx, client, remotePath, localDir, onProgress)
+	}
+
+	transferID := uuid.NewString()
+	name := path.Base(remotePath)
+	localRoot := filepath.Join(localDir, name)
+	if err := os.MkdirAll(localRoot, 0o755); err != nil {
+		return transferID, fmt.Errorf("create local directory: %w", err)
+	}
+
+	go func() {
+		start := time.Now()
+		var done int64
+		var total int64
+		var progressMu sync.Mutex
+		var lastEmit time.Time
+
+		emit := func(finished bool, errMsg string) {
+			progressMu.Lock()
+			snapshotDone := done
+			snapshotTotal := total
+			lastEmit = time.Now()
+			progressMu.Unlock()
+
+			elapsed := time.Since(start).Seconds()
+			var speed float64
+			if elapsed > 0 {
+				speed = float64(snapshotDone) / elapsed
+			}
+			emitProgress(ctx, onProgress, transferID, name, "download", snapshotDone, snapshotTotal, speed, finished, errMsg)
+		}
+		maybeEmit := func() {
+			progressMu.Lock()
+			shouldEmit := time.Since(lastEmit) >= 200*time.Millisecond
+			progressMu.Unlock()
+			if shouldEmit {
+				emit(false, "")
+			}
+		}
+		addTotal := func(n int64) {
+			progressMu.Lock()
+			total += n
+			progressMu.Unlock()
+		}
+		addDone := func(n int64) {
+			progressMu.Lock()
+			done += n
+			progressMu.Unlock()
+		}
+
+		emit(false, "")
+		doneCh := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-doneCh:
+					return
+				case <-ticker.C:
+					emit(false, "")
+				}
+			}
+		}()
+		defer close(doneCh)
+
+		type dirJob struct {
+			remote string
+			local  string
+		}
+		stack := []dirJob{{remote: remotePath, local: localRoot}}
+		buf := make([]byte, 32*1024)
+
+		for len(stack) > 0 {
+			job := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if err := os.MkdirAll(job.local, 0o755); err != nil {
+				emit(true, err.Error())
+				return
+			}
+
+			entries, err := client.ReadDir(job.remote)
+			if err != nil {
+				emit(true, fmt.Sprintf("list %s: %v", job.remote, err))
+				return
+			}
+			maybeEmit()
+			for _, entry := range entries {
+				remoteChild := path.Join(job.remote, entry.Name())
+				localChild := filepath.Join(job.local, entry.Name())
+				if entry.IsDir() {
+					stack = append(stack, dirJob{remote: remoteChild, local: localChild})
+					continue
+				}
+				if !entry.Mode().IsRegular() {
+					continue
+				}
+				addTotal(entry.Size())
+				if err := downloadRemoteFile(client, remoteChild, localChild, buf, func(n int64) {
+					addDone(n)
+					maybeEmit()
+				}); err != nil {
+					emit(true, fmt.Sprintf("download %s: %v", remoteChild, err))
+					return
+				}
+				maybeEmit()
+			}
+		}
+
+		emit(true, "")
+	}()
+
+	return transferID, nil
+}
+
+func downloadRemoteFile(client *sftp.Client, remotePath, localPath string, buf []byte, onBytes func(int64)) error {
+	src, err := client.Open(remotePath)
+	if err != nil {
+		return fmt.Errorf("open remote file: %w", err)
+	}
+	defer src.Close()
+
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		return fmt.Errorf("create local parent: %w", err)
+	}
+	dst, err := os.Create(localPath)
+	if err != nil {
+		return fmt.Errorf("create local file: %w", err)
+	}
+	defer dst.Close()
+
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return werr
+			}
+			onBytes(int64(n))
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 func emitProgress(ctx context.Context, onProgress ProgressHandler, id, name, action string, done, total int64, speed float64, finished bool, errMsg string) {

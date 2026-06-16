@@ -362,7 +362,7 @@ func (a *App) DownloadFilesToDir(connID string, remotePaths []string, localDir s
 	var ids []string
 	for _, rp := range remotePaths {
 		localPath := filepath.Join(localDir, filepath.Base(rp))
-		id, err := ssh.DownloadFileWithProgress(a.ctx, cl, rp, localDir, a.transferProgressHandler(connID, "download", rp, localPath))
+		id, err := ssh.DownloadPathWithProgress(a.ctx, cl, rp, localDir, a.transferProgressHandler(connID, "download", rp, localPath))
 		if err != nil {
 			wailsRuntime.LogErrorf(a.ctx, "download %s: %v", rp, err)
 		}

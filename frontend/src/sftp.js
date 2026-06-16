@@ -15,6 +15,7 @@ let lastSelected = { local: null, remote: null };
 let dragState = null;
 let cwdListener = null;
 let progressListenerRegistered = false;
+const stateByConn = {};
 
 export async function initSFTP(cID) {
   // Clean up previous CWD listener before re-initializing
@@ -24,12 +25,14 @@ export async function initSFTP(cID) {
   }
 
   connID = cID;
-  localPath = await getDownloadsDir();
+  const state = stateByConn[connID] || (stateByConn[connID] = {});
+  const firstInit = !state.rendered;
+  localPath = state.localPath || await getDownloadsDir();
 
   // Priority 1: CWD tracked from terminal OSC sequences (accurate, reflects terminal navigation)
   // Priority 2: SFTP session default dir (user home on most servers)
   // Priority 3: root
-  remotePath = getTerminalCWD(connID);
+  remotePath = state.remotePath || getTerminalCWD(connID);
   if (!remotePath) {
     try {
       remotePath = await getRemotePWD(connID);
@@ -46,20 +49,44 @@ export async function initSFTP(cID) {
     progressListenerRegistered = true;
   }
 
-  renderSFTP();
-  await loadTransferQueue();
-  await Promise.all([loadLocal(), loadRemote()]);
+  if (firstInit) {
+    renderSFTP();
+    await loadTransferQueue();
+    await Promise.all([loadLocal(), loadRemote()]);
+    state.rendered = true;
+  } else {
+    restoreSFTPState();
+    updateQueueBadge();
+  }
 
   // Update remote pane when terminal CWD changes.
   const handler = (e) => {
     if (document.getElementById('panel-sftp')?.style.display === 'none') return;
     if (e.detail !== remotePath) {
       remotePath = e.detail;
+      saveCurrentState();
       loadRemote();
     }
   };
   window.addEventListener('terminal:cwd:' + connID, handler);
   cwdListener = { connID, handler };
+}
+
+function saveCurrentState() {
+  if (!connID) return;
+  stateByConn[connID] = {
+    ...(stateByConn[connID] || {}),
+    rendered: true,
+    localPath,
+    remotePath,
+  };
+}
+
+function restoreSFTPState() {
+  setBreadcrumb('local', localPath);
+  setBreadcrumb('remote', remotePath);
+  bindHeaderCb('local');
+  bindHeaderCb('remote');
 }
 
 function renderSFTP() {
@@ -149,6 +176,7 @@ function renderSFTP() {
 
 async function loadLocal() {
   setBreadcrumb('local', localPath);
+  saveCurrentState();
   const list = document.getElementById('list-local');
   list.innerHTML = '<div class="file-list-header"><span><input type="checkbox" id="cb-all-local" style="accent-color:var(--accent);" /></span><span>Name</span><span style="text-align:right;">Size</span><span>Modified</span><span>Type</span></div>';
   bindHeaderCb('local');
@@ -162,6 +190,7 @@ async function loadLocal() {
 
 async function loadRemote() {
   setBreadcrumb('remote', remotePath);
+  saveCurrentState();
   const list = document.getElementById('list-remote');
   list.innerHTML = '<div class="file-list-header"><span><input type="checkbox" id="cb-all-remote" style="accent-color:var(--accent);" /></span><span>Name</span><span style="text-align:right;">Size</span><span>Modified</span><span>Perms</span></div>';
   bindHeaderCb('remote');
@@ -210,8 +239,8 @@ function renderFiles(listEl, files, pane) {
     // Double-click = navigate into dir
     row.addEventListener('dblclick', () => {
       if (f.is_dir) {
-        if (pane === 'local') { localPath = f.path; loadLocal(); }
-        else { remotePath = f.path; loadRemote(); }
+        if (pane === 'local') { localPath = f.path; saveCurrentState(); loadLocal(); }
+        else { remotePath = f.path; saveCurrentState(); loadRemote(); }
       }
     });
 
@@ -267,6 +296,8 @@ function updateHeaderCb(pane) {
 function bindHeaderCb(pane) {
   const cb = document.getElementById('cb-all-' + pane);
   if (!cb) return;
+  if (cb.dataset.bound === '1') return;
+  cb.dataset.bound = '1';
   cb.addEventListener('change', e => {
     const checked = e.target.checked;
     getRows(pane).forEach(r => setRowSelected(r, checked));
@@ -467,8 +498,9 @@ function handleProgress(prog, opts = {}) {
   const pd = document.getElementById('pd-' + prog.transfer_id);
   if (!pf) return;
   const pct = Math.round(prog.percent);
-  pf.style.width = pct + '%';
-  pp.textContent = prog.finished ? 'Done' : pct + '%';
+  const scanning = !prog.finished && (!prog.total || prog.total <= 0);
+  pf.style.width = scanning ? '8%' : pct + '%';
+  pp.textContent = prog.finished ? 'Done' : scanning ? 'Scanning' : pct + '%';
   if (prog.speed_bps > 0) ps.textContent = fmtSize(prog.speed_bps) + '/s';
   if (prog.error) {
     pf.className = 'progress-fill errored'; pf.style.width='100%';
@@ -528,12 +560,14 @@ window._sftp.navLocalUp = () => {
     // Windows drive letter fix
     if (/^\/[A-Za-z]$/.test(localPath)) localPath = localPath.slice(1) + ':\\';
   }
+  saveCurrentState();
   loadLocal();
 };
 window._sftp.navRemoteUp = () => {
   const parts = remotePath.split('/').filter(Boolean);
   if (parts.length > 0) parts.pop();
   remotePath = '/' + parts.join('/') || '/';
+  saveCurrentState();
   loadRemote();
 };
 window._sftp.refreshLocal  = loadLocal;
@@ -552,8 +586,8 @@ function setBreadcrumb(pane, path) {
   el.innerHTML = root + rest;
 }
 window._sftp.navTo = (pane, path) => {
-  if (pane === 'local') { localPath = path; loadLocal(); }
-  else { remotePath = path; loadRemote(); }
+  if (pane === 'local') { localPath = path; saveCurrentState(); loadLocal(); }
+  else { remotePath = path; saveCurrentState(); loadRemote(); }
 };
 
 // ── Context menu ──────────────────────────────────────────────────────────────
