@@ -106,6 +106,27 @@ function scheduleViewportRestore(connID, delays = RESTORE_DELAYS, snapshot = nul
   });
 }
 
+function canFitTerminal(inst) {
+  const el = inst?.containerEl;
+  if (!el || !el.isConnected) return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0 && getComputedStyle(el).display !== 'none';
+}
+
+function fitVisibleTerminal(connID, inst, { restoreScroll = false, snapshot = null } = {}) {
+  if (!canFitTerminal(inst)) return false;
+  const restoreSnapshot = restoreScroll ? (snapshot || {
+    viewportY: inst.savedViewportY ?? inst.term.buffer.active.viewportY,
+    baseY: inst.savedBaseY ?? inst.term.buffer.active.baseY,
+  }) : null;
+  inst.fitAddon.fit();
+  resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
+  const sizeEl = document.getElementById(inst.sizeElId || 'sb-size');
+  if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
+  if (restoreScroll) scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot);
+  return true;
+}
+
 function isGlobalAppShortcut(e) {
   if (e.type !== 'keydown') return false;
   const key = e.key.toLowerCase();
@@ -149,8 +170,10 @@ export function createTerminal(connID, settings, options = {}) {
         baseY: inst.savedBaseY,
       };
       scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot, true);
-      container.innerHTML = '';
-      container.appendChild(inst.xtermEl);
+      if (inst.xtermEl.parentElement !== container) {
+        container.innerHTML = '';
+        container.appendChild(inst.xtermEl);
+      }
       inst.containerEl = container;
       inst.containerId = containerId;
       inst.sizeElId = sizeElId;
@@ -160,11 +183,7 @@ export function createTerminal(connID, settings, options = {}) {
       // is unchanged, so we must call resizeTerm explicitly here.
       requestAnimationFrame(() => {
         if (instances[connID] !== inst) return;
-        inst.fitAddon.fit();
-        resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
-        const sizeEl = document.getElementById(inst.sizeElId);
-        if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
-        scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot);
+        fitVisibleTerminal(connID, inst, { restoreScroll: true, snapshot: restoreSnapshot });
       });
       return inst.term;
     }
@@ -566,17 +585,17 @@ export function createTerminal(connID, settings, options = {}) {
   const resizeObs = new ResizeObserver(() => {
     const inst = instances[connID];
     if (!inst) return;
-    fitAddon.fit();
-    resizeTerm(connID, term.cols, term.rows).catch(() => {});
+    const restoreSnapshot = Date.now() - (inst._lastTabSwitch ?? 0) < 500
+      ? inst.restoreSnapshot
+      : null;
+    const didFit = fitVisibleTerminal(connID, inst, {
+      restoreScroll: !!restoreSnapshot,
+      snapshot: restoreSnapshot,
+    });
+    if (!didFit) return;
     // After a tab switch the container often resizes due to layout settling;
     // re-sync the viewport so the user lands back where they were (bottom if
     // following, otherwise the historical line).
-    if (Date.now() - (inst._lastTabSwitch ?? 0) < 500) {
-      const restoreSnapshot = inst.restoreSnapshot;
-      scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot);
-    }
-    const el = document.getElementById(inst.sizeElId);
-    if (el) el.textContent = `${term.cols}×${term.rows}`;
   });
   resizeObs.observe(container);
 
@@ -642,15 +661,7 @@ export function getTerminalCWD(connID) {
 export function fitTerminal(connID, { restoreScroll = false } = {}) {
   const inst = instances[connID];
   if (!inst) return;
-  const restoreSnapshot = restoreScroll ? {
-    viewportY: inst.savedViewportY ?? inst.term.buffer.active.viewportY,
-    baseY: inst.savedBaseY ?? inst.term.buffer.active.baseY,
-  } : null;
-  inst.fitAddon.fit();
-  resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
-  const sizeEl = document.getElementById(inst.sizeElId || 'sb-size');
-  if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
-  if (restoreScroll) scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot);
+  fitVisibleTerminal(connID, inst, { restoreScroll });
 }
 
 function setTerminalCWD(connID, cwd) {
