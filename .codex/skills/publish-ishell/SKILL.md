@@ -13,7 +13,10 @@ Build platform packages from the iShell repository and optionally upload them to
 
 - Version: use the user-provided version if present. Otherwise resolve it with `git rev-parse --short HEAD` and use `0.0.1-<hash>`.
 - Token: prefer `GITEA_TOKEN` from the shell environment. If it is not set, ask the user for a Gitea Personal Access Token or confirm build-only mode.
-- Platforms: ask the user which targets to build if they did not specify them.
+- Platforms: if the user specifies targets, use exactly those targets. If they do not specify targets, choose defaults from the current platform:
+  - On macOS (`darwin`), build `darwin/arm64` and `windows/amd64`.
+  - On Windows, build `windows/amd64`.
+  - On other platforms, ask the user which targets to build.
 
 ## Registry
 
