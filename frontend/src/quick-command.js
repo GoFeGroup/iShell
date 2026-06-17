@@ -3,6 +3,7 @@ import { showToast } from './toast.js';
 
 let settingsRef = {};
 let getActiveConn = () => null;
+let scrollResizeObserver = null;
 
 // Built-in, position-based shortcuts: Ctrl+1..9 (same on every platform) trigger
 // the 1st..9th quick command in the list. Plain Ctrl+digit (no Shift/Alt/Meta)
@@ -129,13 +130,15 @@ function renderQuickCommands() {
   }
 
   bar.innerHTML = `
+    <button class="quick-command-scroll qc-scroll-left" type="button" aria-label="Scroll left">‹</button>
     <div class="quick-command-list">
       ${commands.map((cmd, i) => `
         <button class="quick-command-item${i < 9 ? ' has-shortcut' : ''}" type="button" data-id="${escAttr(cmd.id || '')}" title="${escAttr(cmd.command)}${i < 9 ? '  (' + escAttr(shortcutLabelForIndex(i)) + ')' : ''}">
           ${i < 9 ? `<span class="qc-index">${i + 1}</span>` : ''}${escHtml(cmd.label || cmd.command)}
         </button>
       `).join('')}
-    </div>`;
+    </div>
+    <button class="quick-command-scroll qc-scroll-right" type="button" aria-label="Scroll right">›</button>`;
 
   bar.querySelectorAll('.quick-command-item').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -145,6 +148,42 @@ function renderQuickCommands() {
       runQuickCommand(connID, cmd);
     });
   });
+
+  setupScrollControls(bar);
+}
+
+// Quick commands render as a single non-wrapping row (the bar's height must
+// stay fixed so it doesn't eat into the terminal area). When there are more
+// commands than fit, expose left/right buttons and let a plain vertical
+// mouse wheel scroll the row horizontally — a trackpad can already swipe
+// sideways, but a normal wheel can't without this.
+function setupScrollControls(bar) {
+  const list = bar.querySelector('.quick-command-list');
+  const leftBtn = bar.querySelector('.qc-scroll-left');
+  const rightBtn = bar.querySelector('.qc-scroll-right');
+  if (scrollResizeObserver) scrollResizeObserver.disconnect();
+  if (!list || !leftBtn || !rightBtn) return;
+
+  const update = () => {
+    const overflowing = list.scrollWidth > list.clientWidth + 1;
+    leftBtn.classList.toggle('visible', overflowing);
+    rightBtn.classList.toggle('visible', overflowing);
+    leftBtn.disabled = list.scrollLeft <= 0;
+    rightBtn.disabled = list.scrollLeft + list.clientWidth >= list.scrollWidth - 1;
+  };
+
+  leftBtn.addEventListener('click', () => list.scrollBy({ left: -list.clientWidth * 0.8, behavior: 'smooth' }));
+  rightBtn.addEventListener('click', () => list.scrollBy({ left: list.clientWidth * 0.8, behavior: 'smooth' }));
+  list.addEventListener('scroll', update);
+  list.addEventListener('wheel', e => {
+    if (!e.deltaY) return;
+    list.scrollLeft += e.deltaY;
+    e.preventDefault();
+  }, { passive: false });
+
+  scrollResizeObserver = new ResizeObserver(update);
+  scrollResizeObserver.observe(list);
+  update();
 }
 
 function escHtml(s) {
