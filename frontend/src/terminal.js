@@ -8,36 +8,69 @@ const instances = {};  // connID → { term, fitAddon, resizeObs, dataHandler, x
 const cwdByConn = {};
 const DEFAULT_FONT_SIZE = 16;
 const RESTORE_DELAYS = [0, 50, 150, 300];
+const INPUT_CHUNK_SIZE = 8192;
+const INPUT_YIELD_EVERY_CHUNKS = 8;
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function chunkEndFor(text, start) {
+  let end = Math.min(start + INPUT_CHUNK_SIZE, text.length);
+  if (end < text.length) {
+    const lastCode = text.charCodeAt(end - 1);
+    if (lastCode >= 0xD800 && lastCode <= 0xDBFF) {
+      end -= 1;
+    }
+  }
+  return end;
+}
 
 function makeInputSender(connID) {
-  let pending = '';
+  const queue = [];
+  let head = 0;
+  let offset = 0;
   let draining = false;
 
   async function drain() {
     if (draining) return;
     draining = true;
     try {
-      while (pending) {
-        const payload = pending;
-        pending = '';
+      let sentSinceYield = 0;
+      while (head < queue.length) {
+        const text = queue[head];
+        const end = chunkEndFor(text, offset);
+        const payload = text.slice(offset, end);
         try {
           await sendInput(connID, payload);
+          offset = end;
+          if (offset >= text.length) {
+            head += 1;
+            offset = 0;
+            if (head > 64 && head * 2 > queue.length) {
+              queue.splice(0, head);
+              head = 0;
+            }
+          }
+          sentSinceYield += 1;
+          if (sentSinceYield >= INPUT_YIELD_EVERY_CHUNKS) {
+            sentSinceYield = 0;
+            await sleep(0);
+          }
         } catch (e) {
-          // Re-queue the bytes we already took so a transient IPC failure never
-          // drops input, then back off briefly to avoid a busy retry loop.
-          pending = payload + pending;
           console.error('sendInput:', e);
-          await new Promise(r => setTimeout(r, 8));
+          await sleep(8);
         }
       }
     } finally {
       draining = false;
-      if (pending) drain();
+      if (head < queue.length) drain();
     }
   }
 
   return (data) => {
-    pending += data;
+    if (!data) return;
+    queue.push(data);
     drain();
   };
 }
@@ -251,6 +284,11 @@ export function createTerminal(connID, settings, options = {}) {
   let suppressPasteUntil = 0;
   let composing = false;
   let pendingComposition = null;
+  const pasteIntoTerminal = (text) => {
+    if (!text) return;
+    term.clearSelection();
+    term.paste(text);
+  };
 
   const compositionStartHandler = () => {
     composing = true;
@@ -328,9 +366,8 @@ export function createTerminal(connID, settings, options = {}) {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation?.();
-      term.clearSelection();
       window.runtime.ClipboardGetText()
-        .then(text => { if (text) flushInput(text); })
+        .then(pasteIntoTerminal)
         .catch(() => {});
       return false;
     }
@@ -360,14 +397,13 @@ export function createTerminal(connID, settings, options = {}) {
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation?.();
-    term.clearSelection();
     if (Date.now() < suppressPasteUntil) {
       return;
     }
     const text = e.clipboardData?.getData('text');
-    if (text) { flushInput(text); return; }
+    if (text) { pasteIntoTerminal(text); return; }
     window.runtime.ClipboardGetText()
-      .then(text => { if (text) flushInput(text); })
+      .then(pasteIntoTerminal)
       .catch(() => {});
   };
   xtermEl.addEventListener('paste', pasteHandler, true);
@@ -566,9 +602,8 @@ export function createTerminal(connID, settings, options = {}) {
     e.stopPropagation();
     e.stopImmediatePropagation?.();
     term.focus();
-    term.clearSelection();
     window.runtime.ClipboardGetText()
-      .then(text => { if (text) flushInput(text); })
+      .then(pasteIntoTerminal)
       .catch(() => {});
   };
   xtermEl.addEventListener('contextmenu', contextMenuHandler);

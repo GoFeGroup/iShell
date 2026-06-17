@@ -9,10 +9,14 @@ import (
 )
 
 type session struct {
-	mu     sync.Mutex
-	write  func([]byte) error
-	resize func(cols, rows int) error
-	close  func() error
+	ctx     context.Context
+	cancel  context.CancelFunc
+	inputCh chan []byte
+	mu      sync.Mutex
+	write   func([]byte) error
+	resize  func(cols, rows int) error
+	close   func() error
+	err     error
 }
 
 // Manager manages active local terminal sessions.
@@ -70,9 +74,27 @@ func (m *Manager) SendInput(connID string, data []byte) error {
 	if sess == nil {
 		return fmt.Errorf("local session %s not found", connID)
 	}
+	select {
+	case <-sess.ctx.Done():
+		return sess.ctx.Err()
+	default:
+	}
+	buf := make([]byte, len(data))
+	copy(buf, data)
+
 	sess.mu.Lock()
-	defer sess.mu.Unlock()
-	return sess.write(data)
+	err := sess.err
+	sess.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
+	select {
+	case sess.inputCh <- buf:
+		return nil
+	case <-sess.ctx.Done():
+		return sess.ctx.Err()
+	}
 }
 
 func (m *Manager) ResizeTerminal(connID string, cols, rows int) error {
@@ -95,5 +117,38 @@ func (m *Manager) CloseAll() {
 	m.mu.Unlock()
 	for _, id := range ids {
 		_ = m.Disconnect(id)
+	}
+}
+
+func newSession(ctx context.Context, write func([]byte) error, resize func(cols, rows int) error, closeFn func() error) *session {
+	sessCtx, cancel := context.WithCancel(ctx)
+	sess := &session{
+		ctx:     sessCtx,
+		cancel:  cancel,
+		inputCh: make(chan []byte, 256),
+		write:   write,
+		resize:  resize,
+		close: func() error {
+			cancel()
+			return closeFn()
+		},
+	}
+	go sess.pumpInput()
+	return sess
+}
+
+func (s *session) pumpInput() {
+	for {
+		select {
+		case data := <-s.inputCh:
+			if err := s.write(data); err != nil {
+				s.mu.Lock()
+				s.err = err
+				s.mu.Unlock()
+				return
+			}
+		case <-s.ctx.Done():
+			return
+		}
 	}
 }

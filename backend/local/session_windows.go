@@ -68,15 +68,16 @@ func startSession(ctx context.Context, connID string, cols, rows int) (*session,
 
 	go func() { _, _ = cpty.Wait(ctx) }()
 
-	return &session{
-		write: func(data []byte) error {
+	return newSession(
+		ctx,
+		func(data []byte) error {
 			return writeAll(cpty, data)
 		},
-		resize: func(c, r int) error {
+		func(c, r int) error {
 			return cpty.Resize(c, r)
 		},
-		close: func() error {
+		func() error {
 			return cpty.Close()
 		},
-	}, nil
+	), nil
 }

@@ -151,18 +151,19 @@ func startSession(ctx context.Context, connID string, cols, rows int) (*session,
 		wailsRuntime.EventsEmit(ctx, "terminal:closed:"+connID, nil)
 	}()
 
-	return &session{
-		write: func(data []byte) error {
+	return newSession(
+		ctx,
+		func(data []byte) error {
 			return writeAll(ptmx, data)
 		},
-		resize: func(c, r int) error {
+		func(c, r int) error {
 			return pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(c), Rows: uint16(r)})
 		},
-		close: func() error {
+		func() error {
 			if cmd.Process != nil {
 				_ = cmd.Process.Kill()
 			}
 			return ptmx.Close()
 		},
-	}, nil
+	), nil
 }
