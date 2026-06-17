@@ -5,6 +5,7 @@ import { initProfilePicker, openProfilePicker } from './profile-picker.js';
 import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTerminalViewport } from './terminal.js';
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
+import { initQuickCommands, setQuickCommandSettings, toggleQuickCommands, updateQuickCommandUI, triggerQuickCommandShortcut } from './quick-command.js';
 import { showToast } from './toast.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -27,11 +28,13 @@ window.addEventListener('load', async () => {
 
   initSidebar(onConnectRequest);
   initProfilePicker(onConnectRequest);
+  initQuickCommands(settings, () => isTerminalTab(activeTab) ? activeTab.connID : null);
 
   // Toolbar buttons
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
   document.getElementById('btn-disconnect').addEventListener('click', () => hasTerminalConn(activeTab) && doDisconnect(activeTab.connID));
   document.getElementById('btn-sftp').addEventListener('click', toggleSFTP);
+  document.getElementById('btn-quick-command').addEventListener('click', toggleQuickCommands);
   document.getElementById('btn-settings').addEventListener('click', openSettingsPanel);
   document.getElementById('btn-new-instance').addEventListener('click', openNewInstance);
   document.getElementById('btn-search-term').addEventListener('click', toggleFind);
@@ -55,6 +58,12 @@ window.addEventListener('load', async () => {
   window.addEventListener('ishell:switchTab', (e) => switchToTabByIndex(e.detail));
   window.addEventListener('ishell:closeTab', () => closeTab(activeTab));
   window.addEventListener('ishell:closeSettings', closeSettingsTab);
+  window.addEventListener('ishell:openSettings', (e) => openSettingsPanel(e.detail?.page));
+  window.addEventListener('ishell:settingsSaved', (e) => {
+    settings = e.detail?.settings || settings;
+    setQuickCommandSettings(settings);
+    refitActiveTerminal();
+  });
   window.addEventListener('ishell:nativeEsc', handleNativeEsc);
 
   // Host key events
@@ -212,7 +221,8 @@ async function switchToTab(tab) {
     renderTabs();
     showPanel('settings');
     updateConnUI(null);
-    await initSettings();
+    updateQuickCommandUI();
+    await initSettings(tab.settingsPage);
     return;
   }
   if (tab.type === 'sftp') {
@@ -220,6 +230,7 @@ async function switchToTab(tab) {
     renderTabs();
     showPanel('sftp');
     updateConnUI(tab);
+    updateQuickCommandUI();
     await initSFTP(tab.connID);
     return;
   }
@@ -227,6 +238,7 @@ async function switchToTab(tab) {
   renderTabs();
   showPanel('terminal');
   updateConnUI(tab);
+  updateQuickCommandUI();
   createTerminal(tab.connID, settings);
   refitActiveTerminal({ restoreScroll: true });
   focusTerminal(tab.connID);
@@ -283,6 +295,7 @@ function showWelcome() {
   renderTabs();
   showPanel('welcome');
   updateConnUI(null);
+  updateQuickCommandUI();
 }
 
 function isTerminalTab(tab) {
@@ -326,6 +339,7 @@ function updateConnUI(tab) {
   const sftpBtn = document.getElementById('btn-sftp');
   actions.style.display = hasConn ? '' : 'none';
   if (sftpBtn) sftpBtn.style.display = hasConn && !tab?.isLocal ? '' : 'none';
+  updateQuickCommandUI();
 }
 
 // ── SFTP toggle ───────────────────────────────────────────────────────────────
@@ -353,7 +367,7 @@ async function toggleSFTP() {
 
 // ── Settings panel ────────────────────────────────────────────────────────────
 
-async function openSettingsPanel() {
+async function openSettingsPanel(page) {
   let tab = tabs.find(t => t.type === 'settings');
   if (!tab) {
     tab = {
@@ -363,6 +377,7 @@ async function openSettingsPanel() {
     };
     tabs.push(tab);
   }
+  tab.settingsPage = page || tab.settingsPage || 'appearance';
   await switchToTab(tab);
 }
 
@@ -417,8 +432,8 @@ function handleKeydown(e) {
     return;
   }
   const isTabSwitch = isMac
-    ? (e.metaKey && !e.ctrlKey && !e.altKey && e.key >= '1' && e.key <= '9')
-    : (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= '1' && e.key <= '9');
+    ? (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key >= '1' && e.key <= '9')
+    : (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key >= '1' && e.key <= '9');
   if (isTabSwitch) {
     e.preventDefault();
     switchToTabByIndex(parseInt(e.key));
@@ -457,6 +472,7 @@ function handleKeydown(e) {
     openSettingsPanel();
     return;
   }
+  if (triggerQuickCommandShortcut(e)) return;
 }
 
 function handleNativeEsc() {

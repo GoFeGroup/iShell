@@ -244,6 +244,15 @@ func (s *Store) LoadSettings() (*Settings, error) {
 		def := DefaultSettings()
 		return &def, nil
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err == nil {
+		if _, ok := fields["show_quick_commands"]; !ok {
+			st.ShowQuickCommands = true
+		}
+	}
+	if st.QuickCommands == nil {
+		st.QuickCommands = []QuickCommand{}
+	}
 	return &st, nil
 }
 

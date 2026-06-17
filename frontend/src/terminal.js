@@ -2,6 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { sendInput, resizeTerm, on, off } from './api.js';
+import { findQuickCommandByShortcut } from './quick-command.js';
 
 const isMac = navigator.platform.startsWith('Mac');
 const instances = {};  // connID → { term, fitAddon, resizeObs, dataHandler, xtermEl }
@@ -162,8 +163,9 @@ function fitVisibleTerminal(connID, inst, { restoreScroll = false, snapshot = nu
 
 function isGlobalAppShortcut(e) {
   if (e.type !== 'keydown') return false;
+  if (findQuickCommandByShortcut(e)) return true;
   const key = e.key.toLowerCase();
-  const appMod = isMac ? (e.metaKey && !e.ctrlKey && !e.altKey) : (e.altKey && !e.ctrlKey && !e.metaKey);
+  const appMod = isMac ? (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) : (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey);
   if (e.key === 'Enter' && (isMac ? e.metaKey : e.altKey)) return true;
   if (!appMod) return false;
   return key === 'w' ||
