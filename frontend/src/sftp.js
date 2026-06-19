@@ -6,6 +6,7 @@ import {
 } from './api.js';
 import { getTerminalCWD } from './terminal.js';
 import { showToast } from './toast.js';
+import { t } from './i18n.js';
 
 let connID = null;
 let localPath = '';
@@ -16,6 +17,16 @@ let dragState = null;
 let cwdListener = null;
 let progressListenerRegistered = false;
 const stateByConn = {};
+
+window.addEventListener('ishell:languageChanged', () => {
+  Object.values(stateByConn).forEach(s => { s.rendered = false; });
+  if (connID && document.getElementById('panel-sftp')?.style.display !== 'none') {
+    renderSFTP();
+    loadTransferQueue();
+    Promise.all([loadLocal(), loadRemote()]);
+    stateByConn[connID].rendered = true;
+  }
+});
 
 export async function initSFTP(cID) {
   // Clean up previous CWD listener before re-initializing
@@ -100,33 +111,33 @@ function renderSFTP() {
          ondragleave="window._sftp.onDragLeave('local')"
          ondrop="window._sftp.onDrop(event,'local')">
       <div class="sftp-pane-header">
-        <span class="pane-label">💻 Local</span>
+        <span class="pane-label">${t('sftp.localPane')}</span>
         <div class="breadcrumb" id="bc-local"></div>
       </div>
       <div class="pane-toolbar">
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="window._sftp.navLocalUp()" title="Up">↑</button>
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="window._sftp.refreshLocal()" title="Refresh">↺</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="window._sftp.navLocalUp()" title="${t('common.up')}">↑</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="window._sftp.refreshLocal()" title="${t('common.refresh')}">↺</button>
         <div class="pane-toolbar-sep"></div>
-        <button class="btn btn-ghost btn-sm" style="font-size:12px;" onclick="window._sftp.uploadSelected()">⬆ Upload</button>
+        <button class="btn btn-ghost btn-sm" style="font-size:12px;" onclick="window._sftp.uploadSelected()">${t('sftp.uploadBtn')}</button>
       </div>
       <div class="file-list" id="list-local">
         <div class="file-list-header">
           <span><input type="checkbox" id="cb-all-local" style="accent-color:var(--accent);" /></span>
-          <span>Name</span><span style="text-align:right;">Size</span><span>Modified</span><span>Type</span>
+          <span>${t('sftp.colName')}</span><span style="text-align:right;">${t('sftp.colSize')}</span><span>${t('sftp.colModified')}</span><span>${t('sftp.colType')}</span>
         </div>
       </div>
-      <div class="drop-overlay" id="drop-local"><div class="drop-msg">⬇ Drop to download</div></div>
+      <div class="drop-overlay" id="drop-local"><div class="drop-msg">${t('sftp.dropToDownload')}</div></div>
     </div>
 
     <!-- Mid strip -->
     <div class="sftp-mid">
       <div>
-        <button class="transfer-btn" title="Upload selected" onclick="window._sftp.uploadSelected()">→</button>
-        <div style="font-size:9px;color:var(--text-muted);text-align:center;margin-top:3px;">Upload</div>
+        <button class="transfer-btn" title="${t('sftp.uploadSelectedTitle')}" onclick="window._sftp.uploadSelected()">→</button>
+        <div style="font-size:9px;color:var(--text-muted);text-align:center;margin-top:3px;">${t('common.upload')}</div>
       </div>
       <div>
-        <button class="transfer-btn" title="Download selected" onclick="window._sftp.downloadSelected()">←</button>
-        <div style="font-size:9px;color:var(--text-muted);text-align:center;margin-top:3px;">Download</div>
+        <button class="transfer-btn" title="${t('sftp.downloadSelectedTitle')}" onclick="window._sftp.downloadSelected()">←</button>
+        <div style="font-size:9px;color:var(--text-muted);text-align:center;margin-top:3px;">${t('common.download')}</div>
       </div>
     </div>
 
@@ -136,31 +147,31 @@ function renderSFTP() {
          ondragleave="window._sftp.onDragLeave('remote')"
          ondrop="window._sftp.onDrop(event,'remote')">
       <div class="sftp-pane-header">
-        <span class="pane-label">🌐 Remote</span>
+        <span class="pane-label">${t('sftp.remotePane')}</span>
         <div class="breadcrumb" id="bc-remote"></div>
       </div>
       <div class="pane-toolbar">
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="window._sftp.navRemoteUp()" title="Up">↑</button>
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="window._sftp.refreshRemote()" title="Refresh">↺</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="window._sftp.navRemoteUp()" title="${t('common.up')}">↑</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="window._sftp.refreshRemote()" title="${t('common.refresh')}">↺</button>
         <div class="pane-toolbar-sep"></div>
-        <button class="btn btn-ghost btn-sm" style="font-size:12px;" onclick="window._sftp.downloadSelected()">⬇ Download</button>
+        <button class="btn btn-ghost btn-sm" style="font-size:12px;" onclick="window._sftp.downloadSelected()">${t('sftp.downloadBtn')}</button>
       </div>
       <div class="file-list" id="list-remote">
         <div class="file-list-header">
           <span><input type="checkbox" id="cb-all-remote" style="accent-color:var(--accent);" /></span>
-          <span>Name</span><span style="text-align:right;">Size</span><span>Modified</span><span>Perms</span>
+          <span>${t('sftp.colName')}</span><span style="text-align:right;">${t('sftp.colSize')}</span><span>${t('sftp.colModified')}</span><span>${t('sftp.colPerms')}</span>
         </div>
       </div>
-      <div class="drop-overlay" id="drop-remote"><div class="drop-msg">⬇ Drop to download</div></div>
+      <div class="drop-overlay" id="drop-remote"><div class="drop-msg">${t('sftp.dropToDownload')}</div></div>
     </div>
   </div>
 
   <!-- Transfer queue -->
   <div class="transfer-queue">
     <div class="queue-header" onclick="window._sftp.toggleQueue()">
-      <div class="queue-title">📋 Transfers <span class="badge badge-blue" id="queue-badge" style="display:none;"></span></div>
+      <div class="queue-title">${t('sftp.transfersTitle')} <span class="badge badge-blue" id="queue-badge" style="display:none;"></span></div>
       <div class="queue-actions">
-        <button class="queue-clear" id="queue-clear" onclick="event.stopPropagation(); window._sftp.clearFinishedTransfers()" disabled>Clear</button>
+        <button class="queue-clear" id="queue-clear" onclick="event.stopPropagation(); window._sftp.clearFinishedTransfers()" disabled>${t('common.clear')}</button>
         <span id="queue-arrow" style="color:var(--text-muted);font-size:12px;">▼</span>
       </div>
     </div>
@@ -178,7 +189,7 @@ async function loadLocal() {
   setBreadcrumb('local', localPath);
   saveCurrentState();
   const list = document.getElementById('list-local');
-  list.innerHTML = '<div class="file-list-header"><span><input type="checkbox" id="cb-all-local" style="accent-color:var(--accent);" /></span><span>Name</span><span style="text-align:right;">Size</span><span>Modified</span><span>Type</span></div>';
+  list.innerHTML = `<div class="file-list-header"><span><input type="checkbox" id="cb-all-local" style="accent-color:var(--accent);" /></span><span>${t('sftp.colName')}</span><span style="text-align:right;">${t('sftp.colSize')}</span><span>${t('sftp.colModified')}</span><span>${t('sftp.colType')}</span></div>`;
   bindHeaderCb('local');
   try {
     const files = await listLocalDir(localPath);
@@ -192,7 +203,7 @@ async function loadRemote() {
   setBreadcrumb('remote', remotePath);
   saveCurrentState();
   const list = document.getElementById('list-remote');
-  list.innerHTML = '<div class="file-list-header"><span><input type="checkbox" id="cb-all-remote" style="accent-color:var(--accent);" /></span><span>Name</span><span style="text-align:right;">Size</span><span>Modified</span><span>Perms</span></div>';
+  list.innerHTML = `<div class="file-list-header"><span><input type="checkbox" id="cb-all-remote" style="accent-color:var(--accent);" /></span><span>${t('sftp.colName')}</span><span style="text-align:right;">${t('sftp.colSize')}</span><span>${t('sftp.colModified')}</span><span>${t('sftp.colPerms')}</span></div>`;
   bindHeaderCb('remote');
   try {
     const files = await listRemoteDir(connID, remotePath);
@@ -379,7 +390,7 @@ window._sftp.uploadSelected = async () => {
 };
 window._sftp.downloadSelected = async () => {
   const sel = getSelectedRows('remote');
-  if (sel.length === 0) { showToast('Select files to download'); return; }
+  if (sel.length === 0) { showToast(t('sftp.selectFilesToDownload')); return; }
   const rps = sel.map(r => r.dataset.path);
   await doDownloadToDir(rps, localPath);
 };
@@ -460,7 +471,7 @@ function addQueueItem(transferID, name, action) {
         <span class="queue-speed" id="ps-${transferID}">—</span>
       </div>
     </div>
-    <span class="queue-direction ${isUp?'up':'down'}" id="pd-${transferID}">${isUp?'⬆ Upload':'⬇ Download'}</span>
+    <span class="queue-direction ${isUp?'up':'down'}" id="pd-${transferID}">${isUp?t('sftp.queueUpload'):t('sftp.queueDownload')}</span>
     <button class="queue-cancel" onclick="document.getElementById('qi-${transferID}')?.remove()">✕</button>`;
   body.insertBefore(item, body.firstChild);
   updateQueueBadge();
@@ -488,31 +499,31 @@ function handleProgress(prog, opts = {}) {
   const pct = Math.round(prog.percent);
   const scanning = !prog.finished && (!prog.total || prog.total <= 0);
   pf.style.width = scanning ? '8%' : pct + '%';
-  pp.textContent = prog.finished ? 'Done' : scanning ? 'Scanning' : pct + '%';
+  pp.textContent = prog.finished ? t('sftp.statusDone') : scanning ? t('sftp.statusScanning') : pct + '%';
   if (prog.speed_bps > 0) ps.textContent = fmtSize(prog.speed_bps) + '/s';
   if (prog.error) {
     pf.className = 'progress-fill errored'; pf.style.width='100%';
-    pp.textContent = 'Error'; pp.style.color = 'var(--red)';
-    if (pd) { pd.className = 'queue-direction error'; pd.textContent = '✕ Failed'; }
-    if (!opts.silent) showToast('❌ Transfer failed: ' + prog.error);
+    pp.textContent = t('sftp.statusError'); pp.style.color = 'var(--red)';
+    if (pd) { pd.className = 'queue-direction error'; pd.textContent = t('sftp.queueFailedMark'); }
+    if (!opts.silent) showToast(t('toast.transferFailed', { err: prog.error }));
     transfers[prog.transfer_id].finished = true;
     transfers[prog.transfer_id].error = prog.error;
     updateQueueBadge();
   } else if (prog.finished) {
     pf.className = 'progress-fill done';
-    if (pd) { pd.className = 'queue-direction done'; pd.textContent = '✓ Done'; }
+    if (pd) { pd.className = 'queue-direction done'; pd.textContent = t('sftp.queueDoneMark'); }
     transfers[prog.transfer_id].finished = true;
     updateQueueBadge();
-    if (!opts.silent && prog.name) showToast(`✅ Done: ${prog.name}`);
+    if (!opts.silent && prog.name) showToast(t('toast.transferDone', { name: prog.name }));
   }
 }
 
 function updateQueueBadge() {
   const badge = document.getElementById('queue-badge');
-  const n = Object.values(transfers).filter(t => !t.finished).length;
-  if (badge) { badge.textContent = n + ' active'; badge.style.display = n > 0 ? '' : 'none'; }
+  const n = Object.values(transfers).filter(tr => !tr.finished).length;
+  if (badge) { badge.textContent = t('sftp.activeBadge', { n }); badge.style.display = n > 0 ? '' : 'none'; }
   const clear = document.getElementById('queue-clear');
-  if (clear) clear.disabled = !Object.values(transfers).some(t => t.finished);
+  if (clear) clear.disabled = !Object.values(transfers).some(tr => tr.finished);
 }
 
 window._sftp.toggleQueue = () => {
@@ -587,16 +598,16 @@ function showCtxMenu(e, file, pane) {
   menu.className = 'ctx-menu';
   menu.style.cssText = `left:${e.pageX}px;top:${e.pageY}px;`;
   const items = pane === 'local' ? [
-    { label: '⬆ Upload to Remote', action: () => doUploadPaths([file.path]) },
-    { label: '✏ Rename', action: () => renamePrompt(file, pane) },
+    { label: t('sftp.ctxUpload'), action: () => doUploadPaths([file.path]) },
+    { label: t('sftp.ctxRename'), action: () => renamePrompt(file, pane) },
     null,
-    { label: '🗑 Delete', cls: 'danger', action: () => localDeletePrompt(file) },
+    { label: t('sftp.ctxDelete'), cls: 'danger', action: () => localDeletePrompt(file) },
   ] : [
-    { label: '⬇ Download to Local', action: () => doDownloadToDir([file.path], localPath) },
-    { label: '✏ Rename', action: () => renamePrompt(file, pane) },
-    { label: '🔒 Permissions…', action: () => permDialog(file) },
+    { label: t('sftp.ctxDownload'), action: () => doDownloadToDir([file.path], localPath) },
+    { label: t('sftp.ctxRename'), action: () => renamePrompt(file, pane) },
+    { label: t('sftp.ctxPermissions'), action: () => permDialog(file) },
     null,
-    { label: '🗑 Delete', cls: 'danger', action: () => remoteDeletePrompt(file) },
+    { label: t('sftp.ctxDelete'), cls: 'danger', action: () => remoteDeletePrompt(file) },
   ];
   items.forEach(item => {
     if (!item) { const d=document.createElement('div'); d.className='ctx-divider'; menu.appendChild(d); return; }
@@ -611,7 +622,7 @@ function showCtxMenu(e, file, pane) {
 }
 
 function renamePrompt(file, pane) {
-  const newName = prompt(`Rename "${file.name}" to:`, file.name);
+  const newName = prompt(t('sftp.renamePrompt', { name: file.name }), file.name);
   if (!newName || newName === file.name) return;
   const dir = file.path.substring(0, file.path.lastIndexOf('/') + 1) || file.path.substring(0, file.path.lastIndexOf('\\') + 1);
   const newPath = (pane === 'remote' ? dir : '') + newName;
@@ -619,18 +630,18 @@ function renamePrompt(file, pane) {
     renameRemote(connID, file.path, dir + newName)
       .then(() => loadRemote()).catch(e => showToast('❌ ' + e));
   } else {
-    showToast('Rename local not supported in prototype');
+    showToast(t('sftp.renameLocalUnsupported'));
   }
 }
 function remoteDeletePrompt(file) {
-  if (!confirm(`Delete remote "${file.name}"?`)) return;
+  if (!confirm(t('sftp.confirmDeleteRemote', { name: file.name }))) return;
   deleteRemote(connID, file.path).then(() => loadRemote()).catch(e => showToast('❌ ' + e));
 }
 function localDeletePrompt(file) {
-  showToast('Local delete not supported via SFTP');
+  showToast(t('sftp.deleteLocalUnsupported'));
 }
 function permDialog(file) {
-  const oct = prompt(`Set octal permissions for "${file.name}" (e.g. 644):`, '644');
+  const oct = prompt(t('sftp.permPrompt', { name: file.name }), '644');
   if (!oct) return;
   const mode = parseInt(oct, 8);
   setPermissions(connID, file.path, mode).then(() => loadRemote()).catch(e => showToast('❌ ' + e));

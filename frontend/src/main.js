@@ -7,6 +7,11 @@ import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
 import { initQuickCommands, setQuickCommandSettings, toggleQuickCommands, updateQuickCommandUI, triggerQuickCommandShortcut } from './quick-command.js';
 import { showToast } from './toast.js';
+import { t, applyI18nAttrs, setLanguage, getLanguagePref } from './i18n.js';
+
+// Apply the persisted/system-detected language to static markup as early as
+// possible (module top-level runs once the DOM is parsed, before 'load').
+applyI18nAttrs();
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let tabs = [];          // terminal/sftp: { type, id, connID, sessionID, sessionLabel, host, username }; settings: { type, id, sessionLabel }
@@ -24,6 +29,9 @@ window.addEventListener('load', async () => {
   if (settings?.theme) {
     document.documentElement.setAttribute('data-theme', settings.theme);
     localStorage.setItem('theme', settings.theme);
+  }
+  if (settings?.language && settings.language !== getLanguagePref()) {
+    setLanguage(settings.language);
   }
 
   initSidebar(onConnectRequest);
@@ -46,7 +54,7 @@ window.addEventListener('load', async () => {
   document.querySelectorAll('.kbd-hint kbd').forEach(el => {
     if (el.textContent === 'Alt+Enter') el.textContent = fsKey;
   });
-  document.getElementById('btn-fullscreen').title = `Fullscreen  ${fsKey}`;
+  document.getElementById('btn-fullscreen').title = t('app.fullscreenTitle', { key: fsKey });
   const tabSwitchEl = document.getElementById('kbd-switch-tab');
   if (tabSwitchEl) tabSwitchEl.textContent = isMac ? '⌘1…9' : 'Alt+1…9';
 
@@ -65,6 +73,10 @@ window.addEventListener('load', async () => {
     refitActiveTerminal();
   });
   window.addEventListener('ishell:nativeEsc', handleNativeEsc);
+  window.addEventListener('ishell:languageChanged', () => {
+    loadProfiles();
+    renderTabs();
+  });
 
   // Host key events
   on('ssh:unknown_host', showHostKeyDialog);
@@ -86,7 +98,7 @@ async function onConnectRequest(sess) {
   if (sess.type === 'local') {
     return onLocalConnectRequest(sess);
   }
-  showToast(`🔌 Connecting to ${sess.host}…`);
+  showToast(t('toast.connecting', { host: sess.host }));
   setSessionStatus(sess.id, 'connecting');
 
   const el = document.getElementById('terminal-container');
@@ -113,12 +125,12 @@ async function onConnectRequest(sess) {
     if (isHostKeyPromptError(e)) return; // dialog will handle retry
     delete pendingConnects[sess.id];
     showToast(`❌ ${e}`);
-    alert('Connection failed:\n' + e);
+    alert(t('alert.connectionFailed', { e }));
   }
 }
 
 async function onLocalConnectRequest(localSess) {
-  showToast(`🖥 Opening ${localSess.sublabel}…`);
+  showToast(t('toast.openingLocal', { sub: localSess.sublabel }));
   setSessionStatus('__local__', 'connecting');
 
   const el = document.getElementById('terminal-container');
@@ -158,7 +170,7 @@ async function afterConnect(connID, sess) {
     if (tabs.some(t => isTerminalTab(t) && t.connID === connID)) doDisconnect(connID);
   });
   setSessionStatus(sess.id, 'connected');
-  showToast(`✅ Connected to ${sess.host}`);
+  showToast(t('toast.connected', { host: sess.host }));
 }
 
 async function doDisconnect(connID) {
@@ -178,7 +190,7 @@ async function doDisconnect(connID) {
   if (wasActive) activateFallbackTab(closedIndex);
   else if (activeTab) updateConnUI(tabForConnActions(activeTab));
   else showWelcome();
-  showToast(`Disconnected`);
+  showToast(t('toast.disconnected'));
 }
 
 // ── Tab management ────────────────────────────────────────────────────────────
@@ -207,7 +219,7 @@ function renderTabs() {
   // Add "+" button
   const addBtn = document.createElement('button');
   addBtn.className = 'tab-add';
-  addBtn.title = 'New connection';
+  addBtn.title = t('app.newConnectionTitle');
   addBtn.textContent = '+';
   addBtn.addEventListener('click', showWelcome);
   scroll.appendChild(addBtn);
@@ -245,7 +257,7 @@ async function switchToTab(tab) {
 }
 
 function switchToTabByIndex(n) {
-  if (n < 1 || n > tabs.length) { showToast(`No tab ${n}`); return; }
+  if (n < 1 || n > tabs.length) { showToast(t('toast.noTab', { n })); return; }
   const tab = tabs[n - 1];
   switchToTab(tab);
   showToast(`${isMac ? '⌘' : '⌥'}${n}  ${tab.sessionLabel}`);
@@ -345,8 +357,8 @@ function updateConnUI(tab) {
 // ── SFTP toggle ───────────────────────────────────────────────────────────────
 
 async function toggleSFTP() {
-  if (!hasTerminalConn(activeTab)) { showToast('Connect to a session first'); return; }
-  if (activeTab.isLocal) { showToast('SFTP is only available for remote SSH sessions'); return; }
+  if (!hasTerminalConn(activeTab)) { showToast(t('toast.connectFirst')); return; }
+  if (activeTab.isLocal) { showToast(t('toast.sftpRemoteOnly')); return; }
   const connID = activeTab.connID;
   let tab = tabs.find(t => t.type === 'sftp' && t.connID === connID);
   if (!tab) {
@@ -373,7 +385,7 @@ async function openSettingsPanel(page) {
     tab = {
       type: 'settings',
       id: 'tab-settings',
-      sessionLabel: 'Settings',
+      sessionLabel: t('common.settings'),
     };
     tabs.push(tab);
   }
@@ -413,12 +425,12 @@ function toggleFullscreen() {
     window.runtime.WindowUnfullscreen();
     isFullscreen = false;
     if (btn) btn.textContent = '⛶';
-    showToast('Exited fullscreen');
+    showToast(t('toast.exitedFullscreen'));
   } else {
     window.runtime.WindowFullscreen();
     isFullscreen = true;
     if (btn) btn.textContent = '⊡';
-    showToast(`Fullscreen — ${isMac ? 'Cmd+Enter' : 'Alt+Enter'} to exit`);
+    showToast(t('toast.fullscreenHint', { key: isMac ? 'Cmd+Enter' : 'Alt+Enter' }));
   }
   refitActiveTerminalAfterLayout();
 }
@@ -497,13 +509,13 @@ function showHostKeyDialog(data) {
     close();
     const pending = findPendingConnect(session_id, hostname);
     if (pending) delete pendingConnects[pending.sess.id];
-    showToast('❌ Connection rejected');
+    showToast(t('toast.connectionRejected'));
   };
 
   document.getElementById('hostkey-once').onclick = async () => {
     close();
     const pending = findPendingConnect(session_id, hostname);
-    if (!pending) { showToast('❌ No pending connection'); return; }
+    if (!pending) { showToast(t('toast.noPendingConnection')); return; }
     delete pendingConnects[pending.sess.id];
     setSessionStatus(pending.sess.id, 'connecting');
     try {
@@ -518,12 +530,12 @@ function showHostKeyDialog(data) {
   document.getElementById('hostkey-always').onclick = async () => {
     close();
     const pending = findPendingConnect(session_id, hostname);
-    if (!pending) { showToast('❌ No pending connection'); return; }
+    if (!pending) { showToast(t('toast.noPendingConnection')); return; }
     delete pendingConnects[pending.sess.id];
     try {
       await acceptHostKey(hostname);
     } catch (e) {
-      showToast(`⚠️ Could not save host key: ${e}`);
+      showToast(t('toast.hostKeySaveFailed', { e }));
     }
     setSessionStatus(pending.sess.id, 'connecting');
     try {

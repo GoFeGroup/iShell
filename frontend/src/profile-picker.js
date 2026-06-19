@@ -1,5 +1,6 @@
 import { getSessions } from './api.js';
 import { LOCAL_SESSION } from './sidebar.js';
+import { t } from './i18n.js';
 
 const isMac = navigator.platform.startsWith('Mac');
 let onConnectCb = null;
@@ -22,7 +23,7 @@ export async function openProfilePicker() {
     <div class="pp-card">
       <div class="pp-search-wrap">
         <span class="pp-search-icon">🔍</span>
-        <input class="pp-input" id="pp-search" placeholder="Search profiles…" autocomplete="off" spellcheck="false" />
+        <input class="pp-input" id="pp-search" placeholder="${t('app.searchPlaceholder')}" autocomplete="off" spellcheck="false" />
       </div>
       <div class="pp-list" id="pp-list"></div>
     </div>`;
@@ -37,7 +38,7 @@ export async function openProfilePicker() {
   function render() {
     listEl.innerHTML = '';
     if (!items.some(i => i.kind === 'item')) {
-      listEl.innerHTML = '<div class="pp-empty">No profiles found</div>';
+      listEl.innerHTML = `<div class="pp-empty">${t('profilePicker.noProfiles')}</div>`;
       return;
     }
     items.forEach((item, idx) => {

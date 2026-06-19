@@ -1,5 +1,6 @@
 import { saveSession, getSessions, openKeyDialog, validateKey } from './api.js';
 import { showToast } from './toast.js';
+import { t } from './i18n.js';
 
 /**
  * Opens the Add/Edit Session modal.
@@ -20,48 +21,48 @@ export function openProfileForm(existing, onSaved) {
   overlay.innerHTML = `
 <div class="modal" style="width:500px;display:flex;flex-direction:column;max-height:90vh;">
   <div class="modal-header">
-    <span class="modal-title">${isNew ? '+ New Profile' : '✏️ Edit Profile'}</span>
+    <span class="modal-title">${isNew ? t('app.newProfile') : t('profileForm.editTitle')}</span>
     <button class="btn btn-ghost btn-icon" id="sf-close">✕</button>
   </div>
   <div class="modal-body" style="flex:1;overflow-y:auto;">
     <!-- Connection -->
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border-subtle);">🔌 Connection</div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--border-subtle);">${t('profileForm.sectionConnection')}</div>
     <div class="form-field">
-      <label class="form-label">Label (nickname)</label>
-      <input class="input" id="sf-label" value="${esc(sess.label)}" placeholder="My Server (optional)" />
+      <label class="form-label">${t('profileForm.label')}</label>
+      <input class="input" id="sf-label" value="${esc(sess.label)}" placeholder="${t('profileForm.labelPlaceholder')}" />
     </div>
     <div class="grid-2">
       <div class="form-field">
-        <label class="form-label">Hostname / IP *</label>
+        <label class="form-label">${t('profileForm.host')}</label>
         <input class="input" id="sf-host" value="${esc(sess.host)}" placeholder="192.168.1.1" />
       </div>
       <div class="form-field">
-        <label class="form-label">Port *</label>
+        <label class="form-label">${t('profileForm.port')}</label>
         <input class="input" id="sf-port" type="number" value="${sess.port || 22}" min="1" max="65535" style="width:100%;" />
       </div>
     </div>
     <div class="form-field">
-      <label class="form-label">Username *</label>
+      <label class="form-label">${t('profileForm.username')}</label>
       <input class="input" id="sf-user" value="${esc(sess.username)}" placeholder="root" />
     </div>
     <div class="form-field">
-      <label class="form-label">Group / Tag</label>
+      <label class="form-label">${t('profileForm.group')}</label>
       <input class="input" id="sf-group" value="${esc(sess.group)}" placeholder="Production" />
     </div>
 
     <!-- Auth -->
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin:4px 0 12px;padding-top:8px;padding-bottom:6px;border-bottom:1px solid var(--border-subtle);">🔑 Authentication</div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin:4px 0 12px;padding-top:8px;padding-bottom:6px;border-bottom:1px solid var(--border-subtle);">${t('profileForm.sectionAuth')}</div>
     <div class="auth-tabs">
-      <button class="auth-tab ${sess.auth_type==='password'?'active':''}" data-auth="password">🔒 Password</button>
-      <button class="auth-tab ${sess.auth_type==='key'?'active':''}" data-auth="key">🗝 SSH Key</button>
-      <button class="auth-tab ${sess.auth_type==='agent'?'active':''}" data-auth="agent">🤝 Agent</button>
+      <button class="auth-tab ${sess.auth_type==='password'?'active':''}" data-auth="password">${t('profileForm.authPassword')}</button>
+      <button class="auth-tab ${sess.auth_type==='key'?'active':''}" data-auth="key">${t('profileForm.authKey')}</button>
+      <button class="auth-tab ${sess.auth_type==='agent'?'active':''}" data-auth="agent">${t('profileForm.authAgent')}</button>
     </div>
 
     <div id="auth-password" style="display:${sess.auth_type==='password'?'block':'none'};">
       <div class="form-field">
-        <label class="form-label">Password</label>
+        <label class="form-label">${t('profileForm.passwordLabel')}</label>
         <div style="position:relative;">
-          <input class="input" id="sf-password" type="password" value="${esc(sess.password)}" placeholder="Enter password" style="padding-right:38px;" />
+          <input class="input" id="sf-password" type="password" value="${esc(sess.password)}" placeholder="${t('profileForm.passwordPlaceholder')}" style="padding-right:38px;" />
           <button class="btn btn-ghost" id="sf-pw-toggle" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:2px;font-size:14px;">👁</button>
         </div>
       </div>
@@ -69,55 +70,55 @@ export function openProfileForm(existing, onSaved) {
 
     <div id="auth-key" style="display:${sess.auth_type==='key'?'block':'none'};">
       <div class="form-field">
-        <label class="form-label">Private Key File *</label>
+        <label class="form-label">${t('profileForm.keyFileLabel')}</label>
         <div style="display:flex;gap:6px;">
           <input class="input" id="sf-keypath" value="${esc(sess.key_path)}" placeholder="~/.ssh/id_rsa" style="font-family:var(--font-mono);font-size:12px;" />
-          <button class="btn btn-secondary btn-sm" id="sf-browse-key">Browse…</button>
+          <button class="btn btn-secondary btn-sm" id="sf-browse-key">${t('common.browse')}</button>
         </div>
       </div>
       <div class="form-field">
-        <label class="form-label">Passphrase <span style="color:var(--text-muted);font-weight:400;">(if protected)</span></label>
-        <input class="input" id="sf-passphrase" type="password" value="${esc(sess.passphrase)}" placeholder="Leave blank if none" />
+        <label class="form-label">${t('profileForm.passphraseLabel')} <span style="color:var(--text-muted);font-weight:400;">${t('profileForm.passphraseHint')}</span></label>
+        <input class="input" id="sf-passphrase" type="password" value="${esc(sess.passphrase)}" placeholder="${t('profileForm.passphrasePlaceholder')}" />
       </div>
       <div id="sf-key-status" style="font-size:12px;color:var(--text-muted);margin-top:-8px;margin-bottom:10px;"></div>
     </div>
 
     <div id="auth-agent" style="display:${sess.auth_type==='agent'?'block':'none'};">
       <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;color:var(--text-secondary);font-size:13px;">
-        🤝 iShell will use the system SSH agent for authentication.
+        ${t('profileForm.agentInfo')}
       </div>
     </div>
 
     <!-- Advanced -->
     <div class="adv-section">
       <div class="adv-header" id="sf-adv-toggle">
-        <span>⚙ Advanced Options</span><span id="sf-adv-arrow">▶</span>
+        <span>${t('profileForm.advancedOptions')}</span><span id="sf-adv-arrow">▶</span>
       </div>
       <div class="adv-body" id="sf-adv-body">
         <div class="grid-2">
-          <div class="form-field"><label class="form-label">Timeout (sec)</label><input class="input" id="sf-timeout" type="number" value="${sess.timeout||30}" /></div>
-          <div class="form-field"><label class="form-label">Keepalive (sec)</label><input class="input" id="sf-keepalive" type="number" value="${sess.keepalive||60}" /></div>
+          <div class="form-field"><label class="form-label">${t('profileForm.timeout')}</label><input class="input" id="sf-timeout" type="number" value="${sess.timeout||30}" /></div>
+          <div class="form-field"><label class="form-label">${t('profileForm.keepalive')}</label><input class="input" id="sf-keepalive" type="number" value="${sess.keepalive||60}" /></div>
         </div>
         <div class="form-field">
-          <label class="form-label">Encoding</label>
+          <label class="form-label">${t('profileForm.encoding')}</label>
           <select class="input" id="sf-encoding">
             ${['UTF-8','GBK','ISO-8859-1','Shift-JIS'].map(e=>`<option value="${e}" ${sess.encoding===e?'selected':''}>${e}</option>`).join('')}
           </select>
         </div>
         <div class="form-field">
-          <label class="form-label">⤵ Jump Host (Bastion Profile)</label>
+          <label class="form-label">${t('profileForm.jumpHost')}</label>
           <select class="input" id="sf-jump-profile">
-            <option value="">— None (direct connection) —</option>
+            <option value="">${t('profileForm.jumpHostNone')}</option>
           </select>
         </div>
-        <div class="form-field"><label class="form-label">Initial Command</label><input class="input" id="sf-init" value="${esc(sess.init_command)}" placeholder="tmux attach" /></div>
+        <div class="form-field"><label class="form-label">${t('profileForm.initCommand')}</label><input class="input" id="sf-init" value="${esc(sess.init_command)}" placeholder="tmux attach" /></div>
       </div>
     </div>
     <div id="sf-err" style="color:var(--red);font-size:12px;margin-top:10px;display:none;"></div>
   </div>
   <div class="modal-footer">
-    <button class="btn btn-secondary" id="sf-cancel">Cancel</button>
-    <button class="btn btn-primary" id="sf-save">Save Profile</button>
+    <button class="btn btn-secondary" id="sf-cancel">${t('common.cancel')}</button>
+    <button class="btn btn-primary" id="sf-save">${t('profileForm.saveProfile')}</button>
   </div>
 </div>`;
 
@@ -154,14 +155,14 @@ export function openProfileForm(existing, onSaved) {
     const path = $('sf-keypath').value.trim();
     if (!path) return;
     const statusEl = $('sf-key-status');
-    statusEl.textContent = 'Checking…';
+    statusEl.textContent = t('profileForm.keyChecking');
     statusEl.style.color = 'var(--text-muted)';
     try {
       const ok = await validateKey(path, $('sf-passphrase').value);
-      statusEl.textContent = ok ? '✅ Key valid' : '❌ Invalid key';
+      statusEl.textContent = ok ? t('profileForm.keyValid') : t('profileForm.keyInvalid');
       statusEl.style.color = ok ? 'var(--green)' : 'var(--red)';
     } catch {
-      statusEl.textContent = '❌ Cannot read key file';
+      statusEl.textContent = t('profileForm.keyUnreadable');
       statusEl.style.color = 'var(--red)';
     }
   });
@@ -198,7 +199,7 @@ export function openProfileForm(existing, onSaved) {
     const host = $('sf-host').value.trim();
     const user = $('sf-user').value.trim();
     if (!host || !user) {
-      $('sf-err').textContent = 'Host and Username are required.';
+      $('sf-err').textContent = t('profileForm.errRequired');
       $('sf-err').style.display = '';
       return;
     }
@@ -225,7 +226,7 @@ export function openProfileForm(existing, onSaved) {
       const saved = await saveSession(updated);
       close();
       onSaved(saved);
-      showToast(`✅ Profile saved: ${saved.label || saved.host}`);
+      showToast(t('toast.profileSaved', { name: saved.label || saved.host }));
     } catch (e) {
       $('sf-err').textContent = '❌ ' + (e.message || String(e));
       $('sf-err').style.display = '';

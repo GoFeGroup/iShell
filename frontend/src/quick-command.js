@@ -1,10 +1,16 @@
 import { sendInput, saveSettings } from './api.js';
 import { showToast } from './toast.js';
+import { t } from './i18n.js';
 
 let settingsRef = {};
 let getActiveConn = () => null;
 let scrollResizeObserver = null;
 let currentGroupIndex = 0;
+
+window.addEventListener('ishell:languageChanged', () => {
+  renderQuickCommands();
+  updateQuickCommandUI();
+});
 
 // Built-in, position-based shortcuts: Ctrl+1..9 trigger the 1st..9th quick
 // command in the currently displayed group. Same physical-key logic as before.
@@ -39,7 +45,7 @@ async function runQuickCommand(connID, cmd) {
   try {
     await sendInput(connID, unescapeCommand(String(cmd.command || '')));
   } catch (e) {
-    showToast('Quick command failed: ' + e);
+    showToast(t('toast.quickCommandFailed', { e }));
   }
 }
 
@@ -54,7 +60,7 @@ function getGroups() {
     ? settingsRef.quick_commands.filter(c => c && c.command)
     : [];
   if (cmds.length === 0) return [];
-  return [{ id: 'default', name: 'Default', commands: cmds }];
+  return [{ id: 'default', name: t('settings.quickCommands.legacyGroupName'), commands: cmds }];
 }
 
 function getCurrentGroup() {
@@ -103,7 +109,7 @@ export function toggleQuickCommands() {
   settingsRef.show_quick_commands = settingsRef.show_quick_commands === false;
   renderQuickCommands();
   updateQuickCommandUI();
-  saveSettings(settingsRef).catch(e => showToast('Could not save quick command state: ' + e));
+  saveSettings(settingsRef).catch(e => showToast(t('toast.qcStateSaveFailed', { e })));
 }
 
 export function updateQuickCommandUI() {
@@ -115,7 +121,7 @@ export function updateQuickCommandUI() {
   if (btn) {
     btn.style.display = hasConn ? '' : 'none';
     btn.classList.toggle('active', visible);
-    btn.title = visible ? 'Hide quick commands' : 'Show quick commands';
+    btn.title = visible ? t('app.hideQuickCommands') : t('app.showQuickCommands');
   }
 }
 
@@ -127,8 +133,8 @@ function renderQuickCommands() {
 
   if (groups.length === 0) {
     bar.innerHTML = `
-      <div class="quick-command-empty">No quick commands</div>
-      <button class="quick-command-settings" type="button">Open Settings</button>`;
+      <div class="quick-command-empty">${t('quickCommand.empty')}</div>
+      <button class="quick-command-settings" type="button">${t('quickCommand.openSettings')}</button>`;
     bar.querySelector('.quick-command-settings')?.addEventListener('click', () => {
       window.dispatchEvent(new CustomEvent('ishell:openSettings', { detail: { page: 'quick-commands' } }));
     });
@@ -143,12 +149,12 @@ function renderQuickCommands() {
   bar.innerHTML = `
     ${multiGroup ? `
     <div class="qc-group-nav">
-      <button class="qc-group-nav-btn qc-group-up" type="button" aria-label="Previous group" ${currentGroupIndex === 0 ? 'disabled' : ''}>▲</button>
-      <button class="qc-group-nav-btn qc-group-down" type="button" aria-label="Next group" ${currentGroupIndex >= groups.length - 1 ? 'disabled' : ''}>▼</button>
+      <button class="qc-group-nav-btn qc-group-up" type="button" aria-label="${t('quickCommand.prevGroup')}" ${currentGroupIndex === 0 ? 'disabled' : ''}>▲</button>
+      <button class="qc-group-nav-btn qc-group-down" type="button" aria-label="${t('quickCommand.nextGroup')}" ${currentGroupIndex >= groups.length - 1 ? 'disabled' : ''}>▼</button>
     </div>
-    <div class="qc-bar-group-label">${escHtml(group.name || 'Group')}</div>
+    <div class="qc-bar-group-label">${escHtml(group.name || t('settings.quickCommands.groupFallback'))}</div>
     ` : ''}
-    <button class="quick-command-scroll qc-scroll-left" type="button" aria-label="Scroll left">‹</button>
+    <button class="quick-command-scroll qc-scroll-left" type="button" aria-label="${t('quickCommand.scrollLeft')}">‹</button>
     <div class="quick-command-list">
       ${commands.map((cmd, i) => `
         <button class="quick-command-item${i < 9 ? ' has-shortcut' : ''}" type="button" data-id="${escAttr(cmd.id || '')}" title="${escAttr(cmd.command)}${i < 9 ? '  (' + escAttr(shortcutLabelForIndex(i)) + ')' : ''}">
@@ -156,7 +162,7 @@ function renderQuickCommands() {
         </button>
       `).join('')}
     </div>
-    <button class="quick-command-scroll qc-scroll-right" type="button" aria-label="Scroll right">›</button>`;
+    <button class="quick-command-scroll qc-scroll-right" type="button" aria-label="${t('quickCommand.scrollRight')}">›</button>`;
 
   bar.querySelectorAll('.quick-command-item').forEach(btn => {
     btn.addEventListener('click', () => {

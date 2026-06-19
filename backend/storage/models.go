@@ -48,6 +48,7 @@ type Settings struct {
 	QuickCommands      []QuickCommand      `json:"quick_commands" yaml:"quick_commands"`
 	QuickCommandGroups []QuickCommandGroup `json:"quick_command_groups" yaml:"quick_command_groups"`
 	ShowQuickCommands  bool                `json:"show_quick_commands" yaml:"show_quick_commands"`
+	Language           string              `json:"language" yaml:"language"`
 }
 
 type QuickCommand struct {
@@ -81,5 +82,6 @@ func DefaultSettings() Settings {
 		QuickCommands:      []QuickCommand{},
 		QuickCommandGroups: []QuickCommandGroup{},
 		ShowQuickCommands:  true,
+		Language:           "auto",
 	}
 }

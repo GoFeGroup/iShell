@@ -256,6 +256,9 @@ func (s *Store) LoadSettings() (*Settings, error) {
 	if st.QuickCommandGroups == nil {
 		st.QuickCommandGroups = []QuickCommandGroup{}
 	}
+	if st.Language == "" {
+		st.Language = "auto"
+	}
 	return &st, nil
 }
 

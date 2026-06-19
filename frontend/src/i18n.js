@@ -1,0 +1,540 @@
+// i18n.js — minimal dictionary-based translator. No build-time extraction;
+// keys are dot-paths into the nested dictionaries below, looked up with an
+// English fallback. setLanguage() persists the raw preference ('auto' | 'en'
+// | 'zh-CN' | 'zh-TW') to localStorage so the next launch can apply the
+// right language before the backend Settings round-trip resolves (mirrors
+// the 'theme' fast-path in index.html).
+
+const dict = {
+  en: {
+    common: {
+      save: 'Save', cancel: 'Cancel', delete: 'Delete', edit: 'Edit',
+      close: 'Close', remove: 'Remove', browse: 'Browse…', rename: 'Rename',
+      done: 'Done', failed: 'Failed', settings: 'Settings', fullscreen: 'Fullscreen',
+      connected: 'Connected', discard: 'Discard', clear: 'Clear', up: 'Up',
+      refresh: 'Refresh', upload: 'Upload', download: 'Download',
+      moveUp: 'Move up', moveDown: 'Move down',
+    },
+    app: {
+      searchPlaceholder: 'Search profiles…', newProfile: '+ New Profile',
+      toggleSidebar: 'Toggle sidebar', newInstanceTitle: 'New app instance',
+      newInstanceLabel: '+ Instance', findInTerminal: 'Find in terminal',
+      showQuickCommands: 'Show quick commands', hideQuickCommands: 'Hide quick commands',
+      openSftpTitle: 'Open SFTP', fullscreenTitle: 'Fullscreen  {key}',
+      disconnect: 'Disconnect', newConnectionTitle: 'New connection',
+    },
+    welcome: {
+      title: 'Welcome to iShell',
+      subtitleHtml: 'Select a profile from the sidebar or click <strong>{newProfile}</strong>.',
+      kbdSwitchTab: 'Switch tab', kbdFullscreen: 'Fullscreen', kbdSettings: 'Settings',
+    },
+    hostkey: {
+      title: '⚠ Unknown Host Key',
+      body: "The server's host key has not been verified before. Make sure the fingerprint below matches what you expect.",
+      reject: '✕ Reject', trustOnce: 'Trust Once', alwaysTrust: 'Always Trust',
+    },
+    terminal: { findPlaceholder: 'Find…' },
+    toast: {
+      connecting: '🔌 Connecting to {host}…', openingLocal: '🖥 Opening {sub}…',
+      connected: '✅ Connected to {host}', disconnected: 'Disconnected',
+      noTab: 'No tab {n}', exitedFullscreen: 'Exited fullscreen',
+      fullscreenHint: 'Fullscreen — {key} to exit', connectionRejected: '❌ Connection rejected',
+      noPendingConnection: '❌ No pending connection',
+      hostKeySaveFailed: '⚠️ Could not save host key: {e}',
+      connectFirst: 'Connect to a session first',
+      sftpRemoteOnly: 'SFTP is only available for remote SSH sessions',
+      removed: '✅ Removed', exported: '✅ Exported to {path}',
+      imported: '✅ Imported {n} session(s)', settingsSaved: '✅ Settings saved — restart connections to apply terminal changes',
+      profileSaved: '✅ Profile saved: {name}',
+      quickCommandFailed: 'Quick command failed: {e}',
+      qcStateSaveFailed: 'Could not save quick command state: {e}',
+      transferFailed: '❌ Transfer failed: {err}', transferDone: '✅ Done: {name}',
+    },
+    alert: { connectionFailed: 'Connection failed:\n{e}' },
+    sidebar: {
+      localTerminal: 'Local Terminal', noMatches: 'No matches', ungrouped: 'Ungrouped',
+      confirmDelete: 'Delete profile "{label}"?',
+    },
+    profileForm: {
+      editTitle: '✏️ Edit Profile', sectionConnection: '🔌 Connection',
+      label: 'Label (nickname)', labelPlaceholder: 'My Server (optional)',
+      host: 'Hostname / IP *', port: 'Port *', username: 'Username *',
+      group: 'Group / Tag', sectionAuth: '🔑 Authentication',
+      authPassword: '🔒 Password', authKey: '🗝 SSH Key', authAgent: '🤝 Agent',
+      passwordLabel: 'Password', passwordPlaceholder: 'Enter password',
+      keyFileLabel: 'Private Key File *', passphraseLabel: 'Passphrase',
+      passphraseHint: '(if protected)', passphrasePlaceholder: 'Leave blank if none',
+      agentInfo: '🤝 iShell will use the system SSH agent for authentication.',
+      advancedOptions: '⚙ Advanced Options', timeout: 'Timeout (sec)',
+      keepalive: 'Keepalive (sec)', encoding: 'Encoding',
+      jumpHost: '⤵ Jump Host (Bastion Profile)', jumpHostNone: '— None (direct connection) —',
+      initCommand: 'Initial Command', saveProfile: 'Save Profile',
+      keyChecking: 'Checking…', keyValid: '✅ Key valid', keyInvalid: '❌ Invalid key',
+      keyUnreadable: '❌ Cannot read key file', errRequired: 'Host and Username are required.',
+    },
+    profilePicker: { noProfiles: 'No profiles found' },
+    settings: {
+      nav: {
+        appearance: 'Appearance', terminal: 'Terminal', ssh: 'SSH / Security',
+        quickCommands: 'Quick Commands', backup: 'Import / Export',
+        shortcuts: 'Shortcuts', about: 'About',
+      },
+      saveSettings: 'Save Settings',
+      appearance: {
+        theme: 'Theme', colorTheme: 'Color theme', dark: 'Dark', light: 'Light',
+        font: 'Font', fontFamily: 'Font family', fontSize: 'Font size',
+        language: 'Language', interfaceLanguage: 'Interface language',
+      },
+      terminal: {
+        cursor: 'Cursor', cursorStyle: 'Cursor style', blinkCursor: 'Blink cursor',
+        behavior: 'Behavior', scrollbackLines: 'Scrollback lines',
+      },
+      ssh: {
+        hostKeyVerification: 'Host Key Verification', strictHostKey: 'Strict host key checking',
+        strictHostKeyDesc: 'Reject unknown/changed keys', knownHostsPath: 'known_hosts path',
+        knownHosts: 'Known Hosts', noKnownHosts: 'No known hosts.',
+        confirmRemoveHost: 'Remove known host "{h}"?',
+      },
+      backup: {
+        title: 'Backup & Restore',
+        warning: '⚠️ The exported YAML file contains session passwords and key passphrases in plain text — store and share it carefully.',
+        exportLabel: 'Export config', exportDesc: 'Save all sessions and settings to a YAML file.',
+        exportBtn: 'Export…', importLabel: 'Import config',
+        importDesc: 'Restore sessions and settings from a YAML file. Existing sessions with the same ID are updated.',
+        importBtn: 'Import…',
+        confirmImport: 'Importing will add or update sessions by ID and overwrite current settings. Continue?',
+      },
+      quickCommands: {
+        display: 'Display', showBar: 'Show quick command bar',
+        showBarDesc: 'Display command buttons below the terminal.', groups: 'Groups',
+        escapeHelp: 'Use \\n or \\r to submit the line, \\\\ for a literal backslash, \\xHH for a raw byte (e.g. \\x03 = Ctrl+C). Avoid \\t/\\x1b — shells usually intercept Tab/Esc instead of inserting them.',
+        addGroup: '+ Add Group', groupNamePlaceholder: 'Group name',
+        noGroups: 'No groups yet. Add a group to get started.',
+        noCommands: 'No commands in this group.', labelPlaceholder: 'Label',
+        commandPlaceholder: 'Command', moveGroupUp: 'Move group up',
+        moveGroupDown: 'Move group down', deleteGroup: 'Delete group',
+        addCommand: '+ Add Command', confirmDeleteGroup: 'Delete this group and all its commands?',
+        builtinShortcut: 'Built-in shortcut', newGroupName: 'New Group',
+        groupFallback: 'Group', commandFallback: 'Command', legacyGroupName: 'Default',
+      },
+      shortcuts: {
+        title: 'Keyboard Shortcuts', groupNavigation: 'Navigation', groupProfiles: 'Profiles',
+        groupTerminal: 'Terminal', switchTab: 'Switch to tab 1–9',
+        toggleSidebar: 'Toggle sidebar', toggleFullscreen: 'Toggle fullscreen',
+        openSettings: 'Open settings', openProfilePicker: 'Open profile picker',
+        connectInSearch: 'Connect (in search)', openLocalTerminal: 'Open local terminal',
+        findInTerminal: 'Find in terminal', closeTab: 'Close current tab',
+        runQuickCommand: 'Run quick command 1–9',
+      },
+      about: {
+        versionLabel: 'Version',
+        description: 'A modern cross-platform SSH client built with Go and Wails.',
+      },
+      language: { auto: 'Auto (system language)', en: 'English', zhCN: '简体中文', zhTW: '繁體中文' },
+    },
+    sftp: {
+      localPane: '💻 Local', remotePane: '🌐 Remote',
+      uploadBtn: '⬆ Upload', downloadBtn: '⬇ Download',
+      colName: 'Name', colSize: 'Size', colModified: 'Modified', colType: 'Type', colPerms: 'Perms',
+      dropToDownload: '⬇ Drop to download',
+      uploadSelectedTitle: 'Upload selected', downloadSelectedTitle: 'Download selected',
+      transfersTitle: '📋 Transfers', selectFilesToDownload: 'Select files to download',
+      ctxUpload: '⬆ Upload to Remote', ctxRename: '✏ Rename', ctxDelete: '🗑 Delete',
+      ctxDownload: '⬇ Download to Local', ctxPermissions: '🔒 Permissions…',
+      renamePrompt: 'Rename "{name}" to:', renameLocalUnsupported: 'Rename local not supported in prototype',
+      confirmDeleteRemote: 'Delete remote "{name}"?', deleteLocalUnsupported: 'Local delete not supported via SFTP',
+      permPrompt: 'Set octal permissions for "{name}" (e.g. 644):',
+      queueUpload: '⬆ Upload', queueDownload: '⬇ Download',
+      statusDone: 'Done', statusScanning: 'Scanning', statusError: 'Error',
+      queueDoneMark: '✓ Done', queueFailedMark: '✕ Failed', activeBadge: '{n} active',
+    },
+    quickCommand: {
+      empty: 'No quick commands', openSettings: 'Open Settings',
+      prevGroup: 'Previous group', nextGroup: 'Next group',
+      scrollLeft: 'Scroll left', scrollRight: 'Scroll right',
+    },
+    zmodem: {
+      sendFailed: 'Zmodem: send failed — check connection', error: 'Zmodem error: {msg}',
+      receiving: 'Receiving file via Zmodem (sz)...', downloaded: 'Downloaded: {name}  →  {path}',
+      saveFailed: 'Save failed ({name}): {e}', timedOut: 'Zmodem timed out — session aborted',
+      selectFiles: 'Select file(s) to upload via Zmodem (rz)...',
+      uploadCancelledErr: 'Zmodem upload cancelled: {e}', uploadCancelled: 'Zmodem upload cancelled',
+      sending: 'Sending {n} file(s) via Zmodem...', uploadComplete: 'Zmodem upload complete',
+    },
+  },
+
+  'zh-CN': {
+    common: {
+      save: '保存', cancel: '取消', delete: '删除', edit: '编辑',
+      close: '关闭', remove: '移除', browse: '浏览…', rename: '重命名',
+      done: '完成', failed: '失败', settings: '设置', fullscreen: '全屏',
+      connected: '已连接', discard: '放弃', clear: '清除', up: '上一级',
+      refresh: '刷新', upload: '上传', download: '下载',
+      moveUp: '上移', moveDown: '下移',
+    },
+    app: {
+      searchPlaceholder: '搜索配置…', newProfile: '+ 新建配置',
+      toggleSidebar: '切换侧边栏', newInstanceTitle: '新建应用实例',
+      newInstanceLabel: '+ 实例', findInTerminal: '在终端中查找',
+      showQuickCommands: '显示快速命令', hideQuickCommands: '隐藏快速命令',
+      openSftpTitle: '打开 SFTP', fullscreenTitle: '全屏  {key}',
+      disconnect: '断开连接', newConnectionTitle: '新建连接',
+    },
+    welcome: {
+      title: '欢迎使用 iShell',
+      subtitleHtml: '从侧边栏选择一个配置，或点击 <strong>{newProfile}</strong>。',
+      kbdSwitchTab: '切换标签', kbdFullscreen: '全屏', kbdSettings: '设置',
+    },
+    hostkey: {
+      title: '⚠ 未知的主机密钥',
+      body: '此服务器的主机密钥尚未被验证过，请确认下方指纹与预期一致。',
+      reject: '✕ 拒绝', trustOnce: '仅信任一次', alwaysTrust: '始终信任',
+    },
+    terminal: { findPlaceholder: '查找…' },
+    toast: {
+      connecting: '🔌 正在连接 {host}…', openingLocal: '🖥 正在打开 {sub}…',
+      connected: '✅ 已连接到 {host}', disconnected: '已断开连接',
+      noTab: '没有标签 {n}', exitedFullscreen: '已退出全屏',
+      fullscreenHint: '全屏 — 按 {key} 退出', connectionRejected: '❌ 已拒绝连接',
+      noPendingConnection: '❌ 没有待处理的连接',
+      hostKeySaveFailed: '⚠️ 无法保存主机密钥：{e}',
+      connectFirst: '请先连接一个会话',
+      sftpRemoteOnly: 'SFTP 仅适用于远程 SSH 会话',
+      removed: '✅ 已移除', exported: '✅ 已导出到 {path}',
+      imported: '✅ 已导入 {n} 个会话', settingsSaved: '✅ 设置已保存 — 重新连接以应用终端相关改动',
+      profileSaved: '✅ 配置已保存：{name}',
+      quickCommandFailed: '快速命令执行失败：{e}',
+      qcStateSaveFailed: '无法保存快速命令状态：{e}',
+      transferFailed: '❌ 传输失败：{err}', transferDone: '✅ 完成：{name}',
+    },
+    alert: { connectionFailed: '连接失败：\n{e}' },
+    sidebar: {
+      localTerminal: '本地终端', noMatches: '没有匹配项', ungrouped: '未分组',
+      confirmDelete: '删除配置 "{label}"？',
+    },
+    profileForm: {
+      editTitle: '✏️ 编辑配置', sectionConnection: '🔌 连接',
+      label: '标签（昵称）', labelPlaceholder: 'My Server（可选）',
+      host: '主机名 / IP *', port: '端口 *', username: '用户名 *',
+      group: '分组 / 标签', sectionAuth: '🔑 认证方式',
+      authPassword: '🔒 密码', authKey: '🗝 SSH 密钥', authAgent: '🤝 代理',
+      passwordLabel: '密码', passwordPlaceholder: '请输入密码',
+      keyFileLabel: '私钥文件 *', passphraseLabel: '私钥密码',
+      passphraseHint: '（如已加密）', passphrasePlaceholder: '无密码请留空',
+      agentInfo: '🤝 iShell 将使用系统 SSH 代理进行认证。',
+      advancedOptions: '⚙ 高级选项', timeout: '超时时间（秒）',
+      keepalive: '保活间隔（秒）', encoding: '编码',
+      jumpHost: '⤵ 跳板机（堡垒机配置）', jumpHostNone: '— 无（直接连接） —',
+      initCommand: '初始命令', saveProfile: '保存配置',
+      keyChecking: '检测中…', keyValid: '✅ 密钥有效', keyInvalid: '❌ 密钥无效',
+      keyUnreadable: '❌ 无法读取密钥文件', errRequired: '主机和用户名为必填项。',
+    },
+    profilePicker: { noProfiles: '未找到配置' },
+    settings: {
+      nav: {
+        appearance: '外观', terminal: '终端', ssh: 'SSH / 安全',
+        quickCommands: '快速命令', backup: '导入 / 导出',
+        shortcuts: '快捷键', about: '关于',
+      },
+      saveSettings: '保存设置',
+      appearance: {
+        theme: '主题', colorTheme: '配色主题', dark: '深色', light: '浅色',
+        font: '字体', fontFamily: '字体', fontSize: '字号',
+        language: '语言', interfaceLanguage: '界面语言',
+      },
+      terminal: {
+        cursor: '光标', cursorStyle: '光标样式', blinkCursor: '光标闪烁',
+        behavior: '行为', scrollbackLines: '回滚行数',
+      },
+      ssh: {
+        hostKeyVerification: '主机密钥验证', strictHostKey: '严格主机密钥检查',
+        strictHostKeyDesc: '拒绝未知或已变更的密钥', knownHostsPath: 'known_hosts 路径',
+        knownHosts: '已知主机', noKnownHosts: '暂无已知主机。',
+        confirmRemoveHost: '移除已知主机 "{h}"？',
+      },
+      backup: {
+        title: '备份与恢复',
+        warning: '⚠️ 导出的 YAML 文件包含会话密码和私钥密码的明文内容 — 请妥善保管和分享。',
+        exportLabel: '导出配置', exportDesc: '将所有会话和设置导出为 YAML 文件。',
+        exportBtn: '导出…', importLabel: '导入配置',
+        importDesc: '从 YAML 文件恢复会话和设置。相同 ID 的会话将被更新。',
+        importBtn: '导入…',
+        confirmImport: '导入将按 ID 新增或更新会话，并覆盖当前设置。是否继续？',
+      },
+      quickCommands: {
+        display: '显示', showBar: '显示快速命令栏',
+        showBarDesc: '在终端下方显示命令按钮。', groups: '分组',
+        escapeHelp: '使用 \\n 或 \\r 提交命令行，\\\\ 表示字面反斜杠，\\xHH 表示原始字节（如 \\x03 = Ctrl+C）。请避免使用 \\t/\\x1b — 它们通常会被 shell 拦截而非真正输入 Tab/Esc。',
+        addGroup: '+ 添加分组', groupNamePlaceholder: '分组名称',
+        noGroups: '暂无分组，添加一个分组开始使用。',
+        noCommands: '此分组暂无命令。', labelPlaceholder: '标签',
+        commandPlaceholder: '命令', moveGroupUp: '上移分组',
+        moveGroupDown: '下移分组', deleteGroup: '删除分组',
+        addCommand: '+ 添加命令', confirmDeleteGroup: '删除此分组及其所有命令？',
+        builtinShortcut: '内置快捷键', newGroupName: '新分组',
+        groupFallback: '分组', commandFallback: '命令', legacyGroupName: '默认',
+      },
+      shortcuts: {
+        title: '键盘快捷键', groupNavigation: '导航', groupProfiles: '配置',
+        groupTerminal: '终端', switchTab: '切换到标签 1–9',
+        toggleSidebar: '切换侧边栏', toggleFullscreen: '切换全屏',
+        openSettings: '打开设置', openProfilePicker: '打开配置选择器',
+        connectInSearch: '连接（搜索中）', openLocalTerminal: '打开本地终端',
+        findInTerminal: '在终端中查找', closeTab: '关闭当前标签',
+        runQuickCommand: '执行快速命令 1–9',
+      },
+      about: {
+        versionLabel: '版本',
+        description: '一款使用 Go 和 Wails 构建的现代跨平台 SSH 客户端。',
+      },
+      language: { auto: '自动（跟随系统）', en: 'English', zhCN: '简体中文', zhTW: '繁體中文' },
+    },
+    sftp: {
+      localPane: '💻 本地', remotePane: '🌐 远程',
+      uploadBtn: '⬆ 上传', downloadBtn: '⬇ 下载',
+      colName: '名称', colSize: '大小', colModified: '修改时间', colType: '类型', colPerms: '权限',
+      dropToDownload: '⬇ 拖放以下载',
+      uploadSelectedTitle: '上传所选', downloadSelectedTitle: '下载所选',
+      transfersTitle: '📋 传输', selectFilesToDownload: '请选择要下载的文件',
+      ctxUpload: '⬆ 上传到远程', ctxRename: '✏ 重命名', ctxDelete: '🗑 删除',
+      ctxDownload: '⬇ 下载到本地', ctxPermissions: '🔒 权限…',
+      renamePrompt: '将 "{name}" 重命名为：', renameLocalUnsupported: '原型暂不支持本地重命名',
+      confirmDeleteRemote: '删除远程文件 "{name}"？', deleteLocalUnsupported: 'SFTP 不支持删除本地文件',
+      permPrompt: '设置 "{name}" 的八进制权限（如 644）：',
+      queueUpload: '⬆ 上传', queueDownload: '⬇ 下载',
+      statusDone: '完成', statusScanning: '扫描中', statusError: '错误',
+      queueDoneMark: '✓ 完成', queueFailedMark: '✕ 失败', activeBadge: '{n} 个进行中',
+    },
+    quickCommand: {
+      empty: '暂无快速命令', openSettings: '打开设置',
+      prevGroup: '上一个分组', nextGroup: '下一个分组',
+      scrollLeft: '向左滚动', scrollRight: '向右滚动',
+    },
+    zmodem: {
+      sendFailed: 'Zmodem：发送失败 — 请检查连接', error: 'Zmodem 错误：{msg}',
+      receiving: '正在通过 Zmodem (sz) 接收文件…', downloaded: '已下载：{name}  →  {path}',
+      saveFailed: '保存失败（{name}）：{e}', timedOut: 'Zmodem 超时 — 会话已中止',
+      selectFiles: '请选择要通过 Zmodem (rz) 上传的文件…',
+      uploadCancelledErr: 'Zmodem 上传已取消：{e}', uploadCancelled: 'Zmodem 上传已取消',
+      sending: '正在通过 Zmodem 发送 {n} 个文件…', uploadComplete: 'Zmodem 上传完成',
+    },
+  },
+
+  'zh-TW': {
+    common: {
+      save: '儲存', cancel: '取消', delete: '刪除', edit: '編輯',
+      close: '關閉', remove: '移除', browse: '瀏覽…', rename: '重新命名',
+      done: '完成', failed: '失敗', settings: '設定', fullscreen: '全螢幕',
+      connected: '已連線', discard: '放棄', clear: '清除', up: '上一層',
+      refresh: '重新整理', upload: '上傳', download: '下載',
+      moveUp: '上移', moveDown: '下移',
+    },
+    app: {
+      searchPlaceholder: '搜尋設定檔…', newProfile: '+ 新增設定檔',
+      toggleSidebar: '切換側邊欄', newInstanceTitle: '新增應用程式執行個體',
+      newInstanceLabel: '+ 執行個體', findInTerminal: '在終端機中尋找',
+      showQuickCommands: '顯示快速指令', hideQuickCommands: '隱藏快速指令',
+      openSftpTitle: '開啟 SFTP', fullscreenTitle: '全螢幕  {key}',
+      disconnect: '中斷連線', newConnectionTitle: '新增連線',
+    },
+    welcome: {
+      title: '歡迎使用 iShell',
+      subtitleHtml: '從側邊欄選擇一個設定檔，或點擊 <strong>{newProfile}</strong>。',
+      kbdSwitchTab: '切換分頁', kbdFullscreen: '全螢幕', kbdSettings: '設定',
+    },
+    hostkey: {
+      title: '⚠ 未知的主機金鑰',
+      body: '此伺服器的主機金鑰尚未驗證過，請確認下方指紋與預期一致。',
+      reject: '✕ 拒絕', trustOnce: '僅信任一次', alwaysTrust: '永遠信任',
+    },
+    terminal: { findPlaceholder: '尋找…' },
+    toast: {
+      connecting: '🔌 正在連線 {host}…', openingLocal: '🖥 正在開啟 {sub}…',
+      connected: '✅ 已連線至 {host}', disconnected: '已中斷連線',
+      noTab: '沒有分頁 {n}', exitedFullscreen: '已退出全螢幕',
+      fullscreenHint: '全螢幕 — 按 {key} 退出', connectionRejected: '❌ 已拒絕連線',
+      noPendingConnection: '❌ 沒有待處理的連線',
+      hostKeySaveFailed: '⚠️ 無法儲存主機金鑰：{e}',
+      connectFirst: '請先連線一個工作階段',
+      sftpRemoteOnly: 'SFTP 僅適用於遠端 SSH 工作階段',
+      removed: '✅ 已移除', exported: '✅ 已匯出至 {path}',
+      imported: '✅ 已匯入 {n} 個工作階段', settingsSaved: '✅ 設定已儲存 — 重新連線以套用終端機相關變更',
+      profileSaved: '✅ 設定檔已儲存：{name}',
+      quickCommandFailed: '快速指令執行失敗：{e}',
+      qcStateSaveFailed: '無法儲存快速指令狀態：{e}',
+      transferFailed: '❌ 傳輸失敗：{err}', transferDone: '✅ 完成：{name}',
+    },
+    alert: { connectionFailed: '連線失敗：\n{e}' },
+    sidebar: {
+      localTerminal: '本機終端機', noMatches: '沒有符合項目', ungrouped: '未分組',
+      confirmDelete: '刪除設定檔 "{label}"？',
+    },
+    profileForm: {
+      editTitle: '✏️ 編輯設定檔', sectionConnection: '🔌 連線',
+      label: '標籤（暱稱）', labelPlaceholder: 'My Server（選填）',
+      host: '主機名稱 / IP *', port: '連接埠 *', username: '使用者名稱 *',
+      group: '群組 / 標籤', sectionAuth: '🔑 驗證方式',
+      authPassword: '🔒 密碼', authKey: '🗝 SSH 金鑰', authAgent: '🤝 代理程式',
+      passwordLabel: '密碼', passwordPlaceholder: '請輸入密碼',
+      keyFileLabel: '私密金鑰檔案 *', passphraseLabel: '金鑰密碼',
+      passphraseHint: '（若已加密）', passphrasePlaceholder: '無密碼請留空',
+      agentInfo: '🤝 iShell 將使用系統 SSH 代理程式進行驗證。',
+      advancedOptions: '⚙ 進階選項', timeout: '逾時時間（秒）',
+      keepalive: '保持連線間隔（秒）', encoding: '編碼',
+      jumpHost: '⤵ 跳板主機（堡壘機設定檔）', jumpHostNone: '— 無（直接連線） —',
+      initCommand: '初始指令', saveProfile: '儲存設定檔',
+      keyChecking: '檢查中…', keyValid: '✅ 金鑰有效', keyInvalid: '❌ 金鑰無效',
+      keyUnreadable: '❌ 無法讀取金鑰檔案', errRequired: '主機與使用者名稱為必填項目。',
+    },
+    profilePicker: { noProfiles: '找不到設定檔' },
+    settings: {
+      nav: {
+        appearance: '外觀', terminal: '終端機', ssh: 'SSH / 安全性',
+        quickCommands: '快速指令', backup: '匯入 / 匯出',
+        shortcuts: '快捷鍵', about: '關於',
+      },
+      saveSettings: '儲存設定',
+      appearance: {
+        theme: '主題', colorTheme: '配色主題', dark: '深色', light: '淺色',
+        font: '字型', fontFamily: '字型', fontSize: '字級',
+        language: '語言', interfaceLanguage: '介面語言',
+      },
+      terminal: {
+        cursor: '游標', cursorStyle: '游標樣式', blinkCursor: '游標閃爍',
+        behavior: '行為', scrollbackLines: '回捲行數',
+      },
+      ssh: {
+        hostKeyVerification: '主機金鑰驗證', strictHostKey: '嚴格主機金鑰檢查',
+        strictHostKeyDesc: '拒絕未知或已變更的金鑰', knownHostsPath: 'known_hosts 路徑',
+        knownHosts: '已知主機', noKnownHosts: '暫無已知主機。',
+        confirmRemoveHost: '移除已知主機 "{h}"？',
+      },
+      backup: {
+        title: '備份與還原',
+        warning: '⚠️ 匯出的 YAML 檔案包含工作階段密碼與金鑰密碼的明文內容 — 請妥善保管與分享。',
+        exportLabel: '匯出設定', exportDesc: '將所有工作階段與設定匯出為 YAML 檔案。',
+        exportBtn: '匯出…', importLabel: '匯入設定',
+        importDesc: '從 YAML 檔案還原工作階段與設定。相同 ID 的工作階段將被更新。',
+        importBtn: '匯入…',
+        confirmImport: '匯入將依 ID 新增或更新工作階段，並覆寫目前設定。是否繼續？',
+      },
+      quickCommands: {
+        display: '顯示', showBar: '顯示快速指令列',
+        showBarDesc: '在終端機下方顯示指令按鈕。', groups: '群組',
+        escapeHelp: '使用 \\n 或 \\r 送出該行，\\\\ 代表字面反斜線，\\xHH 代表原始位元組（例如 \\x03 = Ctrl+C）。請避免使用 \\t/\\x1b — shell 通常會攔截它們，而非真正輸入 Tab/Esc。',
+        addGroup: '+ 新增群組', groupNamePlaceholder: '群組名稱',
+        noGroups: '尚無群組，新增一個群組開始使用。',
+        noCommands: '此群組尚無指令。', labelPlaceholder: '標籤',
+        commandPlaceholder: '指令', moveGroupUp: '上移群組',
+        moveGroupDown: '下移群組', deleteGroup: '刪除群組',
+        addCommand: '+ 新增指令', confirmDeleteGroup: '刪除此群組及其所有指令？',
+        builtinShortcut: '內建快捷鍵', newGroupName: '新群組',
+        groupFallback: '群組', commandFallback: '指令', legacyGroupName: '預設',
+      },
+      shortcuts: {
+        title: '鍵盤快捷鍵', groupNavigation: '導覽', groupProfiles: '設定檔',
+        groupTerminal: '終端機', switchTab: '切換至分頁 1–9',
+        toggleSidebar: '切換側邊欄', toggleFullscreen: '切換全螢幕',
+        openSettings: '開啟設定', openProfilePicker: '開啟設定檔選擇器',
+        connectInSearch: '連線（搜尋中）', openLocalTerminal: '開啟本機終端機',
+        findInTerminal: '在終端機中尋找', closeTab: '關閉目前分頁',
+        runQuickCommand: '執行快速指令 1–9',
+      },
+      about: {
+        versionLabel: '版本',
+        description: '一款使用 Go 和 Wails 打造的現代跨平台 SSH 用戶端。',
+      },
+      language: { auto: '自動（依系統設定）', en: 'English', zhCN: '简体中文', zhTW: '繁體中文' },
+    },
+    sftp: {
+      localPane: '💻 本機', remotePane: '🌐 遠端',
+      uploadBtn: '⬆ 上傳', downloadBtn: '⬇ 下載',
+      colName: '名稱', colSize: '大小', colModified: '修改時間', colType: '類型', colPerms: '權限',
+      dropToDownload: '⬇ 拖放以下載',
+      uploadSelectedTitle: '上傳所選', downloadSelectedTitle: '下載所選',
+      transfersTitle: '📋 傳輸', selectFilesToDownload: '請選擇要下載的檔案',
+      ctxUpload: '⬆ 上傳到遠端', ctxRename: '✏ 重新命名', ctxDelete: '🗑 刪除',
+      ctxDownload: '⬇ 下載到本機', ctxPermissions: '🔒 權限…',
+      renamePrompt: '將 "{name}" 重新命名為：', renameLocalUnsupported: '原型暫不支援本機重新命名',
+      confirmDeleteRemote: '刪除遠端檔案 "{name}"？', deleteLocalUnsupported: 'SFTP 不支援刪除本機檔案',
+      permPrompt: '設定 "{name}" 的八進位權限（例如 644）：',
+      queueUpload: '⬆ 上傳', queueDownload: '⬇ 下載',
+      statusDone: '完成', statusScanning: '掃描中', statusError: '錯誤',
+      queueDoneMark: '✓ 完成', queueFailedMark: '✕ 失敗', activeBadge: '{n} 個進行中',
+    },
+    quickCommand: {
+      empty: '尚無快速指令', openSettings: '開啟設定',
+      prevGroup: '上一個群組', nextGroup: '下一個群組',
+      scrollLeft: '向左捲動', scrollRight: '向右捲動',
+    },
+    zmodem: {
+      sendFailed: 'Zmodem：傳送失敗 — 請檢查連線', error: 'Zmodem 錯誤：{msg}',
+      receiving: '正在透過 Zmodem (sz) 接收檔案…', downloaded: '已下載：{name}  →  {path}',
+      saveFailed: '儲存失敗（{name}）：{e}', timedOut: 'Zmodem 逾時 — 工作階段已中止',
+      selectFiles: '請選擇要透過 Zmodem (rz) 上傳的檔案…',
+      uploadCancelledErr: 'Zmodem 上傳已取消：{e}', uploadCancelled: 'Zmodem 上傳已取消',
+      sending: '正在透過 Zmodem 傳送 {n} 個檔案…', uploadComplete: 'Zmodem 上傳完成',
+    },
+  },
+};
+
+const SUPPORTED = ['en', 'zh-CN', 'zh-TW'];
+
+function detectSystemLocale() {
+  const lang = (navigator.language || 'en').toLowerCase();
+  if (lang.startsWith('zh')) {
+    return (lang.includes('tw') || lang.includes('hk') || lang.includes('mo')) ? 'zh-TW' : 'zh-CN';
+  }
+  return 'en';
+}
+
+function resolveLocale(pref) {
+  return SUPPORTED.includes(pref) ? pref : detectSystemLocale();
+}
+
+export function getLanguagePref() {
+  try { return localStorage.getItem('language') || 'auto'; } catch { return 'auto'; }
+}
+
+export function getLocale() { return current; }
+
+function lookup(obj, key) {
+  return key.split('.').reduce((o, k) => (o && typeof o === 'object' ? o[k] : undefined), obj);
+}
+
+export function t(key, vars) {
+  let str = lookup(dict[current], key);
+  if (str === undefined) str = lookup(dict.en, key);
+  if (str === undefined) return key;
+  if (vars) {
+    for (const k of Object.keys(vars)) str = str.replaceAll(`{${k}}`, vars[k]);
+  }
+  return str;
+}
+
+export function applyI18nAttrs(root = document) {
+  root.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.getAttribute('data-i18n')); });
+  root.querySelectorAll('[data-i18n-html]').forEach(el => {
+    el.innerHTML = t(el.getAttribute('data-i18n-html'), { newProfile: t('app.newProfile') });
+  });
+  root.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = t(el.getAttribute('data-i18n-placeholder')); });
+  root.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = t(el.getAttribute('data-i18n-title')); });
+}
+
+export function setLanguage(pref) {
+  try { localStorage.setItem('language', pref); } catch {}
+  current = resolveLocale(pref);
+  document.documentElement.setAttribute('lang', current);
+  applyI18nAttrs();
+  window.dispatchEvent(new CustomEvent('ishell:languageChanged', { detail: { locale: current } }));
+}
+
+export const LANGUAGE_OPTIONS = [
+  { value: 'auto', labelKey: 'settings.language.auto' },
+  { value: 'en', labelKey: 'settings.language.en' },
+  { value: 'zh-CN', labelKey: 'settings.language.zhCN' },
+  { value: 'zh-TW', labelKey: 'settings.language.zhTW' },
+];
+
+let current = resolveLocale(getLanguagePref());
+document.documentElement.setAttribute('lang', current);

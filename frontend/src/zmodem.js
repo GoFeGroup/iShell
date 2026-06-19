@@ -1,6 +1,7 @@
 import Zmodem from 'zmodem.js';
 import { sendInputBytes, openFilesForZmodem, saveZmodemFile } from './api.js';
 import { showToast } from './toast.js';
+import { t } from './i18n.js';
 
 function octetsToBase64(octets) {
     let binary = '';
@@ -51,7 +52,7 @@ export function createZmodemSentry(connID, term, onActive) {
                     .then(() => sendInputBytes(connID, b64))
                     .catch(e => {
                         console.error('zmodem sender failed:', e);
-                        showToast('Zmodem: send failed — check connection', 3000);
+                        showToast(t('zmodem.sendFailed'), 3000);
                     });
             },
             on_retract() {
@@ -67,7 +68,7 @@ export function createZmodemSentry(connID, term, onActive) {
                         const msg = String(e?.message ?? e);
                         if (!msg.includes('aborted') && !msg.includes('peer_aborted') && !msg.includes('timeout')) {
                             console.error('zmodem session error:', e);
-                            showToast(`Zmodem error: ${msg}`, 3000);
+                            showToast(t('zmodem.error', { msg }), 3000);
                         }
                     })
                     .finally(() => {
@@ -120,7 +121,7 @@ async function runSession(connID, zsession) {
 
 // sz on server → we receive files
 async function receiveFiles(zsession) {
-    showToast('Receiving file via Zmodem (sz)...');
+    showToast(t('zmodem.receiving'));
 
     const transferPromises = [];
 
@@ -136,9 +137,9 @@ async function receiveFiles(zsession) {
             }
             try {
                 const savedPath = await saveZmodemFile(name, uint8ArrayToBase64(content));
-                showToast(`Downloaded: ${name}  →  ${savedPath}`, 4000);
+                showToast(t('zmodem.downloaded', { name, path: savedPath }), 4000);
             } catch (e) {
-                showToast(`Save failed (${name}): ${e}`, 3000);
+                showToast(t('zmodem.saveFailed', { name, e }), 3000);
                 console.error('zmodem saveZmodemFile:', e);
             }
         });
@@ -157,7 +158,7 @@ async function receiveFiles(zsession) {
     await Promise.race([sessionEnd, timeout]).catch(e => {
         try { zsession.abort(); } catch {}
         if (String(e?.message).includes('timeout')) {
-            showToast('Zmodem timed out — session aborted', 3000);
+            showToast(t('zmodem.timedOut'), 3000);
         }
     });
 
@@ -170,24 +171,24 @@ async function receiveFiles(zsession) {
 
 // rz on server → we send files
 async function sendFiles(connID, zsession) {
-    showToast('Select file(s) to upload via Zmodem (rz)...');
+    showToast(t('zmodem.selectFiles'));
 
     let files;
     try {
         files = await openFilesForZmodem();
     } catch (e) {
         try { zsession.abort(); } catch {}
-        showToast(`Zmodem upload cancelled: ${e}`, 3000);
+        showToast(t('zmodem.uploadCancelledErr', { e }), 3000);
         return;
     }
 
     if (!files || files.length === 0) {
         try { zsession.abort(); } catch {}
-        showToast('Zmodem upload cancelled', 2000);
+        showToast(t('zmodem.uploadCancelled'), 2000);
         return;
     }
 
-    showToast(`Sending ${files.length} file(s) via Zmodem...`);
+    showToast(t('zmodem.sending', { n: files.length }));
 
     for (const file of files) {
         const bytes = Uint8Array.from(atob(file.content), c => c.charCodeAt(0));
@@ -203,5 +204,5 @@ async function sendFiles(connID, zsession) {
     }
 
     await zsession.close();
-    showToast('Zmodem upload complete', 3000);
+    showToast(t('zmodem.uploadComplete'), 3000);
 }

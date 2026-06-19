@@ -2,12 +2,14 @@ import { getSettings, saveSettings, getKnownHosts, removeKnownHost, exportConfig
 import { showToast } from './toast.js';
 import { shortcutLabelForIndex } from './quick-command.js';
 import { loadProfiles } from './sidebar.js';
+import { t, setLanguage, getLanguagePref, LANGUAGE_OPTIONS } from './i18n.js';
 
 export async function initSettings(initialPage = 'appearance') {
   const panel = document.getElementById('panel-settings');
   const settings = await getSettings().catch(() => ({}));
   const kh = await getKnownHosts().catch(() => []);
   const fontSize = settings.font_size || 16;
+  const languagePref = getLanguagePref();
   let quickCommandGroups = normalizeQuickCommandGroups(settings);
 
   const isMac = navigator.platform.startsWith('Mac');
@@ -17,35 +19,35 @@ export async function initSettings(initialPage = 'appearance') {
   panel.innerHTML = `
 <div class="settings-layout">
   <nav class="settings-nav">
-    <div class="nav-pill active" data-page="appearance"><span class="nav-pill-icon">🎨</span>Appearance</div>
-    <div class="nav-pill" data-page="terminal"><span class="nav-pill-icon">💻</span>Terminal</div>
-    <div class="nav-pill" data-page="ssh"><span class="nav-pill-icon">🔒</span>SSH / Security</div>
-    <div class="nav-pill" data-page="quick-commands"><span class="nav-pill-icon">⚡</span>Quick Commands</div>
-    <div class="nav-pill" data-page="backup"><span class="nav-pill-icon">💾</span>Import / Export</div>
-    <div class="nav-pill" data-page="shortcuts"><span class="nav-pill-icon">⌨️</span>Shortcuts</div>
-    <div class="nav-pill" data-page="about"><span class="nav-pill-icon">ℹ️</span>About</div>
+    <div class="nav-pill active" data-page="appearance"><span class="nav-pill-icon">🎨</span>${t('settings.nav.appearance')}</div>
+    <div class="nav-pill" data-page="terminal"><span class="nav-pill-icon">💻</span>${t('settings.nav.terminal')}</div>
+    <div class="nav-pill" data-page="ssh"><span class="nav-pill-icon">🔒</span>${t('settings.nav.ssh')}</div>
+    <div class="nav-pill" data-page="quick-commands"><span class="nav-pill-icon">⚡</span>${t('settings.nav.quickCommands')}</div>
+    <div class="nav-pill" data-page="backup"><span class="nav-pill-icon">💾</span>${t('settings.nav.backup')}</div>
+    <div class="nav-pill" data-page="shortcuts"><span class="nav-pill-icon">⌨️</span>${t('settings.nav.shortcuts')}</div>
+    <div class="nav-pill" data-page="about"><span class="nav-pill-icon">ℹ️</span>${t('settings.nav.about')}</div>
   </nav>
   <div class="settings-content">
 
     <!-- Appearance -->
     <div class="settings-page active" id="sp-appearance">
-      <div class="settings-page-title">Appearance</div>
+      <div class="settings-page-title">${t('settings.nav.appearance')}</div>
       <div class="settings-section">
-        <div class="settings-section-title">Theme</div>
+        <div class="settings-section-title">${t('settings.appearance.theme')}</div>
         <div class="settings-row">
-          <div class="settings-row-label">Color theme</div>
+          <div class="settings-row-label">${t('settings.appearance.colorTheme')}</div>
           <div class="settings-row-control">
             <select class="input" id="st-theme" style="width:auto;">
-              <option value="dark" ${settings.theme==='dark'?'selected':''}>Dark</option>
-              <option value="light" ${settings.theme==='light'?'selected':''}>Light</option>
+              <option value="dark" ${settings.theme==='dark'?'selected':''}>${t('settings.appearance.dark')}</option>
+              <option value="light" ${settings.theme==='light'?'selected':''}>${t('settings.appearance.light')}</option>
             </select>
           </div>
         </div>
       </div>
       <div class="settings-section">
-        <div class="settings-section-title">Font</div>
+        <div class="settings-section-title">${t('settings.appearance.font')}</div>
         <div class="settings-row">
-          <div class="settings-row-label">Font family</div>
+          <div class="settings-row-label">${t('settings.appearance.fontFamily')}</div>
           <div class="settings-row-control">
             <select class="input" id="st-font" style="width:auto;">
               ${['Menlo','SF Mono','Monaco','Cascadia Code','JetBrains Mono','Fira Code','Consolas'].map(f=>`<option ${(settings.font_family||'').includes(f)?'selected':''}>${f}</option>`).join('')}
@@ -53,7 +55,7 @@ export async function initSettings(initialPage = 'appearance') {
           </div>
         </div>
         <div class="settings-row">
-          <div class="settings-row-label">Font size</div>
+          <div class="settings-row-label">${t('settings.appearance.fontSize')}</div>
           <div class="settings-row-control" style="min-width:180px;">
             <div style="display:flex;align-items:center;gap:8px;">
               <input type="range" id="st-fontsize" min="10" max="24" value="${fontSize}" style="flex:1;accent-color:var(--accent);" oninput="document.getElementById('st-fontsize-val').textContent=this.value" />
@@ -62,15 +64,26 @@ export async function initSettings(initialPage = 'appearance') {
           </div>
         </div>
       </div>
+      <div class="settings-section">
+        <div class="settings-section-title">${t('settings.appearance.language')}</div>
+        <div class="settings-row">
+          <div class="settings-row-label">${t('settings.appearance.interfaceLanguage')}</div>
+          <div class="settings-row-control">
+            <select class="input" id="st-language" style="width:auto;">
+              ${LANGUAGE_OPTIONS.map(o=>`<option value="${o.value}" ${languagePref===o.value?'selected':''}>${t(o.labelKey)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Terminal -->
     <div class="settings-page" id="sp-terminal">
-      <div class="settings-page-title">Terminal</div>
+      <div class="settings-page-title">${t('settings.nav.terminal')}</div>
       <div class="settings-section">
-        <div class="settings-section-title">Cursor</div>
+        <div class="settings-section-title">${t('settings.terminal.cursor')}</div>
         <div class="settings-row">
-          <div class="settings-row-label">Cursor style</div>
+          <div class="settings-row-label">${t('settings.terminal.cursorStyle')}</div>
           <div class="settings-row-control">
             <select class="input" id="st-cursor" style="width:auto;">
               ${['block','underline','bar'].map(c=>`<option value="${c}" ${settings.cursor_style===c?'selected':''}>${c}</option>`).join('')}
@@ -78,14 +91,14 @@ export async function initSettings(initialPage = 'appearance') {
           </div>
         </div>
         <div class="settings-row">
-          <div class="settings-row-label">Blink cursor</div>
+          <div class="settings-row-label">${t('settings.terminal.blinkCursor')}</div>
           <div class="settings-row-control"><div class="toggle-switch ${settings.cursor_blink!==false?'on':''}" id="st-blink"></div></div>
         </div>
       </div>
       <div class="settings-section">
-        <div class="settings-section-title">Behavior</div>
+        <div class="settings-section-title">${t('settings.terminal.behavior')}</div>
         <div class="settings-row">
-          <div class="settings-row-label">Scrollback lines</div>
+          <div class="settings-row-label">${t('settings.terminal.scrollbackLines')}</div>
           <div class="settings-row-control"><input class="input" id="st-scrollback" type="number" value="${settings.scrollback||10000}" style="width:100px;" /></div>
         </div>
       </div>
@@ -93,78 +106,78 @@ export async function initSettings(initialPage = 'appearance') {
 
     <!-- SSH -->
     <div class="settings-page" id="sp-ssh">
-      <div class="settings-page-title">SSH / Security</div>
+      <div class="settings-page-title">${t('settings.nav.ssh')}</div>
       <div class="settings-section">
-        <div class="settings-section-title">Host Key Verification</div>
+        <div class="settings-section-title">${t('settings.ssh.hostKeyVerification')}</div>
         <div class="settings-row">
-          <div><div class="settings-row-label">Strict host key checking</div><div class="settings-row-desc">Reject unknown/changed keys</div></div>
+          <div><div class="settings-row-label">${t('settings.ssh.strictHostKey')}</div><div class="settings-row-desc">${t('settings.ssh.strictHostKeyDesc')}</div></div>
           <div class="settings-row-control"><div class="toggle-switch ${settings.strict_host_key!==false?'on':''}" id="st-strict"></div></div>
         </div>
         <div class="settings-row">
-          <div class="settings-row-label">known_hosts path</div>
+          <div class="settings-row-label">${t('settings.ssh.knownHostsPath')}</div>
           <div class="settings-row-control"><input class="input" id="st-khpath" value="${esc(settings.known_hosts_path||'')}" placeholder="~/.ssh/known_hosts" style="width:220px;" /></div>
         </div>
       </div>
       <div class="settings-section">
-        <div class="settings-section-title">Known Hosts</div>
+        <div class="settings-section-title">${t('settings.ssh.knownHosts')}</div>
         ${kh.length === 0
-          ? '<div style="color:var(--text-muted);font-size:13px;padding:8px 0;">No known hosts.</div>'
-          : kh.map(h => `<div class="settings-row"><div><div class="settings-row-label" style="font-family:var(--font-mono);font-size:12px;">${esc(h.hostname)}</div><div class="settings-row-desc">${esc(h.key_type)} — ${esc(h.fingerprint)}</div></div><button class="btn btn-danger btn-sm" onclick="window._removeKH('${esc(h.hostname)}')">Remove</button></div>`).join('')}
+          ? `<div style="color:var(--text-muted);font-size:13px;padding:8px 0;">${t('settings.ssh.noKnownHosts')}</div>`
+          : kh.map(h => `<div class="settings-row"><div><div class="settings-row-label" style="font-family:var(--font-mono);font-size:12px;">${esc(h.hostname)}</div><div class="settings-row-desc">${esc(h.key_type)} — ${esc(h.fingerprint)}</div></div><button class="btn btn-danger btn-sm" onclick="window._removeKH('${esc(h.hostname)}')">${t('common.remove')}</button></div>`).join('')}
       </div>
     </div>
 
     <!-- Import / Export -->
     <div class="settings-page" id="sp-backup">
-      <div class="settings-page-title">Import / Export</div>
+      <div class="settings-page-title">${t('settings.nav.backup')}</div>
       <div class="settings-section">
-        <div class="settings-section-title">Backup &amp; Restore</div>
-        <div class="settings-row-desc" style="margin-bottom:10px;">⚠️ The exported YAML file contains session passwords and key passphrases in plain text — store and share it carefully.</div>
+        <div class="settings-section-title">${t('settings.backup.title')}</div>
+        <div class="settings-row-desc" style="margin-bottom:10px;">${t('settings.backup.warning')}</div>
         <div class="settings-row">
-          <div><div class="settings-row-label">Export config</div><div class="settings-row-desc">Save all sessions and settings to a YAML file.</div></div>
-          <div class="settings-row-control"><button class="btn btn-secondary btn-sm" id="st-export-config" type="button">Export…</button></div>
+          <div><div class="settings-row-label">${t('settings.backup.exportLabel')}</div><div class="settings-row-desc">${t('settings.backup.exportDesc')}</div></div>
+          <div class="settings-row-control"><button class="btn btn-secondary btn-sm" id="st-export-config" type="button">${t('settings.backup.exportBtn')}</button></div>
         </div>
         <div class="settings-row">
-          <div><div class="settings-row-label">Import config</div><div class="settings-row-desc">Restore sessions and settings from a YAML file. Existing sessions with the same ID are updated.</div></div>
-          <div class="settings-row-control"><button class="btn btn-secondary btn-sm" id="st-import-config" type="button">Import…</button></div>
+          <div><div class="settings-row-label">${t('settings.backup.importLabel')}</div><div class="settings-row-desc">${t('settings.backup.importDesc')}</div></div>
+          <div class="settings-row-control"><button class="btn btn-secondary btn-sm" id="st-import-config" type="button">${t('settings.backup.importBtn')}</button></div>
         </div>
       </div>
     </div>
 
     <!-- Quick Commands -->
     <div class="settings-page" id="sp-quick-commands">
-      <div class="settings-page-title">Quick Commands</div>
+      <div class="settings-page-title">${t('settings.nav.quickCommands')}</div>
       <div class="settings-section">
-        <div class="settings-section-title">Display</div>
+        <div class="settings-section-title">${t('settings.quickCommands.display')}</div>
         <div class="settings-row">
-          <div><div class="settings-row-label">Show quick command bar</div><div class="settings-row-desc">Display command buttons below the terminal.</div></div>
+          <div><div class="settings-row-label">${t('settings.quickCommands.showBar')}</div><div class="settings-row-desc">${t('settings.quickCommands.showBarDesc')}</div></div>
           <div class="settings-row-control"><div class="toggle-switch ${settings.show_quick_commands!==false?'on':''}" id="st-show-qc"></div></div>
         </div>
       </div>
       <div class="settings-section">
-        <div class="settings-section-title">Groups</div>
-        <div class="settings-row-desc">Use \\n or \\r to submit the line, \\\\ for a literal backslash, \\xHH for a raw byte (e.g. \\x03 = Ctrl+C). Avoid \\t/\\x1b — shells usually intercept Tab/Esc instead of inserting them.</div>
+        <div class="settings-section-title">${t('settings.quickCommands.groups')}</div>
+        <div class="settings-row-desc">${t('settings.quickCommands.escapeHelp')}</div>
         <div id="qc-editor"></div>
-        <button class="btn btn-secondary btn-sm" id="qc-add-group" type="button">+ Add Group</button>
+        <button class="btn btn-secondary btn-sm" id="qc-add-group" type="button">${t('settings.quickCommands.addGroup')}</button>
       </div>
     </div>
 
     <!-- Shortcuts -->
     <div class="settings-page" id="sp-shortcuts">
-      <div class="settings-page-title">Keyboard Shortcuts</div>
+      <div class="settings-page-title">${t('settings.shortcuts.title')}</div>
       ${[
-        { group: 'Navigation' },
-        ['Switch to tab 1–9',      `${alt}+1 … ${alt}+9`],
-        ['Toggle sidebar',         isMac ? `${mod}+B` : 'Alt+B'],
-        ['Toggle fullscreen',      isMac ? '⌘+Enter' : 'Alt+Enter'],
-        ['Open settings',          `${alt}+,`],
-        { group: 'Profiles' },
-        ['Open profile picker',    `${alt}+O`],
-        ['Connect (in search)',    'Enter'],
-        { group: 'Terminal' },
-        ['Open local terminal',    isMac ? '⌘+T' : 'Alt+T'],
-        ['Find in terminal',       isMac ? `${mod}+F` : 'Alt+F'],
-        ['Close current tab',      isMac ? '⌘+W' : 'Alt+W'],
-        ['Run quick command 1–9',  'Ctrl+1 … Ctrl+9'],
+        { group: t('settings.shortcuts.groupNavigation') },
+        [t('settings.shortcuts.switchTab'),      `${alt}+1 … ${alt}+9`],
+        [t('settings.shortcuts.toggleSidebar'),  isMac ? `${mod}+B` : 'Alt+B'],
+        [t('settings.shortcuts.toggleFullscreen'), isMac ? '⌘+Enter' : 'Alt+Enter'],
+        [t('settings.shortcuts.openSettings'),   `${alt}+,`],
+        { group: t('settings.shortcuts.groupProfiles') },
+        [t('settings.shortcuts.openProfilePicker'), `${alt}+O`],
+        [t('settings.shortcuts.connectInSearch'), 'Enter'],
+        { group: t('settings.shortcuts.groupTerminal') },
+        [t('settings.shortcuts.openLocalTerminal'), isMac ? '⌘+T' : 'Alt+T'],
+        [t('settings.shortcuts.findInTerminal'), isMac ? `${mod}+F` : 'Alt+F'],
+        [t('settings.shortcuts.closeTab'),       isMac ? '⌘+W' : 'Alt+W'],
+        [t('settings.shortcuts.runQuickCommand'), 'Ctrl+1 … Ctrl+9'],
       ].map(item => {
         if (item.group) return `
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
@@ -185,12 +198,12 @@ export async function initSettings(initialPage = 'appearance') {
 
     <!-- About -->
     <div class="settings-page" id="sp-about">
-      <div class="settings-page-title">About</div>
+      <div class="settings-page-title">${t('settings.nav.about')}</div>
       <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:28px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;">
         <div style="width:64px;height:64px;background:linear-gradient(135deg,var(--accent),var(--mauve));border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:30px;color:#fff;">⌨</div>
         <div style="font-size:22px;font-weight:700;">iShell</div>
-        <div style="color:var(--text-muted);">Version 1.0.0</div>
-        <div style="font-size:13px;color:var(--text-secondary);max-width:300px;">A modern cross-platform SSH client built with Go and Wails.</div>
+        <div style="color:var(--text-muted);">${t('settings.about.versionLabel')} 1.0.0</div>
+        <div style="font-size:13px;color:var(--text-secondary);max-width:300px;">${t('settings.about.description')}</div>
       </div>
     </div>
 
@@ -209,14 +222,14 @@ export async function initSettings(initialPage = 'appearance') {
   activatePage(initialPage);
 
   // Toggle switches
-  panel.querySelectorAll('.toggle-switch').forEach(t => {
-    t.addEventListener('click', () => t.classList.toggle('on'));
+  panel.querySelectorAll('.toggle-switch').forEach(el => {
+    el.addEventListener('click', () => el.classList.toggle('on'));
   });
 
   renderGroupsEditor();
   document.getElementById('qc-add-group')?.addEventListener('click', () => {
     collectQuickCommandGroups({ keepBlank: true });
-    quickCommandGroups.push({ id: makeGroupID(), name: 'New Group', commands: [] });
+    quickCommandGroups.push({ id: makeGroupID(), name: t('settings.quickCommands.newGroupName'), commands: [] });
     renderGroupsEditor();
   });
 
@@ -227,28 +240,29 @@ export async function initSettings(initialPage = 'appearance') {
 
   // Known host removal
   window._removeKH = async (hostname) => {
-    if (!confirm(`Remove known host "${hostname}"?`)) return;
-    try { await removeKnownHost(hostname); showToast('✅ Removed'); initSettings(); } catch(e) { showToast('❌ ' + e); }
+    if (!confirm(t('settings.ssh.confirmRemoveHost', { h: hostname }))) return;
+    try { await removeKnownHost(hostname); showToast(t('toast.removed')); initSettings('ssh'); } catch(e) { showToast('❌ ' + e); }
   };
 
   // Config export / import
   document.getElementById('st-export-config')?.addEventListener('click', async () => {
     try {
       const path = await exportConfig();
-      if (path) showToast('✅ Exported to ' + path);
+      if (path) showToast(t('toast.exported', { path }));
     } catch (e) { showToast('❌ ' + e); }
   });
   document.getElementById('st-import-config')?.addEventListener('click', async () => {
-    if (!confirm('Importing will add or update sessions by ID and overwrite current settings. Continue?')) return;
+    if (!confirm(t('settings.backup.confirmImport'))) return;
     try {
       const result = await importConfig();
       if (!result) return; // user cancelled the file picker
-      showToast(`✅ Imported ${result.session_count} session(s)`);
+      showToast(t('toast.imported', { n: result.session_count }));
       await loadProfiles();
       const fresh = await getSettings().catch(() => null);
       if (fresh) {
         localStorage.setItem('theme', fresh.theme);
         document.documentElement.setAttribute('data-theme', fresh.theme);
+        if (fresh.language) setLanguage(fresh.language);
         window.dispatchEvent(new CustomEvent('ishell:settingsSaved', { detail: { settings: fresh } }));
       }
       initSettings('backup');
@@ -258,13 +272,15 @@ export async function initSettings(initialPage = 'appearance') {
   // Save button (footer)
   const footer = document.createElement('div');
   footer.style.cssText = 'padding:12px 32px;border-top:1px solid var(--border-subtle);display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;';
-  footer.innerHTML = `<button class="btn btn-secondary" id="st-discard">Discard</button><button class="btn btn-primary" id="st-save">Save Settings</button>`;
+  footer.innerHTML = `<button class="btn btn-secondary" id="st-discard">${t('common.discard')}</button><button class="btn btn-primary" id="st-save">${t('settings.saveSettings')}</button>`;
   panel.appendChild(footer);
 
   document.getElementById('st-discard').addEventListener('click', () => {
     window.dispatchEvent(new CustomEvent('ishell:closeSettings'));
   });
   document.getElementById('st-save').addEventListener('click', async () => {
+    const activePage = panel.querySelector('.nav-pill.active')?.dataset.page || 'appearance';
+    const newLanguagePref = document.getElementById('st-language')?.value || languagePref;
     const updated = {
       ...settings,
       theme: document.getElementById('st-theme')?.value || settings.theme,
@@ -278,13 +294,17 @@ export async function initSettings(initialPage = 'appearance') {
       quick_commands: [],
       quick_command_groups: collectQuickCommandGroups(),
       show_quick_commands: document.getElementById('st-show-qc')?.classList.contains('on'),
+      language: newLanguagePref,
     };
     try {
       await saveSettings(updated);
       localStorage.setItem('theme', updated.theme);
+      const languageChanged = newLanguagePref !== languagePref;
+      if (languageChanged) setLanguage(newLanguagePref);
       window.dispatchEvent(new CustomEvent('ishell:settingsSaved', { detail: { settings: updated } }));
-      showToast('✅ Settings saved — restart connections to apply terminal changes');
+      showToast(t('toast.settingsSaved'));
       document.documentElement.setAttribute('data-theme', updated.theme);
+      if (languageChanged) initSettings(activePage);
     } catch(e) { showToast('❌ ' + e); }
   });
 
@@ -299,38 +319,38 @@ export async function initSettings(initialPage = 'appearance') {
     const editor = document.getElementById('qc-editor');
     if (!editor) return;
     if (quickCommandGroups.length === 0) {
-      editor.innerHTML = '<div class="qc-empty" style="margin-bottom:8px;">No groups yet. Add a group to get started.</div>';
+      editor.innerHTML = `<div class="qc-empty" style="margin-bottom:8px;">${t('settings.quickCommands.noGroups')}</div>`;
       return;
     }
     editor.innerHTML = quickCommandGroups.map((group, gi) => `
       <div class="qc-group" data-group-id="${esc(group.id)}">
         <div class="qc-group-header">
-          <input class="input qc-group-name" value="${esc(group.name)}" placeholder="Group name" />
+          <input class="input qc-group-name" value="${esc(group.name)}" placeholder="${t('settings.quickCommands.groupNamePlaceholder')}" />
           <div class="qc-group-header-actions">
-            <button class="btn btn-ghost btn-icon btn-sm qc-group-up" type="button" title="Move group up" ${gi === 0 ? 'disabled' : ''}>▲</button>
-            <button class="btn btn-ghost btn-icon btn-sm qc-group-down" type="button" title="Move group down" ${gi === quickCommandGroups.length - 1 ? 'disabled' : ''}>▼</button>
-            <button class="btn btn-danger btn-icon btn-sm qc-group-delete" type="button" title="Delete group">✕</button>
+            <button class="btn btn-ghost btn-icon btn-sm qc-group-up" type="button" title="${t('settings.quickCommands.moveGroupUp')}" ${gi === 0 ? 'disabled' : ''}>▲</button>
+            <button class="btn btn-ghost btn-icon btn-sm qc-group-down" type="button" title="${t('settings.quickCommands.moveGroupDown')}" ${gi === quickCommandGroups.length - 1 ? 'disabled' : ''}>▼</button>
+            <button class="btn btn-danger btn-icon btn-sm qc-group-delete" type="button" title="${t('settings.quickCommands.deleteGroup')}">✕</button>
           </div>
         </div>
         <div class="qc-group-commands">
           ${group.commands.length === 0
-            ? '<div class="qc-empty">No commands in this group.</div>'
+            ? `<div class="qc-empty">${t('settings.quickCommands.noCommands')}</div>`
             : group.commands.map((cmd, ci) => `
               <div class="qc-row" data-id="${esc(cmd.id)}">
                 <div class="qc-row-fields">
-                  <input class="input qc-label" value="${esc(cmd.label)}" placeholder="Label" />
-                  <textarea class="input qc-command" rows="1" wrap="off" placeholder="Command">${escText(cmd.command)}</textarea>
+                  <input class="input qc-label" value="${esc(cmd.label)}" placeholder="${t('settings.quickCommands.labelPlaceholder')}" />
+                  <textarea class="input qc-command" rows="1" wrap="off" placeholder="${t('settings.quickCommands.commandPlaceholder')}">${escText(cmd.command)}</textarea>
                 </div>
-                ${ci < 9 ? `<div class="qc-row-shortcut" title="Built-in shortcut">${esc(shortcutLabelForIndex(ci))}</div>` : ''}
+                ${ci < 9 ? `<div class="qc-row-shortcut" title="${t('settings.quickCommands.builtinShortcut')}">${esc(shortcutLabelForIndex(ci))}</div>` : ''}
                 <div class="qc-row-actions">
-                  <button class="btn btn-ghost btn-icon btn-sm qc-up" type="button" title="Move up" ${ci === 0 ? 'disabled' : ''}>▲</button>
-                  <button class="btn btn-ghost btn-icon btn-sm qc-down" type="button" title="Move down" ${ci === group.commands.length - 1 ? 'disabled' : ''}>▼</button>
-                  <button class="btn btn-danger btn-icon btn-sm qc-delete" type="button" title="Delete">✕</button>
+                  <button class="btn btn-ghost btn-icon btn-sm qc-up" type="button" title="${t('common.moveUp')}" ${ci === 0 ? 'disabled' : ''}>▲</button>
+                  <button class="btn btn-ghost btn-icon btn-sm qc-down" type="button" title="${t('common.moveDown')}" ${ci === group.commands.length - 1 ? 'disabled' : ''}>▼</button>
+                  <button class="btn btn-danger btn-icon btn-sm qc-delete" type="button" title="${t('common.delete')}">✕</button>
                 </div>
               </div>`).join('')}
         </div>
         <div class="qc-group-footer">
-          <button class="btn btn-secondary btn-sm qc-add-cmd" type="button">+ Add Command</button>
+          <button class="btn btn-secondary btn-sm qc-add-cmd" type="button">${t('settings.quickCommands.addCommand')}</button>
         </div>
       </div>
     `).join('');
@@ -341,7 +361,7 @@ export async function initSettings(initialPage = 'appearance') {
       groupEl.querySelector('.qc-group-up')?.addEventListener('click', () => moveGroup(groupId, -1));
       groupEl.querySelector('.qc-group-down')?.addEventListener('click', () => moveGroup(groupId, 1));
       groupEl.querySelector('.qc-group-delete')?.addEventListener('click', () => {
-        if (!confirm('Delete this group and all its commands?')) return;
+        if (!confirm(t('settings.quickCommands.confirmDeleteGroup'))) return;
         collectQuickCommandGroups({ keepBlank: true });
         quickCommandGroups = quickCommandGroups.filter(g => g.id !== groupId);
         renderGroupsEditor();
@@ -406,7 +426,7 @@ export async function initSettings(initialPage = 'appearance') {
       .filter(g => g.name || g.commands.some(c => c.command.trim()))
       .map(g => ({
         id: g.id || makeGroupID(),
-        name: g.name || 'Group',
+        name: g.name || t('settings.quickCommands.groupFallback'),
         commands: g.commands
           .filter(c => c.command.trim() !== '')
           .map(c => ({
@@ -424,8 +444,8 @@ function makeID() { return 'qc-' + Date.now().toString(36) + '-' + Math.random()
 function makeGroupID() { return 'grp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
 function firstCommandLine(s) {
   const real = (s || '').split(/\r?\n/).find(line => line.trim())?.trim() || '';
-  if (!real) return 'Command';
-  return real.split(/\\[nr]/)[0].trim() || 'Command';
+  if (!real) return t('settings.quickCommands.commandFallback');
+  return real.split(/\\[nr]/)[0].trim() || t('settings.quickCommands.commandFallback');
 }
 function normalizeQuickCommands(commands) {
   if (!Array.isArray(commands)) return [];
@@ -439,14 +459,14 @@ function normalizeQuickCommandGroups(settings) {
   if (Array.isArray(settings.quick_command_groups) && settings.quick_command_groups.length > 0) {
     return settings.quick_command_groups.map(g => ({
       id: g.id || makeGroupID(),
-      name: g.name || 'Group',
+      name: g.name || t('settings.quickCommands.groupFallback'),
       commands: normalizeQuickCommands(g.commands || []),
     }));
   }
   // Migrate legacy flat quick_commands into a single "Default" group
   const cmds = normalizeQuickCommands(settings.quick_commands || []);
   if (cmds.length > 0) {
-    return [{ id: makeGroupID(), name: 'Default', commands: cmds }];
+    return [{ id: makeGroupID(), name: t('settings.quickCommands.legacyGroupName'), commands: cmds }];
   }
   return [];
 }

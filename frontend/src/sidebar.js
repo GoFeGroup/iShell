@@ -1,6 +1,7 @@
 import { getSessions, deleteSession } from './api.js';
 import { openProfileForm } from './profile-form.js';
 import { showToast } from './toast.js';
+import { t } from './i18n.js';
 
 const isWindows = navigator.platform.startsWith('Win');
 const isMac = navigator.platform.startsWith('Mac');
@@ -9,7 +10,7 @@ const LOCAL_SHELL_NAME = isWindows ? 'PowerShell' : (isMac ? 'zsh' : 'bash');
 export const LOCAL_SESSION = {
   type: 'local',
   id: '__local__',
-  label: 'Local Terminal',
+  get label() { return t('sidebar.localTerminal'); },
   sublabel: LOCAL_SHELL_NAME,
 };
 
@@ -67,7 +68,7 @@ function renderLocalTerminal(container, activeId) {
   item.innerHTML = `
     <div class="status-dot disconnected" id="dot-__local__"></div>
     <div class="item-info">
-      <div class="item-name">Local Terminal</div>
+      <div class="item-name">${t('sidebar.localTerminal')}</div>
       <div class="item-sub">${LOCAL_SHELL_NAME}</div>
     </div>`;
 
@@ -86,7 +87,7 @@ function renderList(filter) {
   container.innerHTML = '';
 
   const localMatch = !filter ||
-    ('local terminal ' + LOCAL_SHELL_NAME).toLowerCase().includes(filter);
+    (t('sidebar.localTerminal') + ' ' + LOCAL_SHELL_NAME).toLowerCase().includes(filter);
   const filteredSessions = filter
     ? sessions.filter(s => matchFilter(s, filter))
     : sessions;
@@ -107,7 +108,7 @@ function renderList(filter) {
   // Group sessions
   const groups = {};
   filteredSessions.forEach(s => {
-    const g = s.group || 'Ungrouped';
+    const g = s.group || t('sidebar.ungrouped');
     if (!groups[g]) groups[g] = [];
     groups[g].push(s);
   });
@@ -116,7 +117,7 @@ function renderList(filter) {
     if (filter && !localMatch) {
       const empty = document.createElement('div');
       empty.style.cssText = 'padding:12px;color:var(--text-muted);font-size:13px;text-align:center;';
-      empty.textContent = 'No matches';
+      empty.textContent = t('sidebar.noMatches');
       container.appendChild(empty);
     }
     return;
@@ -140,8 +141,8 @@ function renderList(filter) {
           <div class="item-sub">${escHtml(sess.username)}@${escHtml(sess.host)}:${sess.port}</div>
         </div>
         <div class="item-actions">
-          <button class="btn btn-ghost btn-icon btn-sm" title="Edit" data-action="edit">✏️</button>
-          <button class="btn btn-ghost btn-icon btn-sm" title="Delete" data-action="delete">🗑</button>
+          <button class="btn btn-ghost btn-icon btn-sm" title="${t('common.edit')}" data-action="edit">✏️</button>
+          <button class="btn btn-ghost btn-icon btn-sm" title="${t('common.delete')}" data-action="delete">🗑</button>
         </div>`;
 
       // Single click: select profile (highlight only, no connection)
@@ -152,7 +153,7 @@ function renderList(filter) {
           return;
         }
         if (action === 'delete') {
-          if (!confirm(`Delete profile "${sess.label || sess.host}"?`)) return;
+          if (!confirm(t('sidebar.confirmDelete', { label: sess.label || sess.host }))) return;
           deleteSession(sess.id).then(() => {
             if (selectedProfileId === sess.id) selectedProfileId = null;
             loadProfiles();

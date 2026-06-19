@@ -42,7 +42,7 @@
     <div class="sidebar-search">
       <div class="search-wrap">
         <span class="search-icon">🔍</span>
-        <input class="input" id="session-search" placeholder="Search profiles…" />
+        <input class="input" id="session-search" placeholder="Search profiles…" data-i18n-placeholder="app.searchPlaceholder" />
       </div>
     </div>
 
@@ -51,9 +51,9 @@
     </div>
 
     <div class="sidebar-footer">
-      <button class="btn btn-primary btn-sm" id="btn-new-session">+ New Profile</button>
+      <button class="btn btn-primary btn-sm" id="btn-new-session" data-i18n="app.newProfile">+ New Profile</button>
       <div style="display:flex;gap:4px;">
-        <button class="btn btn-ghost btn-icon" id="btn-settings" title="Settings">⚙️</button>
+        <button class="btn btn-ghost btn-icon" id="btn-settings" title="Settings" data-i18n-title="common.settings">⚙️</button>
       </div>
     </div>
   </aside>
@@ -63,20 +63,20 @@
 
     <!-- Unified toolbar -->
     <div class="unified-toolbar" id="unified-toolbar">
-      <button class="sidebar-toggle" id="btn-toggle-sidebar" title="Toggle sidebar">☰</button>
+      <button class="sidebar-toggle" id="btn-toggle-sidebar" title="Toggle sidebar" data-i18n-title="app.toggleSidebar">☰</button>
       <div class="toolbar-vdiv"></div>
       <div class="tabs-scroll" id="tabs-scroll"></div>
       <div style="flex:1;"></div>
-      <button class="btn btn-ghost btn-sm" id="btn-new-instance" title="New app instance">+ Instance</button>
+      <button class="btn btn-ghost btn-sm" id="btn-new-instance" title="New app instance" data-i18n-title="app.newInstanceTitle" data-i18n="app.newInstanceLabel">+ Instance</button>
       <div class="toolbar-vdiv"></div>
       <div class="topbar-actions" id="topbar-actions" style="display:none;">
-        <button class="btn btn-ghost btn-sm" id="btn-search-term" title="Find in terminal">🔍</button>
-        <button class="btn btn-ghost btn-sm" id="btn-quick-command" title="Show quick commands">⚡</button>
-        <button class="btn btn-ghost btn-sm" id="btn-sftp" style="color:var(--blue);" title="Open SFTP">📁 SFTP</button>
+        <button class="btn btn-ghost btn-sm" id="btn-search-term" title="Find in terminal" data-i18n-title="app.findInTerminal">🔍</button>
+        <button class="btn btn-ghost btn-sm" id="btn-quick-command" title="Show quick commands" data-i18n-title="app.showQuickCommands">⚡</button>
+        <button class="btn btn-ghost btn-sm" id="btn-sftp" style="color:var(--blue);" title="Open SFTP" data-i18n-title="app.openSftpTitle">📁 SFTP</button>
         <div class="toolbar-vdiv"></div>
-        <button class="btn btn-ghost btn-sm" id="btn-fullscreen" title="Fullscreen  Alt+Enter">⛶</button>
+        <button class="btn btn-ghost btn-sm" id="btn-fullscreen" title="Fullscreen  Alt+Enter" data-i18n-title="welcome.kbdFullscreen">⛶</button>
         <div class="toolbar-vdiv"></div>
-        <button class="btn btn-danger btn-sm" id="btn-disconnect">Disconnect</button>
+        <button class="btn btn-danger btn-sm" id="btn-disconnect" data-i18n="app.disconnect">Disconnect</button>
       </div>
     </div>
 
@@ -86,12 +86,12 @@
     <div class="panel" id="panel-welcome">
       <div class="empty-state">
         <div class="empty-icon">⌨️</div>
-        <div class="empty-title">Welcome to iShell</div>
-        <div class="empty-sub">Select a profile from the sidebar or click <strong>+ New Profile</strong>.</div>
+        <div class="empty-title" data-i18n="welcome.title">Welcome to iShell</div>
+        <div class="empty-sub" data-i18n-html="welcome.subtitleHtml">Select a profile from the sidebar or click <strong>+ New Profile</strong>.</div>
         <div class="kbd-hints">
-          <div class="kbd-hint"><kbd id="kbd-switch-tab">Alt+1…9</kbd> Switch tab</div>
-          <div class="kbd-hint"><kbd>Alt+Enter</kbd> Fullscreen</div>
-          <div class="kbd-hint"><kbd>⌘,</kbd> Settings</div>
+          <div class="kbd-hint"><kbd id="kbd-switch-tab">Alt+1…9</kbd> <span data-i18n="welcome.kbdSwitchTab">Switch tab</span></div>
+          <div class="kbd-hint"><kbd>Alt+Enter</kbd> <span data-i18n="welcome.kbdFullscreen">Fullscreen</span></div>
+          <div class="kbd-hint"><kbd>⌘,</kbd> <span data-i18n="welcome.kbdSettings">Settings</span></div>
         </div>
       </div>
     </div>
@@ -101,7 +101,7 @@
       <div id="terminal-container"></div>
       <!-- Find bar -->
       <div class="find-bar" id="find-bar" style="display:none;">
-        <input id="find-input" placeholder="Find…" />
+        <input id="find-input" placeholder="Find…" data-i18n-placeholder="terminal.findPlaceholder" />
         <span class="find-count" id="find-count"></span>
         <button class="btn btn-ghost btn-icon" id="find-prev">▲</button>
         <button class="btn btn-ghost btn-icon" id="find-next">▼</button>
@@ -110,7 +110,7 @@
       <div class="quick-command-bar" id="quick-command-bar" style="display:none;"></div>
       <div class="terminal-statusbar">
         <div class="statusbar-left">
-          <span class="statusbar-item" id="sb-status">🟢 Connected</span>
+          <span class="statusbar-item" id="sb-status">🟢 <span data-i18n="common.connected">Connected</span></span>
           <span class="statusbar-item" id="sb-latency"></span>
         </div>
         <div class="statusbar-right">
@@ -143,18 +143,18 @@
 <div class="overlay" id="hostkey-overlay" style="display:none;">
   <div class="modal" style="width:460px;">
     <div class="modal-header">
-      <span class="modal-title">⚠ Unknown Host Key</span>
+      <span class="modal-title" data-i18n="hostkey.title">⚠ Unknown Host Key</span>
     </div>
     <div class="modal-body">
-      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:10px;">
+      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:10px;" data-i18n="hostkey.body">
         The server's host key has not been verified before. Make sure the fingerprint below matches what you expect.
       </p>
       <div style="font-family:var(--font-mono);font-size:12px;background:var(--bg-primary);padding:10px 14px;border-radius:6px;word-break:break-all;color:var(--text-secondary);" id="hostkey-fp"></div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-danger btn-sm" id="hostkey-reject">✕ Reject</button>
-      <button class="btn btn-secondary" id="hostkey-once">Trust Once</button>
-      <button class="btn btn-primary" id="hostkey-always">Always Trust</button>
+      <button class="btn btn-danger btn-sm" id="hostkey-reject" data-i18n="hostkey.reject">✕ Reject</button>
+      <button class="btn btn-secondary" id="hostkey-once" data-i18n="hostkey.trustOnce">Trust Once</button>
+      <button class="btn btn-primary" id="hostkey-always" data-i18n="hostkey.alwaysTrust">Always Trust</button>
     </div>
   </div>
 </div>
