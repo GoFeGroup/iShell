@@ -45,6 +45,9 @@ export const removeKnownHost= (h)     => go().RemoveKnownHost(h);
 export const validateKey    = (p, pp) => go().ValidateKey(p, pp);
 export const openKeyDialog  = ()      => go().OpenKeyFileDialog();
 
+export const exportConfig   = ()      => go().ExportConfig();
+export const importConfig   = ()      => go().ImportConfig();
+
 export const sendInputBytes     = (id, b64)        => go().SendInputBytes(id, b64);
 export const openFilesForZmodem = ()               => go().OpenFilesForZmodem();
 export const saveZmodemFile     = (name, b64)      => go().SaveZmodemFile(name, b64);

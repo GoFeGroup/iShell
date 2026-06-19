@@ -9,74 +9,74 @@ const (
 )
 
 type Session struct {
-	ID            string   `json:"id"`
-	Label         string   `json:"label"`
-	Host          string   `json:"host"`
-	Port          int      `json:"port"`
-	Username      string   `json:"username"`
-	AuthType      AuthType `json:"auth_type"`
-	Password      string   `json:"password,omitempty"`
-	KeyPath       string   `json:"key_path,omitempty"`
-	Passphrase    string   `json:"passphrase,omitempty"`
-	Group         string   `json:"group"`
-	Keepalive     int      `json:"keepalive"`
-	Timeout       int      `json:"timeout"`
-	Encoding      string   `json:"encoding"`
-	JumpHost      string   `json:"jump_host,omitempty"`
-	JumpProfileID string   `json:"jump_profile_id,omitempty"`
-	InitCommand   string   `json:"init_command,omitempty"`
-	CreatedAt     string   `json:"created_at"`
-	UpdatedAt     string   `json:"updated_at"`
+	ID            string   `json:"id" yaml:"id"`
+	Label         string   `json:"label" yaml:"label"`
+	Host          string   `json:"host" yaml:"host"`
+	Port          int      `json:"port" yaml:"port"`
+	Username      string   `json:"username" yaml:"username"`
+	AuthType      AuthType `json:"auth_type" yaml:"auth_type"`
+	Password      string   `json:"password,omitempty" yaml:"password,omitempty"`
+	KeyPath       string   `json:"key_path,omitempty" yaml:"key_path,omitempty"`
+	Passphrase    string   `json:"passphrase,omitempty" yaml:"passphrase,omitempty"`
+	Group         string   `json:"group" yaml:"group"`
+	Keepalive     int      `json:"keepalive" yaml:"keepalive"`
+	Timeout       int      `json:"timeout" yaml:"timeout"`
+	Encoding      string   `json:"encoding" yaml:"encoding"`
+	JumpHost      string   `json:"jump_host,omitempty" yaml:"jump_host,omitempty"`
+	JumpProfileID string   `json:"jump_profile_id,omitempty" yaml:"jump_profile_id,omitempty"`
+	InitCommand   string   `json:"init_command,omitempty" yaml:"init_command,omitempty"`
+	CreatedAt     string   `json:"created_at" yaml:"created_at"`
+	UpdatedAt     string   `json:"updated_at" yaml:"updated_at"`
 }
 
 type Settings struct {
-	Theme             string         `json:"theme"`
-	ColorScheme       string         `json:"color_scheme"`
-	FontFamily        string         `json:"font_family"`
-	FontSize          int            `json:"font_size"`
-	LineHeight        float64        `json:"line_height"`
-	Scrollback        int            `json:"scrollback"`
-	CursorStyle       string         `json:"cursor_style"`
-	CursorBlink       bool           `json:"cursor_blink"`
-	CopyOnSelect      bool           `json:"copy_on_select"`
-	BellStyle         string         `json:"bell_style"`
-	Ligatures         bool           `json:"ligatures"`
-	DefaultAuth       string         `json:"default_auth"`
-	DefaultKeyPath    string         `json:"default_key_path"`
-	StrictHostKey     bool           `json:"strict_host_key"`
-	KnownHostsPath    string         `json:"known_hosts_path"`
-	QuickCommands      []QuickCommand      `json:"quick_commands"`
-	QuickCommandGroups []QuickCommandGroup `json:"quick_command_groups"`
-	ShowQuickCommands  bool                `json:"show_quick_commands"`
+	Theme              string              `json:"theme" yaml:"theme"`
+	ColorScheme        string              `json:"color_scheme" yaml:"color_scheme"`
+	FontFamily         string              `json:"font_family" yaml:"font_family"`
+	FontSize           int                 `json:"font_size" yaml:"font_size"`
+	LineHeight         float64             `json:"line_height" yaml:"line_height"`
+	Scrollback         int                 `json:"scrollback" yaml:"scrollback"`
+	CursorStyle        string              `json:"cursor_style" yaml:"cursor_style"`
+	CursorBlink        bool                `json:"cursor_blink" yaml:"cursor_blink"`
+	CopyOnSelect       bool                `json:"copy_on_select" yaml:"copy_on_select"`
+	BellStyle          string              `json:"bell_style" yaml:"bell_style"`
+	Ligatures          bool                `json:"ligatures" yaml:"ligatures"`
+	DefaultAuth        string              `json:"default_auth" yaml:"default_auth"`
+	DefaultKeyPath     string              `json:"default_key_path" yaml:"default_key_path"`
+	StrictHostKey      bool                `json:"strict_host_key" yaml:"strict_host_key"`
+	KnownHostsPath     string              `json:"known_hosts_path" yaml:"known_hosts_path"`
+	QuickCommands      []QuickCommand      `json:"quick_commands" yaml:"quick_commands"`
+	QuickCommandGroups []QuickCommandGroup `json:"quick_command_groups" yaml:"quick_command_groups"`
+	ShowQuickCommands  bool                `json:"show_quick_commands" yaml:"show_quick_commands"`
 }
 
 type QuickCommand struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Command string `json:"command"`
+	ID      string `json:"id" yaml:"id"`
+	Label   string `json:"label" yaml:"label"`
+	Command string `json:"command" yaml:"command"`
 }
 
 type QuickCommandGroup struct {
-	ID       string         `json:"id"`
-	Name     string         `json:"name"`
-	Commands []QuickCommand `json:"commands"`
+	ID       string         `json:"id" yaml:"id"`
+	Name     string         `json:"name" yaml:"name"`
+	Commands []QuickCommand `json:"commands" yaml:"commands"`
 }
 
 func DefaultSettings() Settings {
 	return Settings{
-		Theme:             "dark",
-		ColorScheme:       "catppuccin",
-		FontFamily:        "Cascadia Code, JetBrains Mono, Consolas, monospace",
-		FontSize:          16,
-		LineHeight:        1.5,
-		Scrollback:        10000,
-		CursorStyle:       "block",
-		CursorBlink:       true,
-		CopyOnSelect:      false,
-		BellStyle:         "visual",
-		Ligatures:         true,
-		DefaultAuth:       "key",
-		StrictHostKey:     true,
+		Theme:              "dark",
+		ColorScheme:        "catppuccin",
+		FontFamily:         "Cascadia Code, JetBrains Mono, Consolas, monospace",
+		FontSize:           16,
+		LineHeight:         1.5,
+		Scrollback:         10000,
+		CursorStyle:        "block",
+		CursorBlink:        true,
+		CopyOnSelect:       false,
+		BellStyle:          "visual",
+		Ligatures:          true,
+		DefaultAuth:        "key",
+		StrictHostKey:      true,
 		KnownHostsPath:     "",
 		QuickCommands:      []QuickCommand{},
 		QuickCommandGroups: []QuickCommandGroup{},

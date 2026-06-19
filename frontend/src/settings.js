@@ -1,6 +1,7 @@
-import { getSettings, saveSettings, getKnownHosts, removeKnownHost } from './api.js';
+import { getSettings, saveSettings, getKnownHosts, removeKnownHost, exportConfig, importConfig } from './api.js';
 import { showToast } from './toast.js';
 import { shortcutLabelForIndex } from './quick-command.js';
+import { loadProfiles } from './sidebar.js';
 
 export async function initSettings(initialPage = 'appearance') {
   const panel = document.getElementById('panel-settings');
@@ -20,6 +21,7 @@ export async function initSettings(initialPage = 'appearance') {
     <div class="nav-pill" data-page="terminal"><span class="nav-pill-icon">💻</span>Terminal</div>
     <div class="nav-pill" data-page="ssh"><span class="nav-pill-icon">🔒</span>SSH / Security</div>
     <div class="nav-pill" data-page="quick-commands"><span class="nav-pill-icon">⚡</span>Quick Commands</div>
+    <div class="nav-pill" data-page="backup"><span class="nav-pill-icon">💾</span>Import / Export</div>
     <div class="nav-pill" data-page="shortcuts"><span class="nav-pill-icon">⌨️</span>Shortcuts</div>
     <div class="nav-pill" data-page="about"><span class="nav-pill-icon">ℹ️</span>About</div>
   </nav>
@@ -108,6 +110,23 @@ export async function initSettings(initialPage = 'appearance') {
         ${kh.length === 0
           ? '<div style="color:var(--text-muted);font-size:13px;padding:8px 0;">No known hosts.</div>'
           : kh.map(h => `<div class="settings-row"><div><div class="settings-row-label" style="font-family:var(--font-mono);font-size:12px;">${esc(h.hostname)}</div><div class="settings-row-desc">${esc(h.key_type)} — ${esc(h.fingerprint)}</div></div><button class="btn btn-danger btn-sm" onclick="window._removeKH('${esc(h.hostname)}')">Remove</button></div>`).join('')}
+      </div>
+    </div>
+
+    <!-- Import / Export -->
+    <div class="settings-page" id="sp-backup">
+      <div class="settings-page-title">Import / Export</div>
+      <div class="settings-section">
+        <div class="settings-section-title">Backup &amp; Restore</div>
+        <div class="settings-row-desc" style="margin-bottom:10px;">⚠️ The exported YAML file contains session passwords and key passphrases in plain text — store and share it carefully.</div>
+        <div class="settings-row">
+          <div><div class="settings-row-label">Export config</div><div class="settings-row-desc">Save all sessions and settings to a YAML file.</div></div>
+          <div class="settings-row-control"><button class="btn btn-secondary btn-sm" id="st-export-config" type="button">Export…</button></div>
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-row-label">Import config</div><div class="settings-row-desc">Restore sessions and settings from a YAML file. Existing sessions with the same ID are updated.</div></div>
+          <div class="settings-row-control"><button class="btn btn-secondary btn-sm" id="st-import-config" type="button">Import…</button></div>
+        </div>
       </div>
     </div>
 
@@ -211,6 +230,30 @@ export async function initSettings(initialPage = 'appearance') {
     if (!confirm(`Remove known host "${hostname}"?`)) return;
     try { await removeKnownHost(hostname); showToast('✅ Removed'); initSettings(); } catch(e) { showToast('❌ ' + e); }
   };
+
+  // Config export / import
+  document.getElementById('st-export-config')?.addEventListener('click', async () => {
+    try {
+      const path = await exportConfig();
+      if (path) showToast('✅ Exported to ' + path);
+    } catch (e) { showToast('❌ ' + e); }
+  });
+  document.getElementById('st-import-config')?.addEventListener('click', async () => {
+    if (!confirm('Importing will add or update sessions by ID and overwrite current settings. Continue?')) return;
+    try {
+      const result = await importConfig();
+      if (!result) return; // user cancelled the file picker
+      showToast(`✅ Imported ${result.session_count} session(s)`);
+      await loadProfiles();
+      const fresh = await getSettings().catch(() => null);
+      if (fresh) {
+        localStorage.setItem('theme', fresh.theme);
+        document.documentElement.setAttribute('data-theme', fresh.theme);
+        window.dispatchEvent(new CustomEvent('ishell:settingsSaved', { detail: { settings: fresh } }));
+      }
+      initSettings('backup');
+    } catch (e) { showToast('❌ ' + e); }
+  });
 
   // Save button (footer)
   const footer = document.createElement('div');

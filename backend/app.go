@@ -587,3 +587,56 @@ func (a *App) SaveZmodemFile(filename, b64data string) (string, error) {
 	}
 	return destPath, nil
 }
+
+// ── Config import/export ─────────────────────────────────────────────────────
+
+// ExportConfig opens a native "Save As" dialog and writes every session and
+// the app settings to a YAML file. Returns the saved path, or "" if the user
+// cancelled the dialog.
+func (a *App) ExportConfig() (string, error) {
+	if a.store == nil {
+		return "", fmt.Errorf("store not ready")
+	}
+	data, err := a.store.ExportAll()
+	if err != nil {
+		return "", fmt.Errorf("export config: %w", err)
+	}
+
+	path, err := wailsRuntime.SaveFileDialog(a.ctx, wailsRuntime.SaveDialogOptions{
+		Title:           "Export iShell Config",
+		DefaultFilename: fmt.Sprintf("ishell-config-%s.yaml", time.Now().Format("20060102-150405")),
+		Filters: []wailsRuntime.FileFilter{
+			{DisplayName: "YAML (*.yaml)", Pattern: "*.yaml;*.yml"},
+		},
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return "", fmt.Errorf("write file: %w", err)
+	}
+	return path, nil
+}
+
+// ImportConfig opens a native "Open" dialog, parses the selected YAML file,
+// and upserts its sessions plus settings into the store. Returns nil result
+// if the user cancelled the dialog.
+func (a *App) ImportConfig() (*storage.ImportResult, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store not ready")
+	}
+	path, err := wailsRuntime.OpenFileDialog(a.ctx, wailsRuntime.OpenDialogOptions{
+		Title: "Import iShell Config",
+		Filters: []wailsRuntime.FileFilter{
+			{DisplayName: "YAML (*.yaml)", Pattern: "*.yaml;*.yml"},
+		},
+	})
+	if err != nil || path == "" {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+	return a.store.ImportAll(data)
+}
