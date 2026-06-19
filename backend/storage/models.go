@@ -45,14 +45,21 @@ type Settings struct {
 	DefaultKeyPath    string         `json:"default_key_path"`
 	StrictHostKey     bool           `json:"strict_host_key"`
 	KnownHostsPath    string         `json:"known_hosts_path"`
-	QuickCommands     []QuickCommand `json:"quick_commands"`
-	ShowQuickCommands bool           `json:"show_quick_commands"`
+	QuickCommands      []QuickCommand      `json:"quick_commands"`
+	QuickCommandGroups []QuickCommandGroup `json:"quick_command_groups"`
+	ShowQuickCommands  bool                `json:"show_quick_commands"`
 }
 
 type QuickCommand struct {
 	ID      string `json:"id"`
 	Label   string `json:"label"`
 	Command string `json:"command"`
+}
+
+type QuickCommandGroup struct {
+	ID       string         `json:"id"`
+	Name     string         `json:"name"`
+	Commands []QuickCommand `json:"commands"`
 }
 
 func DefaultSettings() Settings {
@@ -70,8 +77,9 @@ func DefaultSettings() Settings {
 		Ligatures:         true,
 		DefaultAuth:       "key",
 		StrictHostKey:     true,
-		KnownHostsPath:    "",
-		QuickCommands:     []QuickCommand{},
-		ShowQuickCommands: true,
+		KnownHostsPath:     "",
+		QuickCommands:      []QuickCommand{},
+		QuickCommandGroups: []QuickCommandGroup{},
+		ShowQuickCommands:  true,
 	}
 }

@@ -4,39 +4,23 @@ import { showToast } from './toast.js';
 let settingsRef = {};
 let getActiveConn = () => null;
 let scrollResizeObserver = null;
+let currentGroupIndex = 0;
 
-// Built-in, position-based shortcuts: Ctrl+1..9 (same on every platform) trigger
-// the 1st..9th quick command in the list. Plain Ctrl+digit (no Shift/Alt/Meta)
-// isn't claimed by readline/shell control characters (those are Ctrl+letter) or
-// by this app's other shortcuts (Cmd/Alt+1..9 for tab-switching, Ctrl+Shift+C/V
-// for copy/paste), and sidesteps Cmd/Alt+Shift+digit combos which on some
-// keyboards/macOS setups got reported with a mangled digit and a phantom
-// Ctrl modifier (likely interference from another app or keyboard rollover).
+// Built-in, position-based shortcuts: Ctrl+1..9 trigger the 1st..9th quick
+// command in the currently displayed group. Same physical-key logic as before.
 export function shortcutLabelForIndex(idx) {
   return 'Ctrl+' + (idx + 1);
 }
 
 function shortcutIndexFromEvent(e) {
   if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return -1;
-  // Use e.code (physical key, e.g. "Digit1"), not e.key, so this is unaffected
-  // by keyboard layout or any modifier-driven symbol shifting.
   const m = /^Digit([1-9])$/.exec(e.code || '');
   if (!m) return -1;
   return Number(m[1]) - 1;
 }
 
-// "\n"/"\r" both submit the current line — canonical-mode PTYs and shell
-// readline alike treat LF/CR as "accept line", matching the echo -e/printf
-// convention for "\n". Deliberately NOT mapping "\t"/"\e" to raw bytes:
-// verified empirically that an interactive shell's readline intercepts a
-// literal Tab to trigger completion (silently dropping it, and sometimes
-// mangling the rest of the line) and a literal ESC to start a Meta-key
-// combo with whatever character follows it (e.g. ESC+w deletes a word) —
-// neither behaves like "insert this character". Power users who really
-// want a raw Tab/ESC byte despite that caveat can still reach for \x09 /
-// \x1b explicitly. Unknown "\X" sequences are left untouched, backslash
-// included, so things like Windows paths or shell metachars ("\$", "\ ")
-// typed into a command aren't mangled.
+// "\n"/"\r" submit the current line. See original file for full rationale on
+// why \t/\e are deliberately not mapped and \xHH is the escape hatch.
 function unescapeCommand(text) {
   return text.replace(/\\(x[0-9a-fA-F]{2}|.)/g, (match, esc) => {
     if (esc.length === 3 && esc[0] === 'x') {
@@ -59,12 +43,34 @@ async function runQuickCommand(connID, cmd) {
   }
 }
 
+// Resolve the effective groups array.
+// Supports new quick_command_groups format and falls back to legacy
+// quick_commands (flat list treated as a single "Default" group).
+function getGroups() {
+  if (Array.isArray(settingsRef.quick_command_groups) && settingsRef.quick_command_groups.length > 0) {
+    return settingsRef.quick_command_groups;
+  }
+  const cmds = Array.isArray(settingsRef.quick_commands)
+    ? settingsRef.quick_commands.filter(c => c && c.command)
+    : [];
+  if (cmds.length === 0) return [];
+  return [{ id: 'default', name: 'Default', commands: cmds }];
+}
+
+function getCurrentGroup() {
+  const groups = getGroups();
+  if (groups.length === 0) return null;
+  return groups[Math.min(currentGroupIndex, groups.length - 1)];
+}
+
 // Synchronous lookup so terminal.js can check "does this keystroke belong to a
 // quick command" before deciding whether to forward it to the PTY as raw input.
 export function findQuickCommandByShortcut(e) {
   const idx = shortcutIndexFromEvent(e);
   if (idx < 0 || !getActiveConn()) return null;
-  const commands = Array.isArray(settingsRef.quick_commands) ? settingsRef.quick_commands.filter(c => c && c.command) : [];
+  const group = getCurrentGroup();
+  if (!group) return null;
+  const commands = (group.commands || []).filter(c => c && c.command);
   return commands[idx] || null;
 }
 
@@ -81,12 +87,14 @@ export function triggerQuickCommandShortcut(e) {
 export function initQuickCommands(settings, activeConnGetter) {
   settingsRef = settings || {};
   getActiveConn = activeConnGetter || getActiveConn;
+  currentGroupIndex = 0;
   renderQuickCommands();
   updateQuickCommandUI();
 }
 
 export function setQuickCommandSettings(settings) {
   settingsRef = settings || {};
+  currentGroupIndex = 0;
   renderQuickCommands();
   updateQuickCommandUI();
 }
@@ -115,11 +123,9 @@ function renderQuickCommands() {
   const bar = document.getElementById('quick-command-bar');
   if (!bar) return;
 
-  const commands = Array.isArray(settingsRef.quick_commands)
-    ? settingsRef.quick_commands.filter(c => c && c.command)
-    : [];
+  const groups = getGroups();
 
-  if (commands.length === 0) {
+  if (groups.length === 0) {
     bar.innerHTML = `
       <div class="quick-command-empty">No quick commands</div>
       <button class="quick-command-settings" type="button">Open Settings</button>`;
@@ -129,7 +135,19 @@ function renderQuickCommands() {
     return;
   }
 
+  currentGroupIndex = Math.min(currentGroupIndex, groups.length - 1);
+  const group = groups[currentGroupIndex];
+  const commands = (group.commands || []).filter(c => c && c.command);
+  const multiGroup = groups.length > 1;
+
   bar.innerHTML = `
+    ${multiGroup ? `
+    <div class="qc-group-nav">
+      <button class="qc-group-nav-btn qc-group-up" type="button" aria-label="Previous group" ${currentGroupIndex === 0 ? 'disabled' : ''}>▲</button>
+      <button class="qc-group-nav-btn qc-group-down" type="button" aria-label="Next group" ${currentGroupIndex >= groups.length - 1 ? 'disabled' : ''}>▼</button>
+    </div>
+    <div class="qc-bar-group-label">${escHtml(group.name || 'Group')}</div>
+    ` : ''}
     <button class="quick-command-scroll qc-scroll-left" type="button" aria-label="Scroll left">‹</button>
     <div class="quick-command-list">
       ${commands.map((cmd, i) => `
@@ -149,14 +167,21 @@ function renderQuickCommands() {
     });
   });
 
+  if (multiGroup) {
+    bar.querySelector('.qc-group-up')?.addEventListener('click', () => {
+      if (currentGroupIndex > 0) { currentGroupIndex--; renderQuickCommands(); }
+    });
+    bar.querySelector('.qc-group-down')?.addEventListener('click', () => {
+      if (currentGroupIndex < groups.length - 1) { currentGroupIndex++; renderQuickCommands(); }
+    });
+  }
+
   setupScrollControls(bar);
 }
 
-// Quick commands render as a single non-wrapping row (the bar's height must
-// stay fixed so it doesn't eat into the terminal area). When there are more
-// commands than fit, expose left/right buttons and let a plain vertical
-// mouse wheel scroll the row horizontally — a trackpad can already swipe
-// sideways, but a normal wheel can't without this.
+// Quick commands render as a single non-wrapping row. When there are more
+// commands than fit, expose left/right scroll buttons and let a vertical
+// mouse wheel scroll horizontally.
 function setupScrollControls(bar) {
   const list = bar.querySelector('.quick-command-list');
   const leftBtn = bar.querySelector('.qc-scroll-left');

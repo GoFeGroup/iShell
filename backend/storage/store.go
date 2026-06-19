@@ -253,6 +253,9 @@ func (s *Store) LoadSettings() (*Settings, error) {
 	if st.QuickCommands == nil {
 		st.QuickCommands = []QuickCommand{}
 	}
+	if st.QuickCommandGroups == nil {
+		st.QuickCommandGroups = []QuickCommandGroup{}
+	}
 	return &st, nil
 }
 

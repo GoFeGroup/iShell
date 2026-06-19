@@ -7,7 +7,7 @@ export async function initSettings(initialPage = 'appearance') {
   const settings = await getSettings().catch(() => ({}));
   const kh = await getKnownHosts().catch(() => []);
   const fontSize = settings.font_size || 16;
-  let quickCommands = normalizeQuickCommands(settings.quick_commands);
+  let quickCommandGroups = normalizeQuickCommandGroups(settings);
 
   const isMac = navigator.platform.startsWith('Mac');
   const mod = isMac ? '⌘' : 'Ctrl';
@@ -122,10 +122,10 @@ export async function initSettings(initialPage = 'appearance') {
         </div>
       </div>
       <div class="settings-section">
-        <div class="settings-section-title">Commands</div>
+        <div class="settings-section-title">Groups</div>
         <div class="settings-row-desc">Use \\n or \\r to submit the line, \\\\ for a literal backslash, \\xHH for a raw byte (e.g. \\x03 = Ctrl+C). Avoid \\t/\\x1b — shells usually intercept Tab/Esc instead of inserting them.</div>
-        <div class="quick-command-editor" id="qc-editor"></div>
-        <button class="btn btn-secondary btn-sm" id="qc-add" type="button">+ Add Command</button>
+        <div id="qc-editor"></div>
+        <button class="btn btn-secondary btn-sm" id="qc-add-group" type="button">+ Add Group</button>
       </div>
     </div>
 
@@ -194,11 +194,11 @@ export async function initSettings(initialPage = 'appearance') {
     t.addEventListener('click', () => t.classList.toggle('on'));
   });
 
-  renderQuickCommandEditor();
-  document.getElementById('qc-add')?.addEventListener('click', () => {
-    collectQuickCommands({ keepBlank: true });
-    quickCommands.push({ id: makeID(), label: '', command: '' });
-    renderQuickCommandEditor();
+  renderGroupsEditor();
+  document.getElementById('qc-add-group')?.addEventListener('click', () => {
+    collectQuickCommandGroups({ keepBlank: true });
+    quickCommandGroups.push({ id: makeGroupID(), name: 'New Group', commands: [] });
+    renderGroupsEditor();
   });
 
   // Theme apply preview
@@ -232,7 +232,8 @@ export async function initSettings(initialPage = 'appearance') {
       scrollback: parseInt(document.getElementById('st-scrollback')?.value) || settings.scrollback,
       strict_host_key: document.getElementById('st-strict')?.classList.contains('on'),
       known_hosts_path: document.getElementById('st-khpath')?.value || '',
-      quick_commands: collectQuickCommands(),
+      quick_commands: [],
+      quick_command_groups: collectQuickCommandGroups(),
       show_quick_commands: document.getElementById('st-show-qc')?.classList.contains('on'),
     };
     try {
@@ -251,71 +252,133 @@ export async function initSettings(initialPage = 'appearance') {
     panel.querySelector('#sp-' + safePage)?.classList.add('active');
   }
 
-  function renderQuickCommandEditor() {
+  function renderGroupsEditor() {
     const editor = document.getElementById('qc-editor');
     if (!editor) return;
-    if (quickCommands.length === 0) {
-      editor.innerHTML = '<div class="qc-empty">No quick commands yet.</div>';
+    if (quickCommandGroups.length === 0) {
+      editor.innerHTML = '<div class="qc-empty" style="margin-bottom:8px;">No groups yet. Add a group to get started.</div>';
       return;
     }
-    editor.innerHTML = quickCommands.map((cmd, idx) => `
-      <div class="qc-row" data-id="${esc(cmd.id)}">
-        <div class="qc-row-fields">
-          <input class="input qc-label" value="${esc(cmd.label)}" placeholder="Label" />
-          <textarea class="input qc-command" rows="1" wrap="off" placeholder="Command">${escText(cmd.command)}</textarea>
+    editor.innerHTML = quickCommandGroups.map((group, gi) => `
+      <div class="qc-group" data-group-id="${esc(group.id)}">
+        <div class="qc-group-header">
+          <input class="input qc-group-name" value="${esc(group.name)}" placeholder="Group name" />
+          <div class="qc-group-header-actions">
+            <button class="btn btn-ghost btn-icon btn-sm qc-group-up" type="button" title="Move group up" ${gi === 0 ? 'disabled' : ''}>▲</button>
+            <button class="btn btn-ghost btn-icon btn-sm qc-group-down" type="button" title="Move group down" ${gi === quickCommandGroups.length - 1 ? 'disabled' : ''}>▼</button>
+            <button class="btn btn-danger btn-icon btn-sm qc-group-delete" type="button" title="Delete group">✕</button>
+          </div>
         </div>
-        ${idx < 9 ? `<div class="qc-row-shortcut" title="Built-in shortcut">${esc(shortcutLabelForIndex(idx))}</div>` : ''}
-        <div class="qc-row-actions">
-          <button class="btn btn-ghost btn-icon btn-sm qc-up" type="button" title="Move up" ${idx === 0 ? 'disabled' : ''}>▲</button>
-          <button class="btn btn-ghost btn-icon btn-sm qc-down" type="button" title="Move down" ${idx === quickCommands.length - 1 ? 'disabled' : ''}>▼</button>
-          <button class="btn btn-danger btn-icon btn-sm qc-delete" type="button" title="Delete">✕</button>
+        <div class="qc-group-commands">
+          ${group.commands.length === 0
+            ? '<div class="qc-empty">No commands in this group.</div>'
+            : group.commands.map((cmd, ci) => `
+              <div class="qc-row" data-id="${esc(cmd.id)}">
+                <div class="qc-row-fields">
+                  <input class="input qc-label" value="${esc(cmd.label)}" placeholder="Label" />
+                  <textarea class="input qc-command" rows="1" wrap="off" placeholder="Command">${escText(cmd.command)}</textarea>
+                </div>
+                ${ci < 9 ? `<div class="qc-row-shortcut" title="Built-in shortcut">${esc(shortcutLabelForIndex(ci))}</div>` : ''}
+                <div class="qc-row-actions">
+                  <button class="btn btn-ghost btn-icon btn-sm qc-up" type="button" title="Move up" ${ci === 0 ? 'disabled' : ''}>▲</button>
+                  <button class="btn btn-ghost btn-icon btn-sm qc-down" type="button" title="Move down" ${ci === group.commands.length - 1 ? 'disabled' : ''}>▼</button>
+                  <button class="btn btn-danger btn-icon btn-sm qc-delete" type="button" title="Delete">✕</button>
+                </div>
+              </div>`).join('')}
+        </div>
+        <div class="qc-group-footer">
+          <button class="btn btn-secondary btn-sm qc-add-cmd" type="button">+ Add Command</button>
         </div>
       </div>
     `).join('');
 
-    editor.querySelectorAll('.qc-row').forEach(row => {
-      row.querySelector('.qc-up')?.addEventListener('click', () => moveQuickCommand(row.dataset.id, -1));
-      row.querySelector('.qc-down')?.addEventListener('click', () => moveQuickCommand(row.dataset.id, 1));
-      row.querySelector('.qc-delete')?.addEventListener('click', () => {
-        collectQuickCommands({ keepBlank: true });
-        quickCommands = quickCommands.filter(c => c.id !== row.dataset.id);
-        renderQuickCommandEditor();
+    editor.querySelectorAll('.qc-group').forEach(groupEl => {
+      const groupId = groupEl.dataset.groupId;
+
+      groupEl.querySelector('.qc-group-up')?.addEventListener('click', () => moveGroup(groupId, -1));
+      groupEl.querySelector('.qc-group-down')?.addEventListener('click', () => moveGroup(groupId, 1));
+      groupEl.querySelector('.qc-group-delete')?.addEventListener('click', () => {
+        if (!confirm('Delete this group and all its commands?')) return;
+        collectQuickCommandGroups({ keepBlank: true });
+        quickCommandGroups = quickCommandGroups.filter(g => g.id !== groupId);
+        renderGroupsEditor();
+      });
+      groupEl.querySelector('.qc-add-cmd')?.addEventListener('click', () => {
+        collectQuickCommandGroups({ keepBlank: true });
+        const g = quickCommandGroups.find(g => g.id === groupId);
+        if (g) g.commands.push({ id: makeID(), label: '', command: '' });
+        renderGroupsEditor();
+      });
+      groupEl.querySelectorAll('.qc-row').forEach(row => {
+        row.querySelector('.qc-up')?.addEventListener('click', () => moveCommandInGroup(groupId, row.dataset.id, -1));
+        row.querySelector('.qc-down')?.addEventListener('click', () => moveCommandInGroup(groupId, row.dataset.id, 1));
+        row.querySelector('.qc-delete')?.addEventListener('click', () => {
+          collectQuickCommandGroups({ keepBlank: true });
+          const g = quickCommandGroups.find(g => g.id === groupId);
+          if (g) g.commands = g.commands.filter(c => c.id !== row.dataset.id);
+          renderGroupsEditor();
+        });
       });
     });
   }
 
-  function moveQuickCommand(id, delta) {
-    collectQuickCommands({ keepBlank: true });
-    const idx = quickCommands.findIndex(c => c.id === id);
+  function moveGroup(id, delta) {
+    collectQuickCommandGroups({ keepBlank: true });
+    const idx = quickCommandGroups.findIndex(g => g.id === id);
     const next = idx + delta;
-    if (idx < 0 || next < 0 || next >= quickCommands.length) return;
-    [quickCommands[idx], quickCommands[next]] = [quickCommands[next], quickCommands[idx]];
-    renderQuickCommandEditor();
+    if (idx < 0 || next < 0 || next >= quickCommandGroups.length) return;
+    [quickCommandGroups[idx], quickCommandGroups[next]] = [quickCommandGroups[next], quickCommandGroups[idx]];
+    renderGroupsEditor();
   }
 
-  function collectQuickCommands(options = {}) {
-    const rows = Array.from(document.querySelectorAll('#qc-editor .qc-row'));
-    if (rows.length > 0) {
-      quickCommands = rows.map(row => ({
-        id: row.dataset.id || makeID(),
-        label: row.querySelector('.qc-label')?.value.trim() || '',
-        command: row.querySelector('.qc-command')?.value || '',
-      }));
+  function moveCommandInGroup(groupId, cmdId, delta) {
+    collectQuickCommandGroups({ keepBlank: true });
+    const g = quickCommandGroups.find(g => g.id === groupId);
+    if (!g) return;
+    const idx = g.commands.findIndex(c => c.id === cmdId);
+    const next = idx + delta;
+    if (idx < 0 || next < 0 || next >= g.commands.length) return;
+    [g.commands[idx], g.commands[next]] = [g.commands[next], g.commands[idx]];
+    renderGroupsEditor();
+  }
+
+  function collectQuickCommandGroups(options = {}) {
+    const groupEls = Array.from(document.querySelectorAll('#qc-editor .qc-group'));
+    if (groupEls.length > 0) {
+      quickCommandGroups = groupEls.map(groupEl => {
+        const rows = Array.from(groupEl.querySelectorAll('.qc-row'));
+        return {
+          id: groupEl.dataset.groupId || makeGroupID(),
+          name: groupEl.querySelector('.qc-group-name')?.value.trim() || '',
+          commands: rows.map(row => ({
+            id: row.dataset.id || makeID(),
+            label: row.querySelector('.qc-label')?.value.trim() || '',
+            command: row.querySelector('.qc-command')?.value || '',
+          })),
+        };
+      });
     }
-    if (options.keepBlank) return quickCommands;
-    return quickCommands
-      .map(c => ({
-        id: c.id || makeID(),
-        label: c.label || firstCommandLine(c.command),
-        command: c.command,
-      }))
-      .filter(c => c.command.trim() !== '');
+    if (options.keepBlank) return quickCommandGroups;
+    return quickCommandGroups
+      .filter(g => g.name || g.commands.some(c => c.command.trim()))
+      .map(g => ({
+        id: g.id || makeGroupID(),
+        name: g.name || 'Group',
+        commands: g.commands
+          .filter(c => c.command.trim() !== '')
+          .map(c => ({
+            id: c.id || makeID(),
+            label: c.label || firstCommandLine(c.command),
+            command: c.command,
+          })),
+      }));
   }
 }
 
 function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function escText(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
 function makeID() { return 'qc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
+function makeGroupID() { return 'grp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
 function firstCommandLine(s) {
   const real = (s || '').split(/\r?\n/).find(line => line.trim())?.trim() || '';
   if (!real) return 'Command';
@@ -328,4 +391,19 @@ function normalizeQuickCommands(commands) {
     label: c?.label || firstCommandLine(c?.command || ''),
     command: c?.command || '',
   })).filter(c => c.command || c.label);
+}
+function normalizeQuickCommandGroups(settings) {
+  if (Array.isArray(settings.quick_command_groups) && settings.quick_command_groups.length > 0) {
+    return settings.quick_command_groups.map(g => ({
+      id: g.id || makeGroupID(),
+      name: g.name || 'Group',
+      commands: normalizeQuickCommands(g.commands || []),
+    }));
+  }
+  // Migrate legacy flat quick_commands into a single "Default" group
+  const cmds = normalizeQuickCommands(settings.quick_commands || []);
+  if (cmds.length > 0) {
+    return [{ id: makeGroupID(), name: 'Default', commands: cmds }];
+  }
+  return [];
 }
