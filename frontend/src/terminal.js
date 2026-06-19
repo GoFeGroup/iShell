@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { sendInput, resizeTerm, on, off } from './api.js';
 import { findQuickCommandByShortcut } from './quick-command.js';
+import { createZmodemSentry } from './zmodem.js';
 
 const isMac = navigator.platform.startsWith('Mac');
 const instances = {};  // connID → { term, fitAddon, resizeObs, dataHandler, xtermEl }
@@ -283,6 +284,7 @@ export function createTerminal(connID, settings, options = {}) {
   resizeTerm(connID, term.cols, term.rows).catch(() => {});
 
   const flushInput = makeInputSender(connID);
+  let zmodemActive = false;
   let suppressPasteUntil = 0;
   let composing = false;
   let pendingComposition = null;
@@ -327,7 +329,13 @@ export function createTerminal(connID, settings, options = {}) {
   let onDataHandledChar = null;
 
   // IME-composed text (Chinese, Japanese, etc.) should arrive here after composition ends.
+  let zmodem; // assigned below after sentry is created
+
   const dataDisposable = term.onData(data => {
+    if (zmodemActive) {
+      if (data === '\x03') zmodem?.abort(); // Ctrl+C aborts a stuck Zmodem session
+      return;
+    }
     if (pendingComposition) {
       const nextSeenText = pendingComposition.seenText + data;
       if (pendingComposition.text.startsWith(nextSeenText)) {
@@ -382,7 +390,7 @@ export function createTerminal(connID, settings, options = {}) {
   // insertFromComposition) is left for xterm, so Chinese/Japanese input is
   // unaffected. Capture phase runs before xterm's own textarea listener.
   const beforeInputHandler = (e) => {
-    if (composing) return;
+    if (composing || zmodemActive) return;
     if (e.inputType === 'insertText' && e.data) {
       e.preventDefault();
       // onData already handled this char via xterm's keydown path; skip to
@@ -399,7 +407,7 @@ export function createTerminal(connID, settings, options = {}) {
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation?.();
-    if (Date.now() < suppressPasteUntil) {
+    if (zmodemActive || Date.now() < suppressPasteUntil) {
       return;
     }
     const text = e.clipboardData?.getData('text');
@@ -610,13 +618,10 @@ export function createTerminal(connID, settings, options = {}) {
   };
   xtermEl.addEventListener('contextmenu', contextMenuHandler);
 
-  const dataHandler = (b64) => {
-    try {
-      term.write(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
-    } catch (e) {
-      console.error('terminal data decode:', e);
-    }
-  };
+  zmodem = createZmodemSentry(connID, term, (active) => {
+    zmodemActive = active;
+  });
+  const dataHandler = (b64) => { zmodem.consume(b64); };
   on('terminal:data:' + connID, dataHandler);
 
   const resizeObs = new ResizeObserver(() => {

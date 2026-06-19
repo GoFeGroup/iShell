@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -507,4 +508,82 @@ func (a *App) OpenKeyFileDialog() (string, error) {
 		DefaultDirectory: filepath.Join(home, ".ssh"),
 	})
 	return path, err
+}
+
+// ── Zmodem ────────────────────────────────────────────────────────────────────
+
+// SendInputBytes sends raw binary data (base64-encoded) to the terminal session.
+// Used by the Zmodem protocol handler in the frontend.
+func (a *App) SendInputBytes(connID, b64data string) error {
+	data, err := base64.StdEncoding.DecodeString(b64data)
+	if err != nil {
+		return fmt.Errorf("base64 decode: %w", err)
+	}
+	if a.localMgr.Has(connID) {
+		return a.localMgr.SendInput(connID, data)
+	}
+	return a.sshMgr.SendInput(connID, data)
+}
+
+// ZmodemFile holds file metadata and base64-encoded content for Zmodem transfer.
+type ZmodemFile struct {
+	Name    string `json:"name"`
+	Size    int64  `json:"size"`
+	Content string `json:"content"` // base64-encoded
+}
+
+// OpenFilesForZmodem opens a file-picker dialog and returns the selected files
+// with their contents base64-encoded, for use with the rz (receive) Zmodem command.
+func (a *App) OpenFilesForZmodem() ([]ZmodemFile, error) {
+	paths, err := wailsRuntime.OpenMultipleFilesDialog(a.ctx, wailsRuntime.OpenDialogOptions{
+		Title: "Select files to send (rz)",
+	})
+	if err != nil || len(paths) == 0 {
+		return nil, err
+	}
+	var files []ZmodemFile
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		content, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		files = append(files, ZmodemFile{
+			Name:    filepath.Base(p),
+			Size:    info.Size(),
+			Content: base64.StdEncoding.EncodeToString(content),
+		})
+	}
+	return files, nil
+}
+
+// SaveZmodemFile saves a file received via Zmodem (sz) to the downloads directory.
+// Returns the full path of the saved file.
+func (a *App) SaveZmodemFile(filename, b64data string) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(b64data)
+	if err != nil {
+		return "", fmt.Errorf("base64 decode: %w", err)
+	}
+	dir := a.GetDownloadsDir()
+	base := filepath.Base(filepath.FromSlash(filename))
+	destPath := filepath.Join(dir, base)
+	// Avoid overwriting existing files by appending _N.
+	if _, err := os.Stat(destPath); err == nil {
+		ext := filepath.Ext(base)
+		stem := strings.TrimSuffix(base, ext)
+		for i := 1; i <= 999; i++ {
+			candidate := filepath.Join(dir, fmt.Sprintf("%s_%d%s", stem, i, ext))
+			if _, statErr := os.Stat(candidate); os.IsNotExist(statErr) {
+				destPath = candidate
+				break
+			}
+		}
+	}
+	if err := os.WriteFile(destPath, data, 0644); err != nil {
+		return "", fmt.Errorf("write file: %w", err)
+	}
+	return destPath, nil
 }
