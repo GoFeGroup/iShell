@@ -43,7 +43,7 @@ window.addEventListener('load', async () => {
   document.getElementById('btn-disconnect').addEventListener('click', () => hasTerminalConn(activeTab) && doDisconnect(activeTab.connID));
   document.getElementById('btn-sftp').addEventListener('click', toggleSFTP);
   document.getElementById('btn-quick-command').addEventListener('click', toggleQuickCommands);
-  document.getElementById('btn-settings').addEventListener('click', openSettingsPanel);
+  document.getElementById('btn-settings').addEventListener('click', () => openSettingsPanel());
   document.getElementById('btn-new-instance').addEventListener('click', openNewInstance);
   document.getElementById('btn-search-term').addEventListener('click', toggleFind);
   document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
