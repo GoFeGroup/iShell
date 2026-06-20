@@ -1,0 +1,120 @@
+package ai
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// sseBody joins raw SSE "data:" JSON payloads (one per chunk) terminated by
+// the standard "data: [DONE]" sentinel, mirroring how OpenAI-compatible
+// servers stream chat completions.
+func sseBody(chunks ...string) string {
+	var b strings.Builder
+	for _, c := range chunks {
+		b.WriteString("data: ")
+		b.WriteString(c)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("data: [DONE]\n\n")
+	return b.String()
+}
+
+func TestStreamChatCompletionDeltasAndDone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"content":"Hel"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"content":"lo"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		)))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "key", "model")
+	var got strings.Builder
+	var finish string
+	err := c.StreamChatCompletion(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, StreamHandler{
+		OnDelta: func(s string) { got.WriteString(s) },
+		OnDone:  func(fr string) { finish = fr },
+	})
+	if err != nil {
+		t.Fatalf("StreamChatCompletion: %v", err)
+	}
+	if got.String() != "Hello" {
+		t.Fatalf("got %q, want %q", got.String(), "Hello")
+	}
+	if finish != "stop" {
+		t.Fatalf("finish_reason = %q, want stop", finish)
+	}
+}
+
+func TestStreamChatCompletionReassemblesToolCallFragments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"terminal_run","arguments":""}}]},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\":"}}]},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ls\"}"}}]},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		)))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "key", "model")
+	var calls []ToolCall
+	err := c.StreamChatCompletion(context.Background(), nil, TerminalTools(), StreamHandler{
+		OnToolCall: func(tc []ToolCall) { calls = tc },
+	})
+	if err != nil {
+		t.Fatalf("StreamChatCompletion: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("got %d tool calls, want 1", len(calls))
+	}
+	if calls[0].ID != "call_1" || calls[0].Function.Name != "terminal_run" {
+		t.Fatalf("call = %+v, want id=call_1 name=terminal_run", calls[0])
+	}
+	if calls[0].Function.Arguments != `{"command":"ls"}` {
+		t.Fatalf("arguments = %q, want %q", calls[0].Function.Arguments, `{"command":"ls"}`)
+	}
+}
+
+func TestStreamChatCompletionNon2xxReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid api key"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "bad-key", "model")
+	err := c.StreamChatCompletion(context.Background(), nil, nil, StreamHandler{})
+	if err == nil || !strings.Contains(err.Error(), "401") {
+		t.Fatalf("err = %v, want mention of 401", err)
+	}
+}
+
+func TestStreamChatCompletionSkipsMalformedChunk(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sseBody(
+			`not valid json`,
+			`{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}`,
+		)))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "key", "model")
+	var got string
+	err := c.StreamChatCompletion(context.Background(), nil, nil, StreamHandler{
+		OnDelta: func(s string) { got += s },
+	})
+	if err != nil {
+		t.Fatalf("StreamChatCompletion: %v", err)
+	}
+	if got != "ok" {
+		t.Fatalf("got %q, want %q", got, "ok")
+	}
+}
