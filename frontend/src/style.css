@@ -90,6 +90,16 @@ body{font-family:var(--font-ui);font-size:14px;color:var(--text-primary);line-he
 /* Form */
 .input,select{width:100%;padding:7px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:var(--font-ui);font-size:14px;outline:none;transition:border-color .15s,box-shadow .15s;}
 .input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-dim);}
+select.input{
+  background-color:var(--bg-elevated);
+  appearance:none;-webkit-appearance:none;-moz-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' stroke='%23A6ADC8' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;padding-right:30px;cursor:pointer;
+}
+select.input:hover{border-color:var(--accent);}
+[data-theme="light"] select.input{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' stroke='%235C5F77' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
 select option{background:var(--bg-elevated);color:var(--text-primary);}
 .input::placeholder{color:var(--text-muted);}
 .form-label{display:block;font-size:12px;font-weight:500;color:var(--text-secondary);margin-bottom:4px;}

@@ -12,6 +12,11 @@ export async function initSettings(initialPage = 'appearance') {
   const languagePref = getLanguagePref();
   let quickCommandGroups = normalizeQuickCommandGroups(settings);
 
+  // Live, mutable view of the persisted settings. Every control updates this
+  // object and immediately persists it — there is no separate Save/Discard
+  // step, so what's on screen always matches what's stored.
+  const current = { ...settings, language: languagePref };
+
   const isMac = navigator.platform.startsWith('Mac');
   const mod = isMac ? '⌘' : 'Ctrl';
   const alt = isMac ? '⌘' : 'Alt';
@@ -221,21 +226,84 @@ export async function initSettings(initialPage = 'appearance') {
   });
   activatePage(initialPage);
 
-  // Toggle switches
-  panel.querySelectorAll('.toggle-switch').forEach(el => {
-    el.addEventListener('click', () => el.classList.toggle('on'));
+  // ── Live persistence ──────────────────────────────────────────────────────
+  // Every control below updates `current` and persists it immediately —
+  // there is no Save/Discard step.
+  async function persist() {
+    try {
+      await saveSettings(current);
+      window.dispatchEvent(new CustomEvent('ishell:settingsSaved', { detail: { settings: current } }));
+    } catch (e) {
+      showToast('❌ ' + e);
+    }
+  }
+  function debounce(fn, ms) {
+    let timer;
+    return (...args) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), ms);
+    };
+  }
+  const persistDebounced = debounce(persist, 500);
+
+  document.getElementById('st-theme')?.addEventListener('change', e => {
+    current.theme = e.target.value;
+    document.documentElement.setAttribute('data-theme', current.theme);
+    localStorage.setItem('theme', current.theme);
+    persist();
   });
+  document.getElementById('st-font')?.addEventListener('change', e => {
+    current.font_family = e.target.value;
+    persist();
+  });
+  document.getElementById('st-fontsize')?.addEventListener('change', e => {
+    current.font_size = parseInt(e.target.value) || current.font_size;
+    persist();
+  });
+  document.getElementById('st-language')?.addEventListener('change', async e => {
+    const newPref = e.target.value;
+    current.language = newPref;
+    setLanguage(newPref);
+    await persist();
+    initSettings(panel.querySelector('.nav-pill.active')?.dataset.page || 'appearance');
+  });
+  document.getElementById('st-cursor')?.addEventListener('change', e => {
+    current.cursor_style = e.target.value;
+    persist();
+  });
+  bindToggle('st-blink', on => { current.cursor_blink = on; persist(); });
+  document.getElementById('st-scrollback')?.addEventListener('change', e => {
+    current.scrollback = parseInt(e.target.value) || current.scrollback;
+    persist();
+  });
+  bindToggle('st-strict', on => { current.strict_host_key = on; persist(); });
+  document.getElementById('st-khpath')?.addEventListener('input', e => {
+    current.known_hosts_path = e.target.value || '';
+    persistDebounced();
+  });
+  bindToggle('st-show-qc', on => { current.show_quick_commands = on; persist(); });
+
+  function bindToggle(id, onChange) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('click', () => {
+      el.classList.toggle('on');
+      onChange(el.classList.contains('on'));
+    });
+  }
+
+  function persistQuickCommands() {
+    current.quick_command_groups = collectQuickCommandGroups();
+    current.quick_commands = [];
+    persist();
+  }
 
   renderGroupsEditor();
   document.getElementById('qc-add-group')?.addEventListener('click', () => {
     collectQuickCommandGroups({ keepBlank: true });
     quickCommandGroups.push({ id: makeGroupID(), name: t('settings.quickCommands.newGroupName'), commands: [] });
     renderGroupsEditor();
-  });
-
-  // Theme apply preview
-  document.getElementById('st-theme')?.addEventListener('change', e => {
-    document.documentElement.setAttribute('data-theme', e.target.value);
+    persistQuickCommands();
   });
 
   // Known host removal
@@ -267,45 +335,6 @@ export async function initSettings(initialPage = 'appearance') {
       }
       initSettings('backup');
     } catch (e) { showToast('❌ ' + e); }
-  });
-
-  // Save button (footer)
-  const footer = document.createElement('div');
-  footer.style.cssText = 'padding:12px 32px;border-top:1px solid var(--border-subtle);display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;';
-  footer.innerHTML = `<button class="btn btn-secondary" id="st-discard">${t('common.discard')}</button><button class="btn btn-primary" id="st-save">${t('settings.saveSettings')}</button>`;
-  panel.appendChild(footer);
-
-  document.getElementById('st-discard').addEventListener('click', () => {
-    window.dispatchEvent(new CustomEvent('ishell:closeSettings'));
-  });
-  document.getElementById('st-save').addEventListener('click', async () => {
-    const activePage = panel.querySelector('.nav-pill.active')?.dataset.page || 'appearance';
-    const newLanguagePref = document.getElementById('st-language')?.value || languagePref;
-    const updated = {
-      ...settings,
-      theme: document.getElementById('st-theme')?.value || settings.theme,
-      font_family: document.getElementById('st-font')?.value || settings.font_family,
-      font_size: parseInt(document.getElementById('st-fontsize')?.value) || settings.font_size,
-      cursor_style: document.getElementById('st-cursor')?.value || settings.cursor_style,
-      cursor_blink: document.getElementById('st-blink')?.classList.contains('on'),
-      scrollback: parseInt(document.getElementById('st-scrollback')?.value) || settings.scrollback,
-      strict_host_key: document.getElementById('st-strict')?.classList.contains('on'),
-      known_hosts_path: document.getElementById('st-khpath')?.value || '',
-      quick_commands: [],
-      quick_command_groups: collectQuickCommandGroups(),
-      show_quick_commands: document.getElementById('st-show-qc')?.classList.contains('on'),
-      language: newLanguagePref,
-    };
-    try {
-      await saveSettings(updated);
-      localStorage.setItem('theme', updated.theme);
-      const languageChanged = newLanguagePref !== languagePref;
-      if (languageChanged) setLanguage(newLanguagePref);
-      window.dispatchEvent(new CustomEvent('ishell:settingsSaved', { detail: { settings: updated } }));
-      showToast(t('toast.settingsSaved'));
-      document.documentElement.setAttribute('data-theme', updated.theme);
-      if (languageChanged) initSettings(activePage);
-    } catch(e) { showToast('❌ ' + e); }
   });
 
   function activatePage(page) {
@@ -365,6 +394,7 @@ export async function initSettings(initialPage = 'appearance') {
         collectQuickCommandGroups({ keepBlank: true });
         quickCommandGroups = quickCommandGroups.filter(g => g.id !== groupId);
         renderGroupsEditor();
+        persistQuickCommands();
       });
       groupEl.querySelector('.qc-add-cmd')?.addEventListener('click', () => {
         collectQuickCommandGroups({ keepBlank: true });
@@ -372,6 +402,7 @@ export async function initSettings(initialPage = 'appearance') {
         if (g) g.commands.push({ id: makeID(), label: '', command: '' });
         renderGroupsEditor();
       });
+      groupEl.querySelector('.qc-group-name')?.addEventListener('blur', () => persistQuickCommands());
       groupEl.querySelectorAll('.qc-row').forEach(row => {
         row.querySelector('.qc-up')?.addEventListener('click', () => moveCommandInGroup(groupId, row.dataset.id, -1));
         row.querySelector('.qc-down')?.addEventListener('click', () => moveCommandInGroup(groupId, row.dataset.id, 1));
@@ -380,7 +411,10 @@ export async function initSettings(initialPage = 'appearance') {
           const g = quickCommandGroups.find(g => g.id === groupId);
           if (g) g.commands = g.commands.filter(c => c.id !== row.dataset.id);
           renderGroupsEditor();
+          persistQuickCommands();
         });
+        row.querySelector('.qc-label')?.addEventListener('blur', () => persistQuickCommands());
+        row.querySelector('.qc-command')?.addEventListener('blur', () => persistQuickCommands());
       });
     });
   }
@@ -392,6 +426,7 @@ export async function initSettings(initialPage = 'appearance') {
     if (idx < 0 || next < 0 || next >= quickCommandGroups.length) return;
     [quickCommandGroups[idx], quickCommandGroups[next]] = [quickCommandGroups[next], quickCommandGroups[idx]];
     renderGroupsEditor();
+    persistQuickCommands();
   }
 
   function moveCommandInGroup(groupId, cmdId, delta) {
@@ -403,6 +438,7 @@ export async function initSettings(initialPage = 'appearance') {
     if (idx < 0 || next < 0 || next >= g.commands.length) return;
     [g.commands[idx], g.commands[next]] = [g.commands[next], g.commands[idx]];
     renderGroupsEditor();
+    persistQuickCommands();
   }
 
   function collectQuickCommandGroups(options = {}) {
