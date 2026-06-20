@@ -96,6 +96,87 @@ func TestEmitterConcurrentWritePreservesAllBytes(t *testing.T) {
 	}
 }
 
+func TestEmitterSnapshotSmallerThanCapacity(t *testing.T) {
+	var out []byte
+	var mu sync.Mutex
+	e := newTestEmitter(&out, &mu)
+
+	e.Write([]byte("hello "))
+	e.Write([]byte("world"))
+
+	data, offset := e.Snapshot()
+	if string(data) != "hello world" {
+		t.Fatalf("snapshot = %q, want %q", data, "hello world")
+	}
+	if offset != int64(len("hello world")) {
+		t.Fatalf("offset = %d, want %d", offset, len("hello world"))
+	}
+	e.Close()
+}
+
+func TestEmitterSnapshotWrapsAroundCapacity(t *testing.T) {
+	var out []byte
+	var mu sync.Mutex
+	e := newTestEmitter(&out, &mu)
+
+	// Write more than ringCapacity total, in chunks, so the ring wraps.
+	chunk := make([]byte, 1024)
+	total := 0
+	for total < ringCapacity+4096 {
+		for i := range chunk {
+			chunk[i] = byte((total + i) % 256)
+		}
+		e.Write(chunk)
+		total += len(chunk)
+	}
+
+	data, offset := e.Snapshot()
+	if len(data) != ringCapacity {
+		t.Fatalf("snapshot len = %d, want %d (ring should be full)", len(data), ringCapacity)
+	}
+	if offset != int64(total) {
+		t.Fatalf("offset = %d, want %d", offset, total)
+	}
+	// The snapshot must be the *last* ringCapacity bytes written, in order.
+	wantFirstByte := byte((total - ringCapacity) % 256)
+	if data[0] != wantFirstByte {
+		t.Fatalf("snapshot[0] = %d, want %d (oldest retained byte)", data[0], wantFirstByte)
+	}
+	e.Close()
+}
+
+func TestEmitterSinceReturnsOnlyNewBytes(t *testing.T) {
+	var out []byte
+	var mu sync.Mutex
+	e := newTestEmitter(&out, &mu)
+
+	e.Write([]byte("abc"))
+	_, offset := e.Snapshot()
+	e.Write([]byte("def"))
+
+	got := e.Since(offset)
+	if string(got) != "def" {
+		t.Fatalf("Since = %q, want %q", got, "def")
+	}
+	e.Close()
+}
+
+func TestEmitterSinceBeforeRetentionReturnsBestEffort(t *testing.T) {
+	var out []byte
+	var mu sync.Mutex
+	e := newTestEmitter(&out, &mu)
+
+	e.Write([]byte("abc"))
+	chunk := make([]byte, ringCapacity)
+	e.Write(chunk) // pushes "abc" out of the ring entirely
+
+	got := e.Since(0) // offset 0 predates everything still retained
+	if len(got) != ringCapacity {
+		t.Fatalf("Since(0) len = %d, want %d (best-effort full ring)", len(got), ringCapacity)
+	}
+	e.Close()
+}
+
 func TestEmitterClosedDropsWrites(t *testing.T) {
 	var out []byte
 	var mu sync.Mutex

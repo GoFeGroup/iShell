@@ -26,6 +26,8 @@ import (
 const (
 	flushDelay = 4 * time.Millisecond // max time to accumulate after the first byte
 	maxBuf     = 16 * 1024            // flush immediately once buffered bytes reach this
+
+	ringCapacity = 64 * 1024 // bytes of raw output retained for AI tool-call reads
 )
 
 // emit is the sink for a flushed (base64-encoded) chunk. Overridable in tests.
@@ -41,6 +43,13 @@ type Emitter struct {
 	buf    []byte
 	timer  *time.Timer
 	closed bool
+
+	// Bounded ring buffer of raw output, independent of the coalesce/flush
+	// path above — read by AI tool calls (Snapshot/Since) to see what a
+	// terminal_run command produced, without affecting the frontend stream.
+	ring      []byte
+	ringHead  int   // next write position within ring, wraps at ringCapacity
+	ringTotal int64 // monotonic count of all bytes ever written to the ring
 }
 
 // New returns an Emitter that emits "terminal:data:<connID>" events on ctx.
@@ -65,6 +74,7 @@ func (e *Emitter) Write(p []byte) {
 	if e.closed {
 		return
 	}
+	e.writeRingLocked(p)
 	e.buf = append(e.buf, p...)
 	if len(e.buf) >= maxBuf {
 		e.flushLocked()
@@ -73,6 +83,77 @@ func (e *Emitter) Write(p []byte) {
 	if e.timer == nil {
 		e.timer = time.AfterFunc(flushDelay, e.flushTimer)
 	}
+}
+
+// writeRingLocked copies p into the ring buffer, wrapping as needed. Caller
+// holds e.mu.
+func (e *Emitter) writeRingLocked(p []byte) {
+	if e.ring == nil {
+		e.ring = make([]byte, ringCapacity)
+	}
+	n := len(p)
+	if n >= ringCapacity {
+		copy(e.ring, p[n-ringCapacity:])
+		e.ringHead = 0
+		e.ringTotal += int64(n)
+		return
+	}
+	end := e.ringHead + n
+	if end <= ringCapacity {
+		copy(e.ring[e.ringHead:end], p)
+		e.ringHead = end % ringCapacity
+	} else {
+		firstPart := ringCapacity - e.ringHead
+		copy(e.ring[e.ringHead:], p[:firstPart])
+		copy(e.ring[:n-firstPart], p[firstPart:])
+		e.ringHead = n - firstPart
+	}
+	e.ringTotal += int64(n)
+}
+
+// Snapshot returns the current ring buffer contents (oldest-to-newest, up to
+// ringCapacity bytes) and the monotonic offset just past the last byte
+// returned. Pass that offset to Since() later to fetch only what arrived
+// after this snapshot.
+func (e *Emitter) Snapshot() ([]byte, int64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.snapshotLocked(), e.ringTotal
+}
+
+func (e *Emitter) snapshotLocked() []byte {
+	if e.ringTotal == 0 {
+		return nil
+	}
+	size := min(e.ringTotal, int64(ringCapacity))
+	out := make([]byte, size)
+	if e.ringTotal <= int64(ringCapacity) {
+		copy(out, e.ring[:size])
+		return out
+	}
+	copy(out, e.ring[e.ringHead:])
+	copy(out[ringCapacity-e.ringHead:], e.ring[:e.ringHead])
+	return out
+}
+
+// Since returns bytes written after the given offset. It is best-effort: if
+// offset is older than what the ring buffer still holds, it returns the
+// oldest data still available rather than erroring.
+func (e *Emitter) Since(offset int64) []byte {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	full := e.snapshotLocked()
+	if len(full) == 0 {
+		return nil
+	}
+	oldestOffset := e.ringTotal - int64(len(full))
+	if offset <= oldestOffset {
+		return full
+	}
+	if offset >= e.ringTotal {
+		return nil
+	}
+	return full[offset-oldestOffset:]
 }
 
 // Close flushes any remaining buffered bytes and stops the Emitter. Call it

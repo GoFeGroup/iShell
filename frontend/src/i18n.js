@@ -22,6 +22,7 @@ const dict = {
       showQuickCommands: 'Show quick commands', hideQuickCommands: 'Hide quick commands',
       openSftpTitle: 'Open SFTP', fullscreenTitle: 'Fullscreen  {key}',
       disconnect: 'Disconnect', newConnectionTitle: 'New connection',
+      aiSidebarTitle: 'AI Assistant',
     },
     welcome: {
       title: 'Welcome to iShell',
@@ -77,7 +78,7 @@ const dict = {
       nav: {
         appearance: 'Appearance', terminal: 'Terminal', ssh: 'SSH / Security',
         quickCommands: 'Quick Commands', backup: 'Import / Export',
-        shortcuts: 'Shortcuts', about: 'About',
+        shortcuts: 'Shortcuts', about: 'About', ai: 'AI',
       },
       appearance: {
         theme: 'Theme', colorTheme: 'Color theme', dark: 'Dark', light: 'Light',
@@ -130,6 +131,13 @@ const dict = {
         description: 'A modern cross-platform SSH client built with Go and Wails.',
       },
       language: { auto: 'Auto (system language)', en: 'English', zhCN: '简体中文', zhTW: '繁體中文' },
+      ai: {
+        provider: 'AI Provider', enabled: 'Enable AI',
+        enabledDesc: 'Show the AI assistant entry in the tab bar and its sidebar.',
+        apiKey: 'API Key', apiKeyPlaceholder: 'sk-…',
+        baseUrl: 'Base URL', baseUrlPlaceholder: 'https://api.openai.com/v1',
+        model: 'Model name', modelPlaceholder: 'gpt-4o-mini',
+      },
     },
     sftp: {
       localPane: '💻 Local', remotePane: '🌐 Remote',
@@ -160,6 +168,16 @@ const dict = {
       uploadCancelledErr: 'Zmodem upload cancelled: {e}', uploadCancelled: 'Zmodem upload cancelled',
       sending: 'Sending {n} file(s) via Zmodem...', uploadComplete: 'Zmodem upload complete',
     },
+    aiSidebar: {
+      title: 'AI Assistant', newChat: '+ New Chat', noChats: 'No chats yet. Start a new one.',
+      autoExecLabel: 'Auto-run commands',
+      autoExecDesc: 'Skip the Run/Reject confirmation for this chat.',
+      inputPlaceholder: 'Message the assistant…', send: 'Send',
+      runButton: 'Run', rejectButton: 'Reject', running: 'Running…', rejected: 'Rejected',
+      chatError: 'Error: {e}',
+      defaultChatTitle: 'New Chat', stop: 'Stop', back: 'Back', proposedCommand: 'Proposed command — waiting for approval',
+      readAction: 'Read terminal output', confirmDeleteShort: 'Delete?',
+    },
   },
 
   'zh-CN': {
@@ -178,6 +196,7 @@ const dict = {
       showQuickCommands: '显示快速命令', hideQuickCommands: '隐藏快速命令',
       openSftpTitle: '打开 SFTP', fullscreenTitle: '全屏  {key}',
       disconnect: '断开连接', newConnectionTitle: '新建连接',
+      aiSidebarTitle: 'AI 助手',
     },
     welcome: {
       title: '欢迎使用 iShell',
@@ -233,7 +252,7 @@ const dict = {
       nav: {
         appearance: '外观', terminal: '终端', ssh: 'SSH / 安全',
         quickCommands: '快速命令', backup: '导入 / 导出',
-        shortcuts: '快捷键', about: '关于',
+        shortcuts: '快捷键', about: '关于', ai: 'AI',
       },
       appearance: {
         theme: '主题', colorTheme: '配色主题', dark: '深色', light: '浅色',
@@ -286,6 +305,13 @@ const dict = {
         description: '一款使用 Go 和 Wails 构建的现代跨平台 SSH 客户端。',
       },
       language: { auto: '自动（跟随系统）', en: 'English', zhCN: '简体中文', zhTW: '繁體中文' },
+      ai: {
+        provider: 'AI 提供方', enabled: '启用 AI',
+        enabledDesc: '在标签栏显示 AI 入口及其侧边栏。',
+        apiKey: 'API Key', apiKeyPlaceholder: 'sk-…',
+        baseUrl: 'Base URL', baseUrlPlaceholder: 'https://api.openai.com/v1',
+        model: '模型名称', modelPlaceholder: 'gpt-4o-mini',
+      },
     },
     sftp: {
       localPane: '💻 本地', remotePane: '🌐 远程',
@@ -316,6 +342,16 @@ const dict = {
       uploadCancelledErr: 'Zmodem 上传已取消：{e}', uploadCancelled: 'Zmodem 上传已取消',
       sending: '正在通过 Zmodem 发送 {n} 个文件…', uploadComplete: 'Zmodem 上传完成',
     },
+    aiSidebar: {
+      title: 'AI 助手', newChat: '+ 新建会话', noChats: '暂无会话，新建一个开始吧。',
+      autoExecLabel: '自动执行命令',
+      autoExecDesc: '跳过此会话的运行/拒绝确认。',
+      inputPlaceholder: '给助手发消息…', send: '发送',
+      runButton: '运行', rejectButton: '拒绝', running: '运行中…', rejected: '已拒绝',
+      chatError: '错误：{e}',
+      defaultChatTitle: '新会话', stop: '停止', back: '返回', proposedCommand: '提议的命令 — 等待确认',
+      readAction: '读取终端输出', confirmDeleteShort: '删除？',
+    },
   },
 
   'zh-TW': {
@@ -334,6 +370,7 @@ const dict = {
       showQuickCommands: '顯示快速指令', hideQuickCommands: '隱藏快速指令',
       openSftpTitle: '開啟 SFTP', fullscreenTitle: '全螢幕  {key}',
       disconnect: '中斷連線', newConnectionTitle: '新增連線',
+      aiSidebarTitle: 'AI 助理',
     },
     welcome: {
       title: '歡迎使用 iShell',
@@ -389,7 +426,7 @@ const dict = {
       nav: {
         appearance: '外觀', terminal: '終端機', ssh: 'SSH / 安全性',
         quickCommands: '快速指令', backup: '匯入 / 匯出',
-        shortcuts: '快捷鍵', about: '關於',
+        shortcuts: '快捷鍵', about: '關於', ai: 'AI',
       },
       appearance: {
         theme: '主題', colorTheme: '配色主題', dark: '深色', light: '淺色',
@@ -442,6 +479,13 @@ const dict = {
         description: '一款使用 Go 和 Wails 打造的現代跨平台 SSH 用戶端。',
       },
       language: { auto: '自動（依系統設定）', en: 'English', zhCN: '简体中文', zhTW: '繁體中文' },
+      ai: {
+        provider: 'AI 供應商', enabled: '啟用 AI',
+        enabledDesc: '在分頁列顯示 AI 入口與側邊欄。',
+        apiKey: 'API Key', apiKeyPlaceholder: 'sk-…',
+        baseUrl: 'Base URL', baseUrlPlaceholder: 'https://api.openai.com/v1',
+        model: '模型名稱', modelPlaceholder: 'gpt-4o-mini',
+      },
     },
     sftp: {
       localPane: '💻 本機', remotePane: '🌐 遠端',
@@ -471,6 +515,16 @@ const dict = {
       selectFiles: '請選擇要透過 Zmodem (rz) 上傳的檔案…',
       uploadCancelledErr: 'Zmodem 上傳已取消：{e}', uploadCancelled: 'Zmodem 上傳已取消',
       sending: '正在透過 Zmodem 傳送 {n} 個檔案…', uploadComplete: 'Zmodem 上傳完成',
+    },
+    aiSidebar: {
+      title: 'AI 助理', newChat: '+ 新增會話', noChats: '尚無會話，新增一個開始吧。',
+      autoExecLabel: '自動執行指令',
+      autoExecDesc: '跳過此會話的執行/拒絕確認。',
+      inputPlaceholder: '給助理發訊息…', send: '傳送',
+      runButton: '執行', rejectButton: '拒絕', running: '執行中…', rejected: '已拒絕',
+      chatError: '錯誤：{e}',
+      defaultChatTitle: '新會話', stop: '停止', back: '返回', proposedCommand: '提議的指令 — 等待確認',
+      readAction: '讀取終端機輸出', confirmDeleteShort: '刪除？',
     },
   },
 };

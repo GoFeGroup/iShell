@@ -299,6 +299,25 @@ func (m *Manager) ResizeTerminal(connID string, cols, rows int) error {
 	return conn.term.Resize(cols, rows)
 }
 
+// Snapshot returns recent raw terminal output and its offset, for AI tool calls.
+func (m *Manager) Snapshot(connID string) ([]byte, int64, error) {
+	conn := m.get(connID)
+	if conn == nil {
+		return nil, 0, fmt.Errorf("connection %s not found", connID)
+	}
+	data, offset := conn.term.Snapshot()
+	return data, offset, nil
+}
+
+// Since returns terminal output written after offset, for AI tool calls.
+func (m *Manager) Since(connID string, offset int64) ([]byte, error) {
+	conn := m.get(connID)
+	if conn == nil {
+		return nil, fmt.Errorf("connection %s not found", connID)
+	}
+	return conn.term.Since(offset), nil
+}
+
 // ── SFTP ──────────────────────────────────────────────────────────────────────
 
 // SFTPClient lazily creates and returns the SFTP client for a connection.

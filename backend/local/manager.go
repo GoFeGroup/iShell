@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"ishell/backend/termout"
 )
 
 type session struct {
@@ -17,6 +18,7 @@ type session struct {
 	resize  func(cols, rows int) error
 	close   func() error
 	err     error
+	em      *termout.Emitter // raw output ring buffer, read by AI tool calls
 }
 
 // Manager manages active local terminal sessions.
@@ -107,6 +109,29 @@ func (m *Manager) ResizeTerminal(connID string, cols, rows int) error {
 	return sess.resize(cols, rows)
 }
 
+// Snapshot returns recent raw terminal output and its offset, for AI tool calls.
+func (m *Manager) Snapshot(connID string) ([]byte, int64, error) {
+	m.mu.RLock()
+	sess := m.sessions[connID]
+	m.mu.RUnlock()
+	if sess == nil {
+		return nil, 0, fmt.Errorf("local session %s not found", connID)
+	}
+	data, offset := sess.em.Snapshot()
+	return data, offset, nil
+}
+
+// Since returns terminal output written after offset, for AI tool calls.
+func (m *Manager) Since(connID string, offset int64) ([]byte, error) {
+	m.mu.RLock()
+	sess := m.sessions[connID]
+	m.mu.RUnlock()
+	if sess == nil {
+		return nil, fmt.Errorf("local session %s not found", connID)
+	}
+	return sess.em.Since(offset), nil
+}
+
 // CloseAll terminates all local sessions on app shutdown.
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
@@ -120,7 +145,7 @@ func (m *Manager) CloseAll() {
 	}
 }
 
-func newSession(ctx context.Context, write func([]byte) error, resize func(cols, rows int) error, closeFn func() error) *session {
+func newSession(ctx context.Context, em *termout.Emitter, write func([]byte) error, resize func(cols, rows int) error, closeFn func() error) *session {
 	sessCtx, cancel := context.WithCancel(ctx)
 	sess := &session{
 		ctx:     sessCtx,
@@ -128,6 +153,7 @@ func newSession(ctx context.Context, write func([]byte) error, resize func(cols,
 		inputCh: make(chan []byte, 256),
 		write:   write,
 		resize:  resize,
+		em:      em,
 		close: func() error {
 			cancel()
 			return closeFn()

@@ -52,5 +52,17 @@ export const sendInputBytes     = (id, b64)        => go().SendInputBytes(id, b6
 export const openFilesForZmodem = ()               => go().OpenFilesForZmodem();
 export const saveZmodemFile     = (name, b64)      => go().SaveZmodemFile(name, b64);
 
+// ── AI ────────────────────────────────────────────────────────────────────────
+export const listAIChatSessionsForTarget = (targetID)  => go().ListAIChatSessionsForTarget(targetID);
+export const createAIChatSession = (targetID, title)   => go().CreateAIChatSession(targetID, title);
+export const renameAIChatSession = (id, title)         => go().RenameAIChatSession(id, title);
+export const deleteAIChatSession = (id)                => go().DeleteAIChatSession(id);
+export const getAIChatMessages   = (sessionID)         => go().GetAIChatMessages(sessionID);
+export const sendAIMessage       = (chatID, connID, t) => go().SendAIMessage(chatID, connID, t);
+export const approveAIToolCall   = (pendingID)         => go().ApproveAIToolCall(pendingID);
+export const rejectAIToolCall    = (pendingID)         => go().RejectAIToolCall(pendingID);
+export const setAIAutoExec       = (chatID, on)        => go().SetAIAutoExec(chatID, on);
+export const stopAIRun           = (chatID)            => go().StopAIRun(chatID);
+
 export const on  = (event, cb) => window.runtime.EventsOn(event, cb);
 export const off = (event)     => window.runtime.EventsOff(event);

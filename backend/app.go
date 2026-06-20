@@ -13,6 +13,7 @@ import (
 	"time"
 
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"ishell/backend/ai"
 	"ishell/backend/local"
 	"ishell/backend/osutil"
 	"ishell/backend/ssh"
@@ -25,6 +26,7 @@ type App struct {
 	store     *storage.Store
 	sshMgr    *ssh.Manager
 	localMgr  *local.Manager
+	aiAgent   *ai.Agent
 	dataDir   string
 	transfers map[string]TransferRecord
 	txMu      sync.RWMutex
@@ -63,6 +65,9 @@ func (a *App) Startup(ctx context.Context) {
 	a.store = store
 	a.sshMgr = ssh.NewManager(ctx)
 	a.localMgr = local.NewManager(ctx)
+	a.aiAgent = ai.NewAgent(a.store, a, func(event string, payload any) {
+		wailsRuntime.EventsEmit(a.ctx, event, payload)
+	})
 	a.transfers = make(map[string]TransferRecord)
 }
 
@@ -245,6 +250,23 @@ func (a *App) ResizeTerminal(connID string, cols, rows int) error {
 		return a.localMgr.ResizeTerminal(connID, cols, rows)
 	}
 	return a.sshMgr.ResizeTerminal(connID, cols, rows)
+}
+
+// Snapshot and Since implement ai.TerminalIO, letting the AI agent read
+// recent raw terminal output when executing terminal_run/terminal_read tool
+// calls. Dispatch mirrors SendInput/ResizeTerminal above.
+func (a *App) Snapshot(connID string) ([]byte, int64, error) {
+	if a.localMgr.Has(connID) {
+		return a.localMgr.Snapshot(connID)
+	}
+	return a.sshMgr.Snapshot(connID)
+}
+
+func (a *App) Since(connID string, offset int64) ([]byte, error) {
+	if a.localMgr.Has(connID) {
+		return a.localMgr.Since(connID, offset)
+	}
+	return a.sshMgr.Since(connID, offset)
 }
 
 // AcceptHostKey writes the pending host key for hostname to known_hosts.
@@ -639,4 +661,101 @@ func (a *App) ImportConfig() (*storage.ImportResult, error) {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
 	return a.store.ImportAll(data)
+}
+
+// ── AI chat ───────────────────────────────────────────────────────────────────
+
+// ListAIChatSessionsForTarget returns the chat sessions bound to targetID —
+// an SSH Session.ID, or "__local__" for any local terminal — so each
+// terminal only ever sees its own AI conversations.
+func (a *App) ListAIChatSessionsForTarget(targetID string) ([]storage.AIChatSession, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store not ready")
+	}
+	return a.store.ListAIChatSessionsByTarget(targetID)
+}
+
+func (a *App) CreateAIChatSession(targetID, title string) (*storage.AIChatSession, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store not ready")
+	}
+	return a.store.SaveAIChatSession(storage.AIChatSession{TargetID: targetID, Title: title})
+}
+
+func (a *App) RenameAIChatSession(id, title string) error {
+	if a.store == nil {
+		return fmt.Errorf("store not ready")
+	}
+	sess, err := a.store.GetAIChatSession(id)
+	if err != nil {
+		return err
+	}
+	if sess == nil {
+		return fmt.Errorf("chat session %s not found", id)
+	}
+	sess.Title = title
+	_, err = a.store.SaveAIChatSession(*sess)
+	return err
+}
+
+func (a *App) DeleteAIChatSession(id string) error {
+	if a.store == nil {
+		return fmt.Errorf("store not ready")
+	}
+	return a.store.DeleteAIChatSession(id)
+}
+
+func (a *App) GetAIChatMessages(sessionID string) ([]storage.AIChatMessage, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store not ready")
+	}
+	return a.store.ListAIChatMessages(sessionID)
+}
+
+// SendAIMessage kicks off the agent's tool-calling loop in the background
+// and returns immediately; the model's reply (and any tool-call activity)
+// arrives via "ai:*:<chatID>" events. connID is whichever terminal tab the
+// frontend currently has active, resolved at send-time — "" if none.
+func (a *App) SendAIMessage(chatID, connID, text string) error {
+	if a.store == nil || a.aiAgent == nil {
+		return fmt.Errorf("AI is not ready")
+	}
+	settings, err := a.store.LoadSettings()
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+	if !settings.AIEnabled {
+		return fmt.Errorf("AI is not enabled in settings")
+	}
+	go a.aiAgent.RunTurn(a.ctx, ai.RunOptions{ChatID: chatID, ConnID: connID, UserText: text})
+	return nil
+}
+
+func (a *App) ApproveAIToolCall(pendingID string) error {
+	if a.aiAgent == nil {
+		return fmt.Errorf("AI is not ready")
+	}
+	return a.aiAgent.ApproveToolCall(pendingID)
+}
+
+func (a *App) RejectAIToolCall(pendingID string) error {
+	if a.aiAgent == nil {
+		return fmt.Errorf("AI is not ready")
+	}
+	return a.aiAgent.RejectToolCall(pendingID)
+}
+
+func (a *App) SetAIAutoExec(chatID string, on bool) error {
+	if a.aiAgent == nil {
+		return fmt.Errorf("AI is not ready")
+	}
+	return a.aiAgent.SetAutoExec(chatID, on)
+}
+
+func (a *App) StopAIRun(chatID string) error {
+	if a.aiAgent == nil {
+		return fmt.Errorf("AI is not ready")
+	}
+	a.aiAgent.StopRun(chatID)
+	return nil
 }

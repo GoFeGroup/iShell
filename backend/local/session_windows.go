@@ -70,6 +70,7 @@ func startSession(ctx context.Context, connID string, cols, rows int) (*session,
 
 	return newSession(
 		ctx,
+		em,
 		func(data []byte) error {
 			return writeAll(cpty, data)
 		},

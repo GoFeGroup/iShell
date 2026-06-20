@@ -13,6 +13,7 @@ func TestSendInputCopiesAndPreservesOrder(t *testing.T) {
 	writes := make(chan string, 2)
 	sess := newSession(
 		context.Background(),
+		nil,
 		func(data []byte) error {
 			writes <- string(data)
 			return nil
@@ -48,6 +49,7 @@ func TestSendInputReturnsBeforeWriterCompletes(t *testing.T) {
 	release := make(chan struct{})
 	sess := newSession(
 		context.Background(),
+		nil,
 		func([]byte) error {
 			close(started)
 			<-release
@@ -88,6 +90,7 @@ func TestSendInputReportsWriterError(t *testing.T) {
 	wrote := make(chan struct{})
 	sess := newSession(
 		context.Background(),
+		nil,
 		func([]byte) error {
 			close(wrote)
 			return writeErr
@@ -127,6 +130,7 @@ func TestSendInputReportsWriterError(t *testing.T) {
 func TestSendInputAfterCloseReturnsContextError(t *testing.T) {
 	sess := newSession(
 		context.Background(),
+		nil,
 		func([]byte) error { return nil },
 		func(_, _ int) error { return nil },
 		func() error { return nil },
@@ -161,6 +165,7 @@ func TestResizeTerminalDelegatesToSession(t *testing.T) {
 	var gotRows atomic.Int32
 	sess := newSession(
 		context.Background(),
+		nil,
 		func([]byte) error { return nil },
 		func(cols, rows int) error {
 			gotCols.Store(int32(cols))
@@ -183,6 +188,7 @@ func TestDisconnectRemovesSessionAndClosesIt(t *testing.T) {
 	var closed atomic.Bool
 	sess := newSession(
 		context.Background(),
+		nil,
 		func([]byte) error { return nil },
 		func(_, _ int) error { return nil },
 		func() error {

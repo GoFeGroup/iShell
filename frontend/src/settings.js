@@ -28,6 +28,7 @@ export async function initSettings(initialPage = 'appearance') {
     <div class="nav-pill" data-page="terminal"><span class="nav-pill-icon">💻</span>${t('settings.nav.terminal')}</div>
     <div class="nav-pill" data-page="ssh"><span class="nav-pill-icon">🔒</span>${t('settings.nav.ssh')}</div>
     <div class="nav-pill" data-page="quick-commands"><span class="nav-pill-icon">⚡</span>${t('settings.nav.quickCommands')}</div>
+    <div class="nav-pill" data-page="ai"><span class="nav-pill-icon">✨</span>${t('settings.nav.ai')}</div>
     <div class="nav-pill" data-page="backup"><span class="nav-pill-icon">💾</span>${t('settings.nav.backup')}</div>
     <div class="nav-pill" data-page="shortcuts"><span class="nav-pill-icon">⌨️</span>${t('settings.nav.shortcuts')}</div>
     <div class="nav-pill" data-page="about"><span class="nav-pill-icon">ℹ️</span>${t('settings.nav.about')}</div>
@@ -128,6 +129,30 @@ export async function initSettings(initialPage = 'appearance') {
         ${kh.length === 0
           ? `<div style="color:var(--text-muted);font-size:13px;padding:8px 0;">${t('settings.ssh.noKnownHosts')}</div>`
           : kh.map(h => `<div class="settings-row"><div><div class="settings-row-label" style="font-family:var(--font-mono);font-size:12px;">${esc(h.hostname)}</div><div class="settings-row-desc">${esc(h.key_type)} — ${esc(h.fingerprint)}</div></div><button class="btn btn-danger btn-sm" onclick="window._removeKH('${esc(h.hostname)}')">${t('common.remove')}</button></div>`).join('')}
+      </div>
+    </div>
+
+    <!-- AI -->
+    <div class="settings-page" id="sp-ai">
+      <div class="settings-page-title">${t('settings.nav.ai')}</div>
+      <div class="settings-section">
+        <div class="settings-section-title">${t('settings.ai.provider')}</div>
+        <div class="settings-row">
+          <div><div class="settings-row-label">${t('settings.ai.enabled')}</div><div class="settings-row-desc">${t('settings.ai.enabledDesc')}</div></div>
+          <div class="settings-row-control"><div class="toggle-switch ${settings.ai_enabled?'on':''}" id="st-ai-enabled"></div></div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">${t('settings.ai.apiKey')}</div>
+          <div class="settings-row-control"><input class="input" id="st-ai-key" type="password" autocomplete="off" value="${esc(settings.ai_api_key||'')}" placeholder="${t('settings.ai.apiKeyPlaceholder')}" style="width:240px;" /></div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">${t('settings.ai.baseUrl')}</div>
+          <div class="settings-row-control"><input class="input" id="st-ai-baseurl" value="${esc(settings.ai_base_url||'')}" placeholder="${t('settings.ai.baseUrlPlaceholder')}" style="width:240px;" /></div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">${t('settings.ai.model')}</div>
+          <div class="settings-row-control"><input class="input" id="st-ai-model" value="${esc(settings.ai_model||'')}" placeholder="${t('settings.ai.modelPlaceholder')}" style="width:240px;" /></div>
+        </div>
       </div>
     </div>
 
@@ -282,6 +307,16 @@ export async function initSettings(initialPage = 'appearance') {
     persistDebounced();
   });
   bindToggle('st-show-qc', on => { current.show_quick_commands = on; persist(); });
+  bindToggle('st-ai-enabled', on => { current.ai_enabled = on; persist(); });
+  document.getElementById('st-ai-key')?.addEventListener('input', e => {
+    current.ai_api_key = e.target.value; persistDebounced();
+  });
+  document.getElementById('st-ai-baseurl')?.addEventListener('input', e => {
+    current.ai_base_url = e.target.value; persistDebounced();
+  });
+  document.getElementById('st-ai-model')?.addEventListener('input', e => {
+    current.ai_model = e.target.value; persistDebounced();
+  });
 
   function bindToggle(id, onChange) {
     const el = document.getElementById(id);

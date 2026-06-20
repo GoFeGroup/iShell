@@ -49,6 +49,34 @@ type Settings struct {
 	QuickCommandGroups []QuickCommandGroup `json:"quick_command_groups" yaml:"quick_command_groups"`
 	ShowQuickCommands  bool                `json:"show_quick_commands" yaml:"show_quick_commands"`
 	Language           string              `json:"language" yaml:"language"`
+	AIEnabled          bool                `json:"ai_enabled" yaml:"ai_enabled"`
+	AIAPIKey           string              `json:"ai_api_key" yaml:"ai_api_key"`
+	AIBaseURL          string              `json:"ai_base_url" yaml:"ai_base_url"`
+	AIModel            string              `json:"ai_model" yaml:"ai_model"`
+}
+
+// AIChatSession is a single AI chat conversation, managed from the AI
+// sidebar. Not part of ExportData — chat history is local-only and never
+// included in config export/import.
+type AIChatSession struct {
+	ID        string `json:"id" yaml:"id"`
+	TargetID  string `json:"target_id" yaml:"target_id"` // bound terminal identity: SSH Session.ID, or "__local__"
+	Title     string `json:"title" yaml:"title"`
+	AutoExec  bool   `json:"auto_exec" yaml:"auto_exec"`
+	CreatedAt string `json:"created_at" yaml:"created_at"`
+	UpdatedAt string `json:"updated_at" yaml:"updated_at"`
+}
+
+// AIChatMessage is one message in an AIChatSession's history. Messages are
+// immutable once appended (no UpdatedAt).
+type AIChatMessage struct {
+	ID         string `json:"id" yaml:"id"`
+	SessionID  string `json:"session_id" yaml:"session_id"`
+	Role       string `json:"role" yaml:"role"` // "user" | "assistant" | "tool"
+	Content    string `json:"content" yaml:"content"`
+	ToolCalls  string `json:"tool_calls,omitempty" yaml:"tool_calls,omitempty"`     // JSON array, assistant role only
+	ToolCallID string `json:"tool_call_id,omitempty" yaml:"tool_call_id,omitempty"` // set when role="tool"
+	CreatedAt  string `json:"created_at" yaml:"created_at"`
 }
 
 type QuickCommand struct {
@@ -83,5 +111,8 @@ func DefaultSettings() Settings {
 		QuickCommandGroups: []QuickCommandGroup{},
 		ShowQuickCommands:  true,
 		Language:           "auto",
+		AIEnabled:          false,
+		AIBaseURL:          "https://api.openai.com/v1",
+		AIModel:            "gpt-4o-mini",
 	}
 }

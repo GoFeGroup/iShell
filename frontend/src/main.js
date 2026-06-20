@@ -6,6 +6,7 @@ import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTe
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
 import { initQuickCommands, setQuickCommandSettings, toggleQuickCommands, updateQuickCommandUI, triggerQuickCommandShortcut } from './quick-command.js';
+import { initAISidebar, setAISidebarSettings, toggleAISidebar, notifyActiveTerminalChanged } from './ai-sidebar.js';
 import { showToast } from './toast.js';
 import { t, applyI18nAttrs, setLanguage, getLanguagePref } from './i18n.js';
 
@@ -37,6 +38,7 @@ window.addEventListener('load', async () => {
   initSidebar(onConnectRequest);
   initProfilePicker(onConnectRequest);
   initQuickCommands(settings, () => isTerminalTab(activeTab) ? activeTab.connID : null);
+  initAISidebar(settings, () => isTerminalTab(activeTab) ? { targetID: activeTab.sessionID, connID: activeTab.connID } : null);
 
   // Toolbar buttons
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
@@ -45,6 +47,7 @@ window.addEventListener('load', async () => {
   document.getElementById('btn-quick-command').addEventListener('click', toggleQuickCommands);
   document.getElementById('btn-settings').addEventListener('click', () => openSettingsPanel());
   document.getElementById('btn-new-instance').addEventListener('click', openNewInstance);
+  document.getElementById('btn-toggle-ai').addEventListener('click', toggleAISidebar);
   document.getElementById('btn-search-term').addEventListener('click', toggleFind);
   document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
   document.getElementById('find-close').addEventListener('click', () => setFindBar(false));
@@ -70,9 +73,11 @@ window.addEventListener('load', async () => {
   window.addEventListener('ishell:settingsSaved', (e) => {
     settings = e.detail?.settings || settings;
     setQuickCommandSettings(settings);
+    setAISidebarSettings(settings);
     refitActiveTerminal();
   });
   window.addEventListener('ishell:nativeEsc', handleNativeEsc);
+  window.addEventListener('ishell:aiSidebarToggled', refitActiveTerminalAfterLayout);
   window.addEventListener('ishell:languageChanged', () => {
     loadProfiles();
     renderTabs();
@@ -234,6 +239,7 @@ async function switchToTab(tab) {
     showPanel('settings');
     updateConnUI(null);
     updateQuickCommandUI();
+    notifyActiveTerminalChanged();
     await initSettings(tab.settingsPage);
     return;
   }
@@ -243,6 +249,7 @@ async function switchToTab(tab) {
     showPanel('sftp');
     updateConnUI(tab);
     updateQuickCommandUI();
+    notifyActiveTerminalChanged();
     await initSFTP(tab.connID);
     return;
   }
@@ -254,6 +261,7 @@ async function switchToTab(tab) {
   createTerminal(tab.connID, settings);
   refitActiveTerminal({ restoreScroll: true });
   focusTerminal(tab.connID);
+  notifyActiveTerminalChanged();
 }
 
 function switchToTabByIndex(n) {
@@ -308,6 +316,7 @@ function showWelcome() {
   showPanel('welcome');
   updateConnUI(null);
   updateQuickCommandUI();
+  notifyActiveTerminalChanged();
 }
 
 function isTerminalTab(tab) {
@@ -349,8 +358,12 @@ function updateConnUI(tab) {
   const hasConn = !!tab;
   const actions = document.getElementById('topbar-actions');
   const sftpBtn = document.getElementById('btn-sftp');
+  const disconnectBtn = document.getElementById('btn-disconnect');
+  const disconnectVdiv = document.getElementById('disconnect-vdiv');
   actions.style.display = hasConn ? '' : 'none';
   if (sftpBtn) sftpBtn.style.display = hasConn && !tab?.isLocal ? '' : 'none';
+  if (disconnectBtn) disconnectBtn.style.display = hasConn ? '' : 'none';
+  if (disconnectVdiv) disconnectVdiv.style.display = hasConn ? '' : 'none';
   updateQuickCommandUI();
 }
 

@@ -132,6 +132,18 @@ func (ts *TermSession) Resize(cols, rows int) error {
 	return ts.session.WindowChange(rows, cols)
 }
 
+// Snapshot returns the recent raw output retained in the ring buffer and the
+// offset to pass to a later Since() call. Used by AI tool calls to read what
+// a terminal_run command produced.
+func (ts *TermSession) Snapshot() ([]byte, int64) {
+	return ts.out.Snapshot()
+}
+
+// Since returns output written after offset (best-effort, see Emitter.Since).
+func (ts *TermSession) Since(offset int64) []byte {
+	return ts.out.Since(offset)
+}
+
 func (ts *TermSession) Close() {
 	close(ts.inputCh)
 	_ = ts.stdin.Close()

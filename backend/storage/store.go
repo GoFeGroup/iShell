@@ -38,6 +38,26 @@ CREATE TABLE IF NOT EXISTS settings (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ai_chat_sessions (
+	id          TEXT PRIMARY KEY,
+	target_id   TEXT    NOT NULL DEFAULT '',
+	title       TEXT    NOT NULL DEFAULT '',
+	auto_exec   INTEGER NOT NULL DEFAULT 0,
+	created_at  DATETIME NOT NULL,
+	updated_at  DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_chat_messages (
+	id            TEXT PRIMARY KEY,
+	session_id    TEXT    NOT NULL,
+	role          TEXT    NOT NULL,
+	content       TEXT    NOT NULL DEFAULT '',
+	tool_calls    TEXT    NOT NULL DEFAULT '',
+	tool_call_id  TEXT    NOT NULL DEFAULT '',
+	created_at    DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session ON ai_chat_messages(session_id);
 `
 
 type Store struct {
@@ -66,6 +86,15 @@ func Open(dataDir string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrations: %w", err)
 	}
+	// Indexes on columns added by migrations must be created after
+	// runMigrations, not in the schema block above — on an existing
+	// database, CREATE TABLE IF NOT EXISTS is a no-op, so an index on a
+	// migration-added column would fail with "no such column" until the
+	// migration has actually run.
+	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_target ON ai_chat_sessions(target_id)`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("create index: %w", err)
+	}
 	return st, nil
 }
 
@@ -88,12 +117,13 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) runMigrations() error {
-	type col struct{ name, def string }
+	type col struct{ table, name, def string }
 	migrations := []col{
-		{"jump_profile_id", "TEXT NOT NULL DEFAULT ''"},
+		{"sessions", "jump_profile_id", "TEXT NOT NULL DEFAULT ''"},
+		{"ai_chat_sessions", "target_id", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, m := range migrations {
-		rows, err := s.db.Query("PRAGMA table_info(sessions)")
+		rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", m.table))
 		if err != nil {
 			return err
 		}
@@ -113,8 +143,8 @@ func (s *Store) runMigrations() error {
 		}
 		rows.Close()
 		if !exists {
-			if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE sessions ADD COLUMN %s %s", m.name, m.def)); err != nil {
-				return fmt.Errorf("add column %s: %w", m.name, err)
+			if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", m.table, m.name, m.def)); err != nil {
+				return fmt.Errorf("add column %s.%s: %w", m.table, m.name, err)
 			}
 		}
 	}
@@ -248,6 +278,13 @@ func (s *Store) LoadSettings() (*Settings, error) {
 	if err := json.Unmarshal([]byte(raw), &fields); err == nil {
 		if _, ok := fields["show_quick_commands"]; !ok {
 			st.ShowQuickCommands = true
+		}
+		def := DefaultSettings()
+		if _, ok := fields["ai_base_url"]; !ok {
+			st.AIBaseURL = def.AIBaseURL
+		}
+		if _, ok := fields["ai_model"]; !ok {
+			st.AIModel = def.AIModel
 		}
 	}
 	if st.QuickCommands == nil {

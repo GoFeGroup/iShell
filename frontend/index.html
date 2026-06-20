@@ -79,9 +79,11 @@
         <button class="btn btn-ghost btn-sm" id="btn-sftp" style="color:var(--blue);" title="Open SFTP" data-i18n-title="app.openSftpTitle">📁 SFTP</button>
         <div class="toolbar-vdiv"></div>
         <button class="btn btn-ghost btn-sm" id="btn-fullscreen" title="Fullscreen  Alt+Enter" data-i18n-title="welcome.kbdFullscreen">⛶</button>
-        <div class="toolbar-vdiv"></div>
-        <button class="btn btn-danger btn-sm" id="btn-disconnect" data-i18n="app.disconnect">Disconnect</button>
       </div>
+      <div class="toolbar-vdiv" id="ai-toolbar-vdiv" style="display:none;"></div>
+      <button class="btn btn-ghost btn-sm" id="btn-toggle-ai" title="AI Assistant" data-i18n-title="app.aiSidebarTitle" style="display:none;">✨ AI</button>
+      <div class="toolbar-vdiv" id="disconnect-vdiv" style="display:none;"></div>
+      <button class="btn btn-danger btn-sm" id="btn-disconnect" data-i18n="app.disconnect" style="display:none;">Disconnect</button>
     </div>
 
     <!-- Content panels (only one visible at a time) -->
@@ -100,28 +102,44 @@
       </div>
     </div>
 
-    <!-- Terminal panel -->
+    <!-- Terminal panel: row layout — terminal-main fills remaining space, AI
+         sidebar (when open) takes a fixed-width column on the right. The AI
+         sidebar lives here, not at the app level, so it's scoped to whichever
+         terminal tab is active — switching tabs swaps its bound chat. -->
     <div class="panel" id="panel-terminal" style="display:none;">
-      <div id="terminal-container"></div>
-      <!-- Find bar -->
-      <div class="find-bar" id="find-bar" style="display:none;">
-        <input id="find-input" placeholder="Find…" data-i18n-placeholder="terminal.findPlaceholder" />
-        <span class="find-count" id="find-count"></span>
-        <button class="btn btn-ghost btn-icon" id="find-prev">▲</button>
-        <button class="btn btn-ghost btn-icon" id="find-next">▼</button>
-        <button class="btn btn-ghost btn-icon" id="find-close">✕</button>
-      </div>
-      <div class="quick-command-bar" id="quick-command-bar" style="display:none;"></div>
-      <div class="terminal-statusbar">
-        <div class="statusbar-left">
-          <span class="statusbar-item" id="sb-status">🟢 <span data-i18n="common.connected">Connected</span></span>
-          <span class="statusbar-item" id="sb-latency"></span>
+      <div class="terminal-main" id="terminal-main">
+        <div id="terminal-container"></div>
+        <!-- Find bar -->
+        <div class="find-bar" id="find-bar" style="display:none;">
+          <input id="find-input" placeholder="Find…" data-i18n-placeholder="terminal.findPlaceholder" />
+          <span class="find-count" id="find-count"></span>
+          <button class="btn btn-ghost btn-icon" id="find-prev">▲</button>
+          <button class="btn btn-ghost btn-icon" id="find-next">▼</button>
+          <button class="btn btn-ghost btn-icon" id="find-close">✕</button>
         </div>
-        <div class="statusbar-right">
-          <span class="statusbar-item" id="sb-encoding">UTF-8</span>
-          <span class="statusbar-item" id="sb-size">—</span>
+        <div class="quick-command-bar" id="quick-command-bar" style="display:none;"></div>
+        <div class="terminal-statusbar">
+          <div class="statusbar-left">
+            <span class="statusbar-item" id="sb-status">🟢 <span data-i18n="common.connected">Connected</span></span>
+            <span class="statusbar-item" id="sb-latency"></span>
+          </div>
+          <div class="statusbar-right">
+            <span class="statusbar-item" id="sb-encoding">UTF-8</span>
+            <span class="statusbar-item" id="sb-size">—</span>
+          </div>
         </div>
       </div>
+
+      <div class="ai-sidebar-resizer" id="ai-sidebar-resizer" style="display:none;"></div>
+      <aside class="ai-sidebar collapsed" id="ai-sidebar">
+        <div class="ai-sidebar-header">
+          <button class="btn btn-ghost btn-icon" id="ai-back" title="Other chats for this terminal" data-i18n-title="aiSidebar.back" style="display:none;">←</button>
+          <div class="ai-sidebar-title" data-i18n="aiSidebar.title">AI Assistant</div>
+          <button class="btn btn-ghost btn-icon" id="ai-close" title="Close" data-i18n-title="common.close">✕</button>
+        </div>
+        <div id="ai-session-list" class="ai-session-list" style="display:none;"></div>
+        <div id="ai-chat-view" class="ai-chat-view" style="display:none;"></div>
+      </aside>
     </div>
 
     <!-- SFTP panel -->
