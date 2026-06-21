@@ -149,6 +149,14 @@ func requestHasToolResult(r *http.Request) bool {
 	return false
 }
 
+func requestHasTools(r *http.Request) bool {
+	var req struct {
+		Tools []Tool `json:"tools"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	return len(req.Tools) > 0
+}
+
 func TestRunTurnPlainReplyNoTools(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -407,9 +415,16 @@ func TestRunTurnWebSearchTool(t *testing.T) {
 	rec.waitFor(t, "ai:done:"+sess.ID, time.Second)
 }
 
-func TestRunTurnMaxRoundsTriggersError(t *testing.T) {
+func TestRunTurnRepeatedToolLoopFinishesWithGuardedAnswer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
+		if !requestHasTools(r) {
+			_, _ = w.Write([]byte(sseBody(
+				`{"choices":[{"delta":{"content":"I already checked the terminal and there is no new output to report."},"finish_reason":null}]}`,
+				`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			)))
+			return
+		}
 		_, _ = w.Write([]byte(sseBody(
 			`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"terminal_read","arguments":"{}"}}]},"finish_reason":null}]}`,
 			`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
@@ -428,9 +443,27 @@ func TestRunTurnMaxRoundsTriggersError(t *testing.T) {
 	ag := NewAgent(st, &fakeTerminalIO{}, rec.emit)
 	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, ConnID: "conn-1", UserText: "loop forever"})
 
-	got := rec.waitFor(t, "ai:error:"+sess.ID, 5*time.Second).(map[string]string)
-	if !strings.Contains(got["message"], "tool-call rounds") {
-		t.Fatalf("error message = %q, want mention of tool-call rounds", got["message"])
+	done := rec.waitFor(t, "ai:done:"+sess.ID, 5*time.Second).(map[string]string)
+	if !strings.Contains(done["guard_reason"], "without making progress") {
+		t.Fatalf("guard_reason = %q, want progress-loop explanation", done["guard_reason"])
+	}
+	if rec.has("ai:error:" + sess.ID) {
+		t.Fatal("repeated tool loop should finish with a guarded answer, not emit an error")
+	}
+
+	msgs, err := st.ListAIChatMessages(sess.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	gotFinal := ""
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "assistant" && msgs[i].Content != "" {
+			gotFinal = msgs[i].Content
+			break
+		}
+	}
+	if !strings.Contains(gotFinal, "no new output") {
+		t.Fatalf("final assistant content = %q, want guarded final answer", gotFinal)
 	}
 }
 

@@ -2,12 +2,13 @@ package ssh
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func TestExpandUserPath(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 
 	tests := []struct {
 		name string
@@ -47,4 +48,19 @@ func TestExpandUserPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func setTestHome(t *testing.T, home string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+		volume := filepath.VolumeName(home)
+		rest := home[len(volume):]
+		if volume != "" {
+			t.Setenv("HOMEDRIVE", volume)
+			t.Setenv("HOMEPATH", rest)
+		}
+		return
+	}
+	t.Setenv("HOME", home)
 }

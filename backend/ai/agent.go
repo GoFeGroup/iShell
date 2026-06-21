@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -16,6 +17,11 @@ const (
 	maxToolRounds    = 8                      // tool_calls→execute→feed-back cycles per user message, before giving up
 	commandWaitDelay = 800 * time.Millisecond // time to let a sent command produce output before reading it back
 	approvalTimeout  = 10 * time.Minute       // how long a pending command waits for human approval before auto-rejecting
+)
+
+const (
+	maxConsecutiveStagnantRounds  = 2
+	maxConsecutiveToolErrorRounds = 2
 )
 
 const systemPrompt = `You are an AI assistant embedded in the iShell terminal application. You can chat with the user, call websearch for current or external information, and when a terminal tab is active you may call the terminal_run and terminal_read tools to interact with it directly: terminal_run sends a command (followed by Enter) to the terminal and returns the output produced shortly after; terminal_read checks the terminal's most recent output without sending anything, which is useful for checking on a long-running command. Only call the terminal tools when the user's request requires interacting with their terminal. If no terminal tab is active and the user asks you to run something, tell them to open a terminal tab first instead of calling the terminal tools.`
@@ -111,6 +117,7 @@ func (ag *Agent) RunTurn(ctx context.Context, opts RunOptions) {
 		return
 	}
 
+	guard := newToolLoopGuard()
 	for range maxToolRounds {
 		history, err := ag.buildHistory(opts.ChatID)
 		if err != nil {
@@ -145,6 +152,7 @@ func (ag *Agent) RunTurn(ctx context.Context, opts RunOptions) {
 		sess, _ := ag.store.GetAIChatSession(opts.ChatID)
 		autoExec := sess != nil && sess.AutoExec
 
+		results := make([]toolCallResult, 0, len(assistantMsg.ToolCalls))
 		for _, call := range assistantMsg.ToolCalls {
 			result := ag.handleToolCall(runCtx, opts, call, autoExec)
 			if _, err := ag.store.AppendAIChatMessage(storage.AIChatMessage{
@@ -153,12 +161,17 @@ func (ag *Agent) RunTurn(ctx context.Context, opts RunOptions) {
 				ag.emitError(opts.ChatID, err)
 				return
 			}
+			results = append(results, toolCallResult{call: call, output: result})
+		}
+		if reason, stuck := guard.observe(results); stuck {
+			ag.finishAfterToolGuard(runCtx, client, opts, reason)
+			return
 		}
 		// Loop continues: the tool results just persisted become part of the
 		// history fed into the next round's request.
 	}
 
-	ag.emitError(opts.ChatID, fmt.Errorf("reached the limit of %d tool-call rounds for this message", maxToolRounds))
+	ag.finishAfterToolGuard(runCtx, client, opts, "the tool loop reached the safety limit before producing a final answer")
 }
 
 // ApproveToolCall lets a previously emitted "ai:tool_call" proceed.
@@ -239,11 +252,15 @@ func (ag *Agent) buildHistory(chatID string) ([]Message, error) {
 }
 
 func (ag *Agent) runRound(ctx context.Context, client *Client, opts RunOptions, history []Message) (Message, string, error) {
+	return ag.runRoundWithTools(ctx, client, opts, history, AgentTools())
+}
+
+func (ag *Agent) runRoundWithTools(ctx context.Context, client *Client, opts RunOptions, history []Message, tools []Tool) (Message, string, error) {
 	var content strings.Builder
 	var toolCalls []ToolCall
 	var finishReason string
 
-	err := client.StreamChatCompletion(ctx, history, AgentTools(), StreamHandler{
+	err := client.StreamChatCompletion(ctx, history, tools, StreamHandler{
 		OnDelta: func(delta string) {
 			content.WriteString(delta)
 			ag.emit("ai:delta:"+opts.ChatID, map[string]string{"content": delta})
@@ -259,6 +276,39 @@ func (ag *Agent) runRound(ctx context.Context, client *Client, opts RunOptions, 
 		return Message{}, "", err
 	}
 	return Message{Role: "assistant", Content: content.String(), ToolCalls: toolCalls}, finishReason, nil
+}
+
+func (ag *Agent) finishAfterToolGuard(ctx context.Context, client *Client, opts RunOptions, reason string) {
+	history, err := ag.buildHistory(opts.ChatID)
+	if err != nil {
+		ag.emitError(opts.ChatID, err)
+		return
+	}
+	history = append(history, Message{
+		Role: "system",
+		Content: "The tool loop guard stopped further tool execution because " + reason +
+			". Do not call tools again. Give the user the best final answer you can from the conversation and tool results already available. If the task cannot be completed, explain what is missing and the next concrete step.",
+	})
+
+	assistantMsg, finishReason, err := ag.runRoundWithTools(ctx, client, opts, history, nil)
+	if err != nil {
+		ag.emitError(opts.ChatID, fmt.Errorf("tool loop stopped because %s; final response failed: %w", reason, err))
+		return
+	}
+	if strings.TrimSpace(assistantMsg.Content) == "" {
+		assistantMsg.Content = "I stopped using tools because " + reason + ". I do not have enough new information to continue safely."
+		ag.emit("ai:delta:"+opts.ChatID, map[string]string{"content": assistantMsg.Content})
+	}
+	if finishReason == "tool_calls" {
+		finishReason = "guarded_stop"
+	}
+	if _, err := ag.store.AppendAIChatMessage(storage.AIChatMessage{
+		SessionID: opts.ChatID, Role: "assistant", Content: assistantMsg.Content,
+	}); err != nil {
+		ag.emitError(opts.ChatID, err)
+		return
+	}
+	ag.emit("ai:done:"+opts.ChatID, map[string]string{"finish_reason": finishReason, "guard_reason": reason})
 }
 
 // handleToolCall executes (or pauses for approval, then executes) a single
@@ -373,4 +423,95 @@ func (ag *Agent) captureOutput(connID string, sinceOffset int64) (string, error)
 
 func (ag *Agent) emitError(chatID string, err error) {
 	ag.emit("ai:error:"+chatID, map[string]string{"message": err.Error()})
+}
+
+type toolCallResult struct {
+	call   ToolCall
+	output string
+}
+
+type toolLoopGuard struct {
+	lastSignature string
+	lastResultKey string
+	stagnant      int
+	errorRounds   int
+}
+
+func newToolLoopGuard() *toolLoopGuard {
+	return &toolLoopGuard{}
+}
+
+func (g *toolLoopGuard) observe(results []toolCallResult) (string, bool) {
+	if len(results) == 0 {
+		return "", false
+	}
+
+	signature := toolRoundSignature(results)
+	resultKey := toolRoundResultKey(results)
+	if signature == g.lastSignature && resultKey == g.lastResultKey {
+		g.stagnant++
+	} else {
+		g.stagnant = 0
+		g.lastSignature = signature
+		g.lastResultKey = resultKey
+	}
+
+	if allToolResultsAreErrors(results) {
+		g.errorRounds++
+	} else {
+		g.errorRounds = 0
+	}
+
+	if g.stagnant >= maxConsecutiveStagnantRounds {
+		return "the model repeated the same tool call and received the same result without making progress", true
+	}
+	if g.errorRounds >= maxConsecutiveToolErrorRounds {
+		return "tools returned errors repeatedly without a recoverable path", true
+	}
+	return "", false
+}
+
+func toolRoundSignature(results []toolCallResult) string {
+	parts := make([]string, 0, len(results))
+	for _, r := range results {
+		parts = append(parts, r.call.Function.Name+":"+canonicalJSONish(r.call.Function.Arguments))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func toolRoundResultKey(results []toolCallResult) string {
+	h := sha256.New()
+	for _, r := range results {
+		h.Write([]byte(r.call.Function.Name))
+		h.Write([]byte{0})
+		h.Write([]byte(normalizeToolOutput(r.output)))
+		h.Write([]byte{0})
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func canonicalJSONish(raw string) string {
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return strings.TrimSpace(raw)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return strings.TrimSpace(raw)
+	}
+	return string(b)
+}
+
+func normalizeToolOutput(output string) string {
+	return strings.Join(strings.Fields(output), " ")
+}
+
+func allToolResultsAreErrors(results []toolCallResult) bool {
+	for _, r := range results {
+		out := strings.TrimSpace(strings.ToLower(r.output))
+		if !strings.HasPrefix(out, "error:") {
+			return false
+		}
+	}
+	return true
 }
