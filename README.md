@@ -7,16 +7,21 @@ iShell is a desktop SSH client built with Wails, Go, Vite, and xterm.js. It prov
 - SSH terminal sessions with xterm.js rendering.
 - Multiple terminal tabs with reusable terminal instances.
 - Local terminal mode for opening a shell on the current machine.
-- Session profiles with labels, groups, host, port, username, password or private-key authentication.
-- SFTP file browser for remote SSH sessions, with upload, download, rename, delete, and chmod actions.
+- Session profiles with labels, groups, host, port, username, password or private-key authentication, and SSH jump host support.
+- SFTP file browser for remote SSH sessions, with upload, download, rename, delete, and chmod actions; transfers are queued and persisted with progress records.
 - Remote SFTP panel follows the terminal-reported current working directory when the shell emits OSC cwd reports.
-- Settings for theme, font, cursor, scrollback, host-key checking, and known hosts.
+- Zmodem (`sz`/`rz`) file transfer support over SSH terminals.
+- AI sidebar: chat with an OpenAI-compatible model that can run/read terminal commands (with human approval unless auto-exec is enabled) and run web searches (DuckDuckGo, SearXNG, Brave, SerpAPI, Bing, or a custom JSON endpoint).
+- Grouped quick-command bar with escape sequences and keyboard shortcuts.
+- Settings for theme, color scheme, font, cursor, scrollback, host-key checking, known hosts, and interface language (English, Simplified/Traditional Chinese), applied live with no Save/Discard step.
+- YAML config import/export for sessions and settings.
 - Cross-platform app packaging through Wails.
 
 ## Tech Stack
 
 - Backend: Go, Wails v2, `golang.org/x/crypto/ssh`, `github.com/pkg/sftp`, SQLite via `modernc.org/sqlite`.
 - Frontend: Vite, vanilla JavaScript, xterm.js.
+- AI sidebar: any OpenAI-compatible chat completions API (configurable base URL, key, model).
 - Desktop shell: Wails native window with embedded frontend assets.
 
 ## Requirements
@@ -99,20 +104,26 @@ make clean
 ├── app.go                  # Wails-bound backend methods
 ├── main.go                 # Wails app bootstrap and window options
 ├── backend/
-│   ├── ssh/                # SSH, PTY, SFTP, keys, known_hosts
-│   ├── local/              # Local terminal sessions
-│   └── storage/            # SQLite-backed sessions and settings
+│   ├── ai/                  # AI sidebar agent: chat client, tools, web search
+│   ├── ssh/                 # SSH, PTY, SFTP, keys, known_hosts
+│   ├── local/                # Local terminal sessions
+│   ├── termout/              # Terminal output capture/buffering
+│   └── storage/              # SQLite-backed sessions, settings, AI chat history, YAML export/import
 ├── frontend/
 │   ├── index.html
 │   └── src/
-│       ├── api.js          # Wails IPC wrappers
-│       ├── main.js         # App shell, tabs, panels, shortcuts
-│       ├── terminal.js     # xterm.js lifecycle and terminal events
-│       ├── sftp.js         # SFTP panel and transfer UI
-│       └── settings.js     # Settings panel
-├── prototypes/             # Static design prototypes
-├── build/                  # Generated app binaries
-└── wails.json              # Wails configuration
+│       ├── api.js           # Wails IPC wrappers
+│       ├── main.js          # App shell, tabs, panels, shortcuts
+│       ├── terminal.js      # xterm.js lifecycle and terminal events
+│       ├── sftp.js          # SFTP panel and transfer UI
+│       ├── zmodem.js        # sz/rz file transfer over the terminal
+│       ├── ai-sidebar.js    # AI chat sidebar UI
+│       ├── quick-command.js # Grouped quick-command bar
+│       ├── i18n.js          # Interface language strings
+│       └── settings.js      # Settings panel
+├── prototypes/              # Static design prototypes
+├── build/                   # Generated app binaries
+└── wails.json               # Wails configuration
 ```
 
 ## Runtime Data
@@ -133,6 +144,13 @@ Do not commit local databases, private keys, passwords, or known-host data.
 - The SFTP remote pane uses the terminal's reported current directory when available, then falls back to the SFTP session working directory.
 - Host-key verification is enabled by default. Unknown hosts are prompted and can be stored in `known_hosts`.
 - Private keys can be selected and validated from the profile form.
+
+## AI Sidebar Notes
+
+- Configure the AI sidebar in Settings: enable it, then set an OpenAI-compatible base URL, API key, and model.
+- When a terminal tab is active, the model can call `terminal_run` (sends a command, pauses for human approval unless auto-exec is on for that chat) and `terminal_read` (reads recent output without sending input).
+- The `websearch` tool runs automatically without approval since it only performs outbound read-only HTTP requests; pick the engine and endpoint/key in Settings (defaults to DuckDuckGo, which needs no key).
+- Chat history is stored locally per terminal target and is never included in YAML config export/import.
 
 ## Keyboard Shortcuts
 
