@@ -608,11 +608,17 @@ function cardOrPlaceholder(toolCallID, tool, command) {
   card.className = 'ai-tool-card';
   const cmdEl = document.createElement('div');
   cmdEl.className = 'ai-tool-card-command';
-  cmdEl.textContent = tool === 'terminal_read' ? t('aiSidebar.readAction') : '$ ' + command;
+  cmdEl.textContent = toolLabel(tool, command);
   card.appendChild(cmdEl);
   messagesContainer()?.appendChild(card);
   cardsByToolCallID[toolCallID] = card;
   return card;
+}
+
+function toolLabel(tool, command) {
+  if (tool === 'terminal_read') return t('aiSidebar.readAction');
+  if (tool === 'websearch') return t('aiSidebar.webSearchAction', { q: command || '' });
+  return '$ ' + command;
 }
 
 // ── History rendering (on chat open) ────────────────────────────────────────
@@ -656,9 +662,9 @@ function renderHistoricalToolCall(call, resultMsg) {
   const container = messagesContainer();
   if (!container) return;
 
-  let command = '';
-  try { command = JSON.parse(call.function?.arguments || '{}').command || ''; } catch { command = ''; }
-  const isRead = call.function?.name === 'terminal_read';
+  let args = {};
+  try { args = JSON.parse(call.function?.arguments || '{}'); } catch { args = {}; }
+  const command = call.function?.name === 'websearch' ? (args.query || '') : (args.command || '');
   const rejected = resultMsg?.content === 'User declined to run this command.';
 
   const card = document.createElement('div');
@@ -666,7 +672,7 @@ function renderHistoricalToolCall(call, resultMsg) {
 
   const cmdEl = document.createElement('div');
   cmdEl.className = 'ai-tool-card-command';
-  cmdEl.textContent = isRead ? t('aiSidebar.readAction') : '$ ' + command;
+  cmdEl.textContent = toolLabel(call.function?.name, command);
   card.appendChild(cmdEl);
 
   if (rejected) {

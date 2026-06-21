@@ -2,9 +2,8 @@ package ai
 
 import "encoding/json"
 
-// TerminalTools returns the function-calling tools exposed to the model so
-// it can interact with the user's currently active terminal session.
-func TerminalTools() []Tool {
+// AgentTools returns the function-calling tools exposed to the model.
+func AgentTools() []Tool {
 	return []Tool{
 		{
 			Type: "function",
@@ -28,6 +27,21 @@ func TerminalTools() []Tool {
 				Description: "Read the terminal's most recent output without sending any input. Use this to " +
 					"check on a long-running command you previously started with terminal_run.",
 				Parameters: json.RawMessage(`{"type": "object", "properties": {}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name: "websearch",
+				Description: "Search the web for current or external information and return a concise " +
+					"summary with result titles and links. Use this when the user's question needs up-to-date facts.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"query": {"type": "string", "description": "The web search query."}
+					},
+					"required": ["query"]
+				}`),
 			},
 		},
 	}

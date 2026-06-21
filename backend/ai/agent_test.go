@@ -342,6 +342,71 @@ func TestRunTurnAutoExecSkipsApprovalCard(t *testing.T) {
 	}
 }
 
+func TestRunTurnWebSearchTool(t *testing.T) {
+	searchSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("q"); got != "golang release" {
+			t.Fatalf("search query = %q, want %q", got, "golang release")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"Heading":"Go",
+			"AbstractText":"Go is an open source programming language.",
+			"AbstractURL":"https://go.dev/",
+			"RelatedTopics":[{"Text":"Go releases - Release history","FirstURL":"https://go.dev/doc/devel/release"}]
+		}`))
+	}))
+	defer searchSrv.Close()
+
+	aiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if !requestHasToolResult(r) {
+			_, _ = w.Write([]byte(sseBody(
+				`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_search","type":"function","function":{"name":"websearch","arguments":"{\"query\":\"golang release\"}"}}]},"finish_reason":null}]}`,
+				`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			)))
+			return
+		}
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"content":"Found it."},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		)))
+	}))
+	defer aiSrv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, aiSrv.URL)
+	settings, err := st.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	settings.AIWebSearchEngine = "duckduckgo"
+	settings.AIWebSearchEndpoint = searchSrv.URL
+	if err := st.SaveSettings(*settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Search"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	rec := newEventRecorder()
+	ag := NewAgent(st, &fakeTerminalIO{}, rec.emit)
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, UserText: "search latest Go release"})
+
+	result := rec.waitFor(t, "ai:tool_result:"+sess.ID, 2*time.Second).(map[string]any)
+	if result["tool"] != "websearch" {
+		t.Fatalf("tool = %v, want websearch", result["tool"])
+	}
+	if result["command"] != "golang release" {
+		t.Fatalf("command = %v, want golang release", result["command"])
+	}
+	output, _ := result["output"].(string)
+	if !strings.Contains(output, "Go is an open source programming language.") {
+		t.Fatalf("output = %q, want search summary", output)
+	}
+	rec.waitFor(t, "ai:done:"+sess.ID, time.Second)
+}
+
 func TestRunTurnMaxRoundsTriggersError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

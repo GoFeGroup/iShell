@@ -30,29 +30,47 @@ type Session struct {
 }
 
 type Settings struct {
-	Theme              string              `json:"theme" yaml:"theme"`
-	ColorScheme        string              `json:"color_scheme" yaml:"color_scheme"`
-	FontFamily         string              `json:"font_family" yaml:"font_family"`
-	FontSize           int                 `json:"font_size" yaml:"font_size"`
-	LineHeight         float64             `json:"line_height" yaml:"line_height"`
-	Scrollback         int                 `json:"scrollback" yaml:"scrollback"`
-	CursorStyle        string              `json:"cursor_style" yaml:"cursor_style"`
-	CursorBlink        bool                `json:"cursor_blink" yaml:"cursor_blink"`
-	CopyOnSelect       bool                `json:"copy_on_select" yaml:"copy_on_select"`
-	BellStyle          string              `json:"bell_style" yaml:"bell_style"`
-	Ligatures          bool                `json:"ligatures" yaml:"ligatures"`
-	DefaultAuth        string              `json:"default_auth" yaml:"default_auth"`
-	DefaultKeyPath     string              `json:"default_key_path" yaml:"default_key_path"`
-	StrictHostKey      bool                `json:"strict_host_key" yaml:"strict_host_key"`
-	KnownHostsPath     string              `json:"known_hosts_path" yaml:"known_hosts_path"`
-	QuickCommands      []QuickCommand      `json:"quick_commands" yaml:"quick_commands"`
-	QuickCommandGroups []QuickCommandGroup `json:"quick_command_groups" yaml:"quick_command_groups"`
-	ShowQuickCommands  bool                `json:"show_quick_commands" yaml:"show_quick_commands"`
-	Language           string              `json:"language" yaml:"language"`
-	AIEnabled          bool                `json:"ai_enabled" yaml:"ai_enabled"`
-	AIAPIKey           string              `json:"ai_api_key" yaml:"ai_api_key"`
-	AIBaseURL          string              `json:"ai_base_url" yaml:"ai_base_url"`
-	AIModel            string              `json:"ai_model" yaml:"ai_model"`
+	Theme               string              `json:"theme" yaml:"theme"`
+	ColorScheme         string              `json:"color_scheme" yaml:"color_scheme"`
+	FontFamily          string              `json:"font_family" yaml:"font_family"`
+	FontSize            int                 `json:"font_size" yaml:"font_size"`
+	LineHeight          float64             `json:"line_height" yaml:"line_height"`
+	Scrollback          int                 `json:"scrollback" yaml:"scrollback"`
+	CursorStyle         string              `json:"cursor_style" yaml:"cursor_style"`
+	CursorBlink         bool                `json:"cursor_blink" yaml:"cursor_blink"`
+	CopyOnSelect        bool                `json:"copy_on_select" yaml:"copy_on_select"`
+	BellStyle           string              `json:"bell_style" yaml:"bell_style"`
+	Ligatures           bool                `json:"ligatures" yaml:"ligatures"`
+	DefaultAuth         string              `json:"default_auth" yaml:"default_auth"`
+	DefaultKeyPath      string              `json:"default_key_path" yaml:"default_key_path"`
+	StrictHostKey       bool                `json:"strict_host_key" yaml:"strict_host_key"`
+	KnownHostsPath      string              `json:"known_hosts_path" yaml:"known_hosts_path"`
+	QuickCommands       []QuickCommand      `json:"quick_commands" yaml:"quick_commands"`
+	QuickCommandGroups  []QuickCommandGroup `json:"quick_command_groups" yaml:"quick_command_groups"`
+	ShowQuickCommands   bool                `json:"show_quick_commands" yaml:"show_quick_commands"`
+	Language            string              `json:"language" yaml:"language"`
+	AIEnabled           bool                `json:"ai_enabled" yaml:"ai_enabled"`
+	AIAPIKey            string              `json:"ai_api_key" yaml:"ai_api_key"`
+	AIBaseURL           string              `json:"ai_base_url" yaml:"ai_base_url"`
+	AIModel             string              `json:"ai_model" yaml:"ai_model"`
+	AIWebSearchEngine   string              `json:"ai_web_search_engine" yaml:"ai_web_search_engine"`
+	AIWebSearchEndpoint string              `json:"ai_web_search_endpoint" yaml:"ai_web_search_endpoint"`
+	AIWebSearchAPIKey   string              `json:"ai_web_search_api_key" yaml:"ai_web_search_api_key"`
+}
+
+func DefaultWebSearchEndpoint(engine string) string {
+	switch engine {
+	case "searxng":
+		return "https://searx.be/search"
+	case "brave":
+		return "https://api.search.brave.com/res/v1/web/search"
+	case "serpapi":
+		return "https://serpapi.com/search.json"
+	case "bing":
+		return "https://api.bing.microsoft.com/v7.0/search"
+	default:
+		return "https://api.duckduckgo.com/"
+	}
 }
 
 // AIChatSession is a single AI chat conversation, managed from the AI
@@ -93,26 +111,28 @@ type QuickCommandGroup struct {
 
 func DefaultSettings() Settings {
 	return Settings{
-		Theme:              "dark",
-		ColorScheme:        "catppuccin",
-		FontFamily:         "Cascadia Code, JetBrains Mono, Consolas, monospace",
-		FontSize:           16,
-		LineHeight:         1.5,
-		Scrollback:         10000,
-		CursorStyle:        "block",
-		CursorBlink:        true,
-		CopyOnSelect:       false,
-		BellStyle:          "visual",
-		Ligatures:          true,
-		DefaultAuth:        "key",
-		StrictHostKey:      true,
-		KnownHostsPath:     "",
-		QuickCommands:      []QuickCommand{},
-		QuickCommandGroups: []QuickCommandGroup{},
-		ShowQuickCommands:  true,
-		Language:           "auto",
-		AIEnabled:          false,
-		AIBaseURL:          "https://api.openai.com/v1",
-		AIModel:            "gpt-4o-mini",
+		Theme:               "dark",
+		ColorScheme:         "catppuccin",
+		FontFamily:          "Cascadia Code, JetBrains Mono, Consolas, monospace",
+		FontSize:            16,
+		LineHeight:          1.5,
+		Scrollback:          10000,
+		CursorStyle:         "block",
+		CursorBlink:         true,
+		CopyOnSelect:        false,
+		BellStyle:           "visual",
+		Ligatures:           true,
+		DefaultAuth:         "key",
+		StrictHostKey:       true,
+		KnownHostsPath:      "",
+		QuickCommands:       []QuickCommand{},
+		QuickCommandGroups:  []QuickCommandGroup{},
+		ShowQuickCommands:   true,
+		Language:            "auto",
+		AIEnabled:           false,
+		AIBaseURL:           "https://api.openai.com/v1",
+		AIModel:             "gpt-4o-mini",
+		AIWebSearchEngine:   "duckduckgo",
+		AIWebSearchEndpoint: DefaultWebSearchEndpoint("duckduckgo"),
 	}
 }

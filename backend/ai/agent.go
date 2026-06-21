@@ -18,7 +18,7 @@ const (
 	approvalTimeout  = 10 * time.Minute       // how long a pending command waits for human approval before auto-rejecting
 )
 
-const systemPrompt = `You are an AI assistant embedded in the iShell terminal application. You can chat with the user, and when a terminal tab is active you may call the terminal_run and terminal_read tools to interact with it directly: terminal_run sends a command (followed by Enter) to the terminal and returns the output produced shortly after; terminal_read checks the terminal's most recent output without sending anything, which is useful for checking on a long-running command. Only call these tools when the user's request requires interacting with their terminal. If no terminal tab is active and the user asks you to run something, tell them to open a terminal tab first instead of calling the tools.`
+const systemPrompt = `You are an AI assistant embedded in the iShell terminal application. You can chat with the user, call websearch for current or external information, and when a terminal tab is active you may call the terminal_run and terminal_read tools to interact with it directly: terminal_run sends a command (followed by Enter) to the terminal and returns the output produced shortly after; terminal_read checks the terminal's most recent output without sending anything, which is useful for checking on a long-running command. Only call the terminal tools when the user's request requires interacting with their terminal. If no terminal tab is active and the user asks you to run something, tell them to open a terminal tab first instead of calling the terminal tools.`
 
 // TerminalIO abstracts the local/ssh manager dispatch that *backend.App
 // already performs for SendInput, so this package never imports
@@ -243,7 +243,7 @@ func (ag *Agent) runRound(ctx context.Context, client *Client, opts RunOptions, 
 	var toolCalls []ToolCall
 	var finishReason string
 
-	err := client.StreamChatCompletion(ctx, history, TerminalTools(), StreamHandler{
+	err := client.StreamChatCompletion(ctx, history, AgentTools(), StreamHandler{
 		OnDelta: func(delta string) {
 			content.WriteString(delta)
 			ag.emit("ai:delta:"+opts.ChatID, map[string]string{"content": delta})
@@ -267,6 +267,10 @@ func (ag *Agent) runRound(ctx context.Context, client *Client, opts RunOptions, 
 // "error: ..." text so the model can react instead of aborting the turn.
 func (ag *Agent) handleToolCall(ctx context.Context, opts RunOptions, call ToolCall, autoExec bool) string {
 	switch call.Function.Name {
+	case "websearch":
+		// Web searches are read-only network requests from local settings, so
+		// they intentionally bypass the terminal command approval flow.
+		return ag.handleWebSearch(ctx, opts, call)
 	case "terminal_read":
 		if opts.ConnID == "" {
 			return "error: no active terminal tab to read from"

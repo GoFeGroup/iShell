@@ -65,7 +65,7 @@ func TestStreamChatCompletionReassemblesToolCallFragments(t *testing.T) {
 
 	c := NewClient(srv.URL, "key", "model")
 	var calls []ToolCall
-	err := c.StreamChatCompletion(context.Background(), nil, TerminalTools(), StreamHandler{
+	err := c.StreamChatCompletion(context.Background(), nil, AgentTools(), StreamHandler{
 		OnToolCall: func(tc []ToolCall) { calls = tc },
 	})
 	if err != nil {
