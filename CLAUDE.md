@@ -9,7 +9,7 @@ make dev                  # wails dev — Go + Vite hot reload
 make build                # build for current platform
 make build-mac-arm64      # macOS Apple Silicon
 make build-mac-amd64      # macOS Intel
-make build-windows        # cross-compile Windows (requires: brew install mingw-w64)
+make build-windows        # cross-compile Windows
 make build-windows-installer  # Windows NSIS installer (requires: brew install nsis)
 make clean
 

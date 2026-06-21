@@ -32,7 +32,7 @@ build-mac: build-mac-arm64
 		$(BUILD_DIR)/$(APP_NAME)-amd64
 	@echo "=> $(BUILD_DIR)/$(APP_NAME)-universal"
 
-## 构建 Windows AMD64（需要安装 mingw-w64: brew install mingw-w64）
+## 构建 Windows AMD64
 build-windows:
 	wails build -platform windows/amd64
 	@echo "=> $(BUILD_DIR)/$(APP_NAME).exe"

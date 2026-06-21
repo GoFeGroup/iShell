@@ -57,7 +57,7 @@ Otherwise, choose defaults from the current platform:
 - **Options**:
   - `macOS ARM64 (Apple Silicon)` — `wails build -platform darwin/arm64`
   - `macOS Intel (AMD64)` — `wails build -platform darwin/amd64`
-  - `Windows AMD64 (.exe)` — `wails build -platform windows/amd64`（需要 brew install mingw-w64）
+  - `Windows AMD64 (.exe)` — `wails build -platform windows/amd64`
   - `Windows 安装包 (.exe installer)` — `wails build -platform windows/amd64 -nsis`（需要 brew install nsis）
 
 ## Step 4: Build
