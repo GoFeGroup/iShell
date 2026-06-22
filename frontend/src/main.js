@@ -1,6 +1,7 @@
 import '@xterm/xterm/css/xterm.css';
 import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off, getSettings, sendInput, launchNewInstance } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
+import { openProfileForm } from './profile-form.js';
 import { initProfilePicker, openProfilePicker } from './profile-picker.js';
 import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTerminalViewport } from './terminal.js';
 import { initSFTP } from './sftp.js';
@@ -15,11 +16,12 @@ import { t, applyI18nAttrs, setLanguage, getLanguagePref } from './i18n.js';
 applyI18nAttrs();
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let tabs = [];          // terminal/sftp: { type, id, connID, sessionID, sessionLabel, host, username }; settings: { type, id, sessionLabel }
+let tabs = [];          // terminal/sftp: { type, id, connID, sessionID, sessionLabel, host, username }; pending/failed terminal: { type, id, sess, error }; settings: { type, id, sessionLabel }
 let activeTab = null;
 let settings = null;
 let isFullscreen = false;
-const pendingConnects = {}; // sessionID → { sess, req } — kept until host key dialog resolves
+const pendingConnects = {}; // sessionID → { sess, req, tab, attemptID } — kept until host key dialog resolves
+let connectAttemptSeq = 0;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
@@ -103,34 +105,52 @@ async function onConnectRequest(sess) {
   if (sess.type === 'local') {
     return onLocalConnectRequest(sess);
   }
+  const tab = createPendingTerminalTab(sess);
+  await switchToTab(tab);
+  await connectRemoteTab(tab);
+}
+
+async function connectRemoteTab(tab, overrides = {}) {
+  const sess = tab.sess;
   showToast(t('toast.connecting', { host: sess.host }));
   setSessionStatus(sess.id, 'connecting');
-
-  const el = document.getElementById('terminal-container');
-  const cols = Math.floor((el?.clientWidth || 800) / 8);
-  const rows = Math.floor((el?.clientHeight || 400) / 17);
 
   const req = {
     session_id: sess.id,
     password: sess.auth_type === 'password' ? sess.password : '',
     key_path: sess.auth_type === 'key' ? sess.key_path : '',
     passphrase: sess.auth_type === 'key' ? sess.passphrase : '',
-    cols, rows,
+    ...getTerminalSize(),
+    ...overrides,
   };
+  const attemptID = ++connectAttemptSeq;
+  tab.attemptID = attemptID;
+  tab.type = 'terminal-pending';
+  tab.error = '';
+  tab.pendingMessage = '';
+  renderTabs();
+  if (activeTab === tab) renderTerminalState(tab);
 
   // Store for potential host-key retry
-  pendingConnects[sess.id] = { sess, req };
+  pendingConnects[sess.id] = { sess, req, tab, attemptID };
 
   try {
     const connID = await connect(req);
+    if (tab.closed || tab.attemptID !== attemptID) {
+      disconnect(connID).catch(() => {});
+      return;
+    }
     delete pendingConnects[sess.id];
-    await afterConnect(connID, sess);
+    await afterConnect(connID, sess, tab);
   } catch (e) {
-    setSessionStatus(sess.id, 'disconnected');
-    if (isHostKeyPromptError(e)) return; // dialog will handle retry
-    delete pendingConnects[sess.id];
-    showToast(`❌ ${e}`);
-    alert(t('alert.connectionFailed', { e }));
+    if (tab.closed || tab.attemptID !== attemptID) return;
+    if (isHostKeyPromptError(e)) {
+      tab.pendingMessage = t('terminal.waitingHostKey');
+      renderTabs();
+      if (activeTab === tab) renderTerminalState(tab);
+      return; // dialog will handle retry/reject
+    }
+    failTerminalTab(tab, e);
   }
 }
 
@@ -138,9 +158,7 @@ async function onLocalConnectRequest(localSess) {
   showToast(t('toast.openingLocal', { sub: localSess.sublabel }));
   setSessionStatus('__local__', 'connecting');
 
-  const el = document.getElementById('terminal-container');
-  const cols = Math.floor((el?.clientWidth || 800) / 8);
-  const rows = Math.floor((el?.clientHeight || 400) / 17);
+  const { cols, rows } = getTerminalSize();
 
   try {
     const connID = await connectLocal(cols, rows);
@@ -157,18 +175,21 @@ async function onLocalConnectRequest(localSess) {
   }
 }
 
-async function afterConnect(connID, sess) {
-  const tab = {
+async function afterConnect(connID, sess, existingTab = null) {
+  const tab = existingTab || { id: 'tab-' + Date.now() };
+  Object.assign(tab, {
     type: 'terminal',
-    id: 'tab-' + Date.now(),
     connID,
     sessionID: sess.id,
     sessionLabel: sess.label || sess.host,
     host: sess.host,
     username: sess.username,
     isLocal: sess.id === '__local__',
-  };
-  tabs.push(tab);
+    sess: undefined,
+    error: undefined,
+    pendingMessage: undefined,
+  });
+  if (!tabs.includes(tab)) tabs.push(tab);
   renderTabs();
   switchToTab(tab);
   on('terminal:closed:' + connID, () => {
@@ -176,6 +197,103 @@ async function afterConnect(connID, sess) {
   });
   setSessionStatus(sess.id, 'connected');
   showToast(t('toast.connected', { host: sess.host }));
+}
+
+function getTerminalSize() {
+  const el = document.getElementById('terminal-container');
+  return {
+    cols: Math.floor((el?.clientWidth || 800) / 8),
+    rows: Math.floor((el?.clientHeight || 400) / 17),
+  };
+}
+
+function createPendingTerminalTab(sess) {
+  const tab = {
+    type: 'terminal-pending',
+    id: 'tab-pending-' + Date.now() + '-' + Math.random().toString(36).slice(2),
+    sessionID: sess.id,
+    sessionLabel: sess.label || sess.host,
+    host: sess.host,
+    username: sess.username,
+    sess: { ...sess },
+    error: '',
+    pendingMessage: '',
+  };
+  tabs.push(tab);
+  renderTabs();
+  return tab;
+}
+
+function failTerminalTab(tab, err) {
+  if (!tab || tab.closed) return;
+  if (tab.sessionID && pendingConnects[tab.sessionID]?.tab === tab) {
+    delete pendingConnects[tab.sessionID];
+  }
+  tab.type = 'terminal-failed';
+  tab.error = String(err?.message || err || t('terminal.unknownError'));
+  tab.pendingMessage = '';
+  setSessionStatus(tab.sessionID, 'disconnected');
+  renderTabs();
+  if (activeTab === tab) renderTerminalState(tab);
+  showToast(`❌ ${tab.error}`);
+}
+
+function renderTerminalState(tab) {
+  const container = document.getElementById('terminal-container');
+  if (!container) return;
+  container.innerHTML = '';
+  const isFailed = tab.type === 'terminal-failed';
+  const detail = formatSessionEndpoint(tab.sess || tab);
+  const message = isFailed
+    ? tab.error
+    : (tab.pendingMessage || t('terminal.connectingTo', { host: tab.host || tab.sessionLabel }));
+
+  const state = document.createElement('div');
+  state.className = 'terminal-state' + (isFailed ? ' failed' : '');
+  state.innerHTML = `
+    <div class="terminal-state-card">
+      <div class="terminal-state-icon">${isFailed ? '!' : ''}</div>
+      <div class="terminal-state-title">${escHtml(isFailed ? t('terminal.connectionFailedTitle') : t('terminal.connectingTitle'))}</div>
+      <div class="terminal-state-sub">${escHtml(tab.sessionLabel || '')}</div>
+      <div class="terminal-state-endpoint">${escHtml(detail)}</div>
+      <pre class="terminal-state-message">${escHtml(message)}</pre>
+      ${isFailed ? `
+        <div class="terminal-state-actions">
+          <button class="btn btn-primary btn-sm" data-action="retry">${t('terminal.retry')}</button>
+          <button class="btn btn-secondary btn-sm" data-action="edit">${t('terminal.editProfile')}</button>
+          <button class="btn btn-ghost btn-sm" data-action="close">${t('common.close')}</button>
+        </div>` : ''}
+    </div>`;
+  container.appendChild(state);
+
+  const status = document.getElementById('sb-status');
+  const size = document.getElementById('sb-size');
+  if (status) status.textContent = isFailed ? t('common.failed') : t('terminal.connectingStatus');
+  if (size) size.textContent = '-';
+
+  if (isFailed) {
+    state.querySelector('[data-action="retry"]')?.addEventListener('click', () => connectRemoteTab(tab));
+    state.querySelector('[data-action="edit"]')?.addEventListener('click', () => {
+      openProfileForm(tab.sess, (saved) => {
+        loadProfiles();
+        tab.sess = { ...saved };
+        tab.sessionID = saved.id;
+        tab.sessionLabel = saved.label || saved.host;
+        tab.host = saved.host;
+        tab.username = saved.username;
+        renderTabs();
+        if (activeTab === tab) renderTerminalState(tab);
+      });
+    });
+    state.querySelector('[data-action="close"]')?.addEventListener('click', () => closeTab(tab));
+  }
+}
+
+function formatSessionEndpoint(sess) {
+  const user = sess.username ? `${sess.username}@` : '';
+  const host = sess.host || sess.sessionLabel || '';
+  const port = sess.port || 22;
+  return `${user}${host}${host ? ':' + port : ''}`;
 }
 
 async function doDisconnect(connID) {
@@ -206,11 +324,13 @@ function renderTabs() {
   tabs.forEach((tab, idx) => {
     const isSettings = tab.type === 'settings';
     const isSFTP = tab.type === 'sftp';
+    const isFailed = tab.type === 'terminal-failed';
+    const isPending = tab.type === 'terminal-pending';
     const el = document.createElement('div');
-    el.className = 'tab' + (tab === activeTab ? ' active' : '');
+    el.className = 'tab' + (tab === activeTab ? ' active' : '') + (isFailed ? ' failed' : '');
     el.dataset.tabId = tab.id;
     el.innerHTML = `
-      ${isSettings ? '<span class="tab-icon">⚙</span>' : isSFTP ? '<span class="tab-icon">📁</span>' : '<div class="status-dot connected" style="width:6px;height:6px;"></div>'}
+      ${isSettings ? '<span class="tab-icon">⚙</span>' : isSFTP ? '<span class="tab-icon">📁</span>' : `<div class="status-dot ${isFailed ? 'failed' : isPending ? 'connecting' : 'connected'}" style="width:6px;height:6px;"></div>`}
       <span>${escHtml(tab.sessionLabel)}</span>
       <span class="tab-num">${idx + 1}</span>
       <button class="tab-close">✕</button>`;
@@ -253,12 +373,24 @@ async function switchToTab(tab) {
     await initSFTP(tab.connID);
     return;
   }
+  if (tab.type === 'terminal-pending' || tab.type === 'terminal-failed') {
+    activeTab = tab;
+    renderTabs();
+    showPanel('terminal');
+    updateConnUI(null);
+    updateQuickCommandUI();
+    renderTerminalState(tab);
+    notifyActiveTerminalChanged();
+    return;
+  }
   activeTab = tab;
   renderTabs();
   showPanel('terminal');
   updateConnUI(tab);
   updateQuickCommandUI();
   createTerminal(tab.connID, settings);
+  const status = document.getElementById('sb-status');
+  if (status) status.textContent = t('common.connected');
   refitActiveTerminal({ restoreScroll: true });
   focusTerminal(tab.connID);
   notifyActiveTerminalChanged();
@@ -281,6 +413,10 @@ function closeTab(tab) {
     closeSFTPTab(tab);
     return;
   }
+  if (tab.type === 'terminal-pending' || tab.type === 'terminal-failed') {
+    closeTransientTerminalTab(tab);
+    return;
+  }
   if (isTerminalTab(tab)) doDisconnect(tab.connID);
 }
 
@@ -297,6 +433,20 @@ function closeSettingsTab() {
 function closeSFTPTab(tab) {
   const closedIndex = tabs.indexOf(tab);
   const wasActive = tab === activeTab;
+  tabs = tabs.filter(t => t !== tab);
+  renderTabs();
+  if (wasActive) activateFallbackTab(closedIndex);
+}
+
+function closeTransientTerminalTab(tab) {
+  const closedIndex = tabs.indexOf(tab);
+  const wasActive = tab === activeTab;
+  tab.closed = true;
+  tab.attemptID = -1;
+  if (tab.sessionID && pendingConnects[tab.sessionID]?.tab === tab) {
+    delete pendingConnects[tab.sessionID];
+    setSessionStatus(tab.sessionID, 'disconnected');
+  }
   tabs = tabs.filter(t => t !== tab);
   renderTabs();
   if (wasActive) activateFallbackTab(closedIndex);
@@ -521,7 +671,7 @@ function showHostKeyDialog(data) {
   document.getElementById('hostkey-reject').onclick = () => {
     close();
     const pending = findPendingConnect(session_id, hostname);
-    if (pending) delete pendingConnects[pending.sess.id];
+    if (pending) failTerminalTab(pending.tab, t('terminal.hostKeyRejected'));
     showToast(t('toast.connectionRejected'));
   };
 
@@ -530,14 +680,7 @@ function showHostKeyDialog(data) {
     const pending = findPendingConnect(session_id, hostname);
     if (!pending) { showToast(t('toast.noPendingConnection')); return; }
     delete pendingConnects[pending.sess.id];
-    setSessionStatus(pending.sess.id, 'connecting');
-    try {
-      const connID = await connect({ ...pending.req, skip_host_key_check: true });
-      await afterConnect(connID, pending.sess);
-    } catch (e) {
-      setSessionStatus(pending.sess.id, 'disconnected');
-      showToast(`❌ ${e}`);
-    }
+    await connectRemoteTab(pending.tab, { skip_host_key_check: true });
   };
 
   document.getElementById('hostkey-always').onclick = async () => {
@@ -550,14 +693,7 @@ function showHostKeyDialog(data) {
     } catch (e) {
       showToast(t('toast.hostKeySaveFailed', { e }));
     }
-    setSessionStatus(pending.sess.id, 'connecting');
-    try {
-      const connID = await connect({ ...pending.req, skip_host_key_check: true });
-      await afterConnect(connID, pending.sess);
-    } catch (e) {
-      setSessionStatus(pending.sess.id, 'disconnected');
-      showToast(`❌ ${e}`);
-    }
+    await connectRemoteTab(pending.tab, { skip_host_key_check: true });
   };
 }
 
