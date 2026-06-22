@@ -90,9 +90,14 @@ func (s *Store) DeleteAIChatSession(id string) error {
 // ── AI chat messages ────────────────────────────────────────────────────────
 
 func (s *Store) ListAIChatMessages(sessionID string) ([]AIChatMessage, error) {
+	// created_at has only second resolution, so messages appended within the
+	// same second (e.g. an assistant tool_calls message followed immediately
+	// by its tool results) can tie; ordering by rowid instead guarantees the
+	// exact insertion order, which the OpenAI-style API requires (a "tool"
+	// message must directly follow the assistant message that called it).
 	rows, err := s.db.Query(`
 		SELECT id, session_id, role, content, tool_calls, tool_call_id, created_at
-		FROM ai_chat_messages WHERE session_id = ? ORDER BY created_at, id`, sessionID)
+		FROM ai_chat_messages WHERE session_id = ? ORDER BY rowid`, sessionID)
 	if err != nil {
 		return nil, err
 	}
