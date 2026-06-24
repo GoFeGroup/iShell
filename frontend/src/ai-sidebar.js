@@ -49,15 +49,24 @@ function savedSidebarWidth() {
 // Width is applied as an inline style (not left to the .collapsed CSS class
 // alone) so a user-dragged width survives collapse/expand — inline style
 // always wins over the class rule, so collapsing must explicitly set 0 too.
+//
+// #ai-sidebar-inner is kept at the resting width at all times (even while
+// collapsed) so the open/close transition only animates the outer clip —
+// the chat content never re-wraps mid-animation, which is what made the
+// transition janky once a chat had a lot of history.
 function applySidebarWidth() {
   const sidebar = document.getElementById('ai-sidebar');
+  const inner = document.getElementById('ai-sidebar-inner');
   if (!sidebar) return;
-  sidebar.style.width = sidebar.classList.contains('collapsed') ? '0px' : savedSidebarWidth() + 'px';
+  const width = savedSidebarWidth();
+  sidebar.style.width = sidebar.classList.contains('collapsed') ? '0px' : width + 'px';
+  if (inner) inner.style.width = width + 'px';
 }
 
 function initResizer() {
   const resizer = document.getElementById('ai-sidebar-resizer');
   const sidebar = document.getElementById('ai-sidebar');
+  const inner = document.getElementById('ai-sidebar-inner');
   if (!resizer || !sidebar) return;
   applySidebarWidth();
 
@@ -67,6 +76,7 @@ function initResizer() {
   function onMouseMove(e) {
     const next = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, startWidth + (startX - e.clientX)));
     sidebar.style.width = next + 'px';
+    if (inner) inner.style.width = next + 'px';
   }
   function onMouseUp() {
     document.removeEventListener('mousemove', onMouseMove);

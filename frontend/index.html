@@ -132,13 +132,15 @@
 
       <div class="ai-sidebar-resizer" id="ai-sidebar-resizer" style="display:none;"></div>
       <aside class="ai-sidebar collapsed" id="ai-sidebar">
-        <div class="ai-sidebar-header">
-          <button class="btn btn-ghost btn-icon" id="ai-back" title="Other chats for this terminal" data-i18n-title="aiSidebar.back" style="display:none;">←</button>
-          <div class="ai-sidebar-title" data-i18n="aiSidebar.title">AI Assistant</div>
-          <button class="btn btn-ghost btn-icon" id="ai-close" title="Close" data-i18n-title="common.close">✕</button>
+        <div class="ai-sidebar-inner" id="ai-sidebar-inner">
+          <div class="ai-sidebar-header">
+            <button class="btn btn-ghost btn-icon" id="ai-back" title="Other chats for this terminal" data-i18n-title="aiSidebar.back" style="display:none;">←</button>
+            <div class="ai-sidebar-title" data-i18n="aiSidebar.title">AI Assistant</div>
+            <button class="btn btn-ghost btn-icon" id="ai-close" title="Close" data-i18n-title="common.close">✕</button>
+          </div>
+          <div id="ai-session-list" class="ai-session-list" style="display:none;"></div>
+          <div id="ai-chat-view" class="ai-chat-view" style="display:none;"></div>
         </div>
-        <div id="ai-session-list" class="ai-session-list" style="display:none;"></div>
-        <div id="ai-chat-view" class="ai-chat-view" style="display:none;"></div>
       </aside>
     </div>
 
