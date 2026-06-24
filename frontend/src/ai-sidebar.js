@@ -388,8 +388,18 @@ function buildChatViewSkeleton(chatView) {
   textarea.id = 'ai-chat-input';
   textarea.rows = 1;
   textarea.placeholder = t('aiSidebar.inputPlaceholder');
+  let composing = false;
+  let compositionJustEndedUntil = 0;
+  textarea.addEventListener('compositionstart', () => {
+    composing = true;
+  });
+  textarea.addEventListener('compositionend', () => {
+    composing = false;
+    compositionJustEndedUntil = Date.now() + 80;
+  });
   textarea.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.isComposing || composing || e.keyCode === 229 || Date.now() < compositionJustEndedUntil) return;
       e.preventDefault();
       handleSend();
     }
