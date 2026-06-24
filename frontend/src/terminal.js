@@ -262,7 +262,10 @@ export function createTerminal(connID, settings, options = {}) {
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
-  term.loadAddon(new WebLinksAddon());
+  term.loadAddon(new WebLinksAddon((event, uri) => {
+    if (!(isMac ? event.metaKey : event.altKey)) return;
+    window.runtime.BrowserOpenURL(uri);
+  }));
   term.open(xtermEl);
 
   // Parse CWD reports emitted by shells/terminal integrations.
