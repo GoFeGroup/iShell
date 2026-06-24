@@ -259,6 +259,145 @@ func TestRunTurnToolCallRequiresApproval(t *testing.T) {
 	rec.waitFor(t, "ai:done:"+sess.ID, time.Second)
 }
 
+func TestRunTurnCustomToolCallRendersTemplateAndRequiresApproval(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if !requestHasToolResult(r) {
+			_, _ = w.Write([]byte(sseBody(
+				`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"git_log","arguments":""}}]},"finish_reason":null}]}`,
+				`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"count\":\"5\"}"}}]},"finish_reason":null}]}`,
+				`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			)))
+			return
+		}
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"content":"Done."},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		)))
+	}))
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	settings, err := st.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	settings.CustomToolCalls = []storage.CustomToolCall{{
+		ID:              "tool-1",
+		Name:            "git_log",
+		Description:     "Show recent git commits.",
+		CommandTemplate: "git log -n {{count}}",
+		Parameters:      []storage.ToolCallParam{{Name: "count", Description: "Number of commits", Required: true}},
+		Enabled:         true,
+	}}
+	if err := st.SaveSettings(*settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Custom"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	term := &fakeTerminalIO{}
+	rec := newEventRecorder()
+	ag := NewAgent(st, term, rec.emit)
+
+	runDone := make(chan struct{})
+	go func() {
+		ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, ConnID: "conn-1", UserText: "show recent commits"})
+		close(runDone)
+	}()
+
+	toolCall := rec.waitFor(t, "ai:tool_call:"+sess.ID, 2*time.Second).(map[string]string)
+	if toolCall["command"] != "git log -n 5" {
+		t.Fatalf("command = %q, want %q", toolCall["command"], "git log -n 5")
+	}
+
+	if err := ag.ApproveToolCall(toolCall["pending_id"]); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunTurn did not finish after approval")
+	}
+
+	sent := term.sentCommands()
+	if len(sent) != 1 || sent[0] != "git log -n 5\n" {
+		t.Fatalf("sent = %v, want [%q]", sent, "git log -n 5\n")
+	}
+	rec.waitFor(t, "ai:done:"+sess.ID, time.Second)
+}
+
+func TestRunTurnCustomToolCallMissingRequiredParam(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if !requestHasToolResult(r) {
+			_, _ = w.Write([]byte(sseBody(
+				`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"git_log","arguments":"{}"}}]},"finish_reason":null}]}`,
+				`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			)))
+			return
+		}
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"content":"Missing count."},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		)))
+	}))
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	settings, err := st.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	settings.CustomToolCalls = []storage.CustomToolCall{{
+		ID:              "tool-1",
+		Name:            "git_log",
+		Description:     "Show recent git commits.",
+		CommandTemplate: "git log -n {{count}}",
+		Parameters:      []storage.ToolCallParam{{Name: "count", Description: "Number of commits", Required: true}},
+		Enabled:         true,
+	}}
+	if err := st.SaveSettings(*settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Custom Missing"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	term := &fakeTerminalIO{}
+	rec := newEventRecorder()
+	ag := NewAgent(st, term, rec.emit)
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, ConnID: "conn-1", UserText: "show recent commits"})
+
+	rec.waitFor(t, "ai:done:"+sess.ID, 2*time.Second)
+	if rec.has("ai:tool_call:" + sess.ID) {
+		t.Fatal("missing required parameter must not enter the approval flow")
+	}
+	if len(term.sentCommands()) != 0 {
+		t.Fatal("command must never be sent when a required parameter is missing")
+	}
+
+	msgs, err := st.ListAIChatMessages(sess.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	var toolMsg string
+	for _, m := range msgs {
+		if m.Role == "tool" {
+			toolMsg = m.Content
+		}
+	}
+	if !strings.Contains(toolMsg, `missing required parameter "count"`) {
+		t.Fatalf("tool message = %q, want missing-parameter error", toolMsg)
+	}
+}
+
 func TestRunTurnRejectToolCallSkipsExecution(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

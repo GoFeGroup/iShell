@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -24,7 +25,10 @@ const (
 	maxConsecutiveToolErrorRounds = 2
 )
 
-const systemPrompt = `You are an AI assistant embedded in the iShell terminal application. You can chat with the user, call websearch for current or external information, and when a terminal tab is active you may call the terminal_run and terminal_read tools to interact with it directly: terminal_run sends a command (followed by Enter) to the terminal and returns the output produced shortly after; terminal_read checks the terminal's most recent output without sending anything, which is useful for checking on a long-running command. Only call the terminal tools when the user's request requires interacting with their terminal. If no terminal tab is active and the user asks you to run something, tell them to open a terminal tab first instead of calling the terminal tools.`
+// placeholderPattern matches {{name}} command template placeholders.
+var placeholderPattern = regexp.MustCompile(`\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}`)
+
+const systemPrompt = `You are an AI assistant embedded in the iShell terminal application. You can chat with the user, call websearch for current or external information, and when a terminal tab is active you may call the terminal_run and terminal_read tools to interact with it directly: terminal_run sends a command (followed by Enter) to the terminal and returns the output produced shortly after; terminal_read checks the terminal's most recent output without sending anything, which is useful for checking on a long-running command. Only call the terminal tools when the user's request requires interacting with their terminal. If no terminal tab is active and the user asks you to run something, tell them to open a terminal tab first instead of calling the terminal tools. Additional tools beyond the ones described here may also be available for this conversation — consult each tool's own description to learn what it does and when to use it.`
 
 // TerminalIO abstracts the local/ssh manager dispatch that *backend.App
 // already performs for SendInput, so this package never imports
@@ -104,11 +108,12 @@ func (ag *Agent) RunTurn(ctx context.Context, opts RunOptions) {
 		cancel()
 	}()
 
-	client, err := ag.clientFromSettings()
+	settings, client, err := ag.loadSettingsAndClient()
 	if err != nil {
 		ag.emitError(opts.ChatID, err)
 		return
 	}
+	customTools := settings.CustomToolCalls
 
 	if _, err := ag.store.AppendAIChatMessage(storage.AIChatMessage{
 		SessionID: opts.ChatID, Role: "user", Content: opts.UserText,
@@ -125,7 +130,7 @@ func (ag *Agent) RunTurn(ctx context.Context, opts RunOptions) {
 			return
 		}
 
-		assistantMsg, finishReason, err := ag.runRound(runCtx, client, opts, history)
+		assistantMsg, finishReason, err := ag.runRound(runCtx, client, opts, history, customTools)
 		if err != nil {
 			ag.emitError(opts.ChatID, err)
 			return
@@ -154,7 +159,7 @@ func (ag *Agent) RunTurn(ctx context.Context, opts RunOptions) {
 
 		results := make([]toolCallResult, 0, len(assistantMsg.ToolCalls))
 		for _, call := range assistantMsg.ToolCalls {
-			result := ag.handleToolCall(runCtx, opts, call, autoExec)
+			result := ag.handleToolCall(runCtx, opts, call, autoExec, customTools)
 			if _, err := ag.store.AppendAIChatMessage(storage.AIChatMessage{
 				SessionID: opts.ChatID, Role: "tool", Content: result, ToolCallID: call.ID,
 			}); err != nil {
@@ -217,18 +222,18 @@ func (ag *Agent) StopRun(chatID string) {
 
 // ── internals ────────────────────────────────────────────────────────────────
 
-func (ag *Agent) clientFromSettings() (*Client, error) {
+func (ag *Agent) loadSettingsAndClient() (*storage.Settings, *Client, error) {
 	settings, err := ag.store.LoadSettings()
 	if err != nil {
-		return nil, fmt.Errorf("load settings: %w", err)
+		return nil, nil, fmt.Errorf("load settings: %w", err)
 	}
 	if !settings.AIEnabled {
-		return nil, fmt.Errorf("AI is not enabled in settings")
+		return nil, nil, fmt.Errorf("AI is not enabled in settings")
 	}
 	if settings.AIAPIKey == "" || settings.AIBaseURL == "" || settings.AIModel == "" {
-		return nil, fmt.Errorf("AI provider is not fully configured (key/base URL/model)")
+		return nil, nil, fmt.Errorf("AI provider is not fully configured (key/base URL/model)")
 	}
-	return NewClient(settings.AIBaseURL, settings.AIAPIKey, settings.AIModel), nil
+	return settings, NewClient(settings.AIBaseURL, settings.AIAPIKey, settings.AIModel), nil
 }
 
 func (ag *Agent) buildHistory(chatID string) ([]Message, error) {
@@ -251,8 +256,8 @@ func (ag *Agent) buildHistory(chatID string) ([]Message, error) {
 	return messages, nil
 }
 
-func (ag *Agent) runRound(ctx context.Context, client *Client, opts RunOptions, history []Message) (Message, string, error) {
-	return ag.runRoundWithTools(ctx, client, opts, history, AgentTools())
+func (ag *Agent) runRound(ctx context.Context, client *Client, opts RunOptions, history []Message, customTools []storage.CustomToolCall) (Message, string, error) {
+	return ag.runRoundWithTools(ctx, client, opts, history, BuildToolList(customTools))
 }
 
 func (ag *Agent) runRoundWithTools(ctx context.Context, client *Client, opts RunOptions, history []Message, tools []Tool) (Message, string, error) {
@@ -315,7 +320,7 @@ func (ag *Agent) finishAfterToolGuard(ctx context.Context, client *Client, opts 
 // tool call and returns the text to feed back to the model as the "tool"
 // role reply. It never returns an error directly — failures are encoded as
 // "error: ..." text so the model can react instead of aborting the turn.
-func (ag *Agent) handleToolCall(ctx context.Context, opts RunOptions, call ToolCall, autoExec bool) string {
+func (ag *Agent) handleToolCall(ctx context.Context, opts RunOptions, call ToolCall, autoExec bool, customTools []storage.CustomToolCall) string {
 	switch call.Function.Name {
 	case "websearch":
 		// Web searches are read-only network requests from local settings, so
@@ -336,6 +341,11 @@ func (ag *Agent) handleToolCall(ctx context.Context, opts RunOptions, call ToolC
 	case "terminal_run":
 		return ag.handleTerminalRun(ctx, opts, call, autoExec)
 	default:
+		for _, def := range customTools {
+			if def.Enabled && def.Name == call.Function.Name {
+				return ag.handleCustomToolCall(ctx, opts, call, def, autoExec)
+			}
+		}
 		return fmt.Sprintf("error: unknown tool %q", call.Function.Name)
 	}
 }
@@ -349,15 +359,68 @@ func (ag *Agent) handleTerminalRun(ctx context.Context, opts RunOptions, call To
 	if opts.ConnID == "" {
 		return "error: no active terminal tab to run commands in"
 	}
+	return ag.runApprovableCommand(ctx, opts, call, args.Command, autoExec)
+}
+
+// handleCustomToolCall renders a user-defined command template with the
+// model-supplied arguments and runs it through the same approval/auto-exec
+// flow as terminal_run.
+func (ag *Agent) handleCustomToolCall(ctx context.Context, opts RunOptions, call ToolCall, def storage.CustomToolCall, autoExec bool) string {
+	// Arguments are decoded into map[string]any rather than map[string]string
+	// because some models send numeric/boolean argument values; unmarshaling
+	// those into a string map fails outright and silently drops every
+	// parameter instead of just the offending one.
+	var rawArgs map[string]any
+	_ = json.Unmarshal([]byte(call.Function.Arguments), &rawArgs)
+	args := make(map[string]string, len(rawArgs))
+	for k, v := range rawArgs {
+		args[k] = fmt.Sprintf("%v", v)
+	}
+
+	for _, p := range def.Parameters {
+		if p.Required {
+			if v, ok := args[p.Name]; !ok || v == "" {
+				return fmt.Sprintf("error: missing required parameter %q", p.Name)
+			}
+		}
+	}
+
+	if opts.ConnID == "" {
+		return "error: no active terminal tab to run commands in"
+	}
+
+	command := renderCommandTemplate(def.CommandTemplate, args)
+	return ag.runApprovableCommand(ctx, opts, call, command, autoExec)
+}
+
+// renderCommandTemplate substitutes {{name}} placeholders with their string
+// value from args, then strips any placeholder that had no matching
+// argument (e.g. an optional parameter the model chose not to supply) so a
+// literal "{{x}}" never reaches the terminal.
+func renderCommandTemplate(template string, args map[string]string) string {
+	rendered := placeholderPattern.ReplaceAllStringFunc(template, func(match string) string {
+		name := strings.TrimSpace(match[2 : len(match)-2])
+		if v, ok := args[name]; ok {
+			return v
+		}
+		return match
+	})
+	return placeholderPattern.ReplaceAllString(rendered, "")
+}
+
+// runApprovableCommand is shared by terminal_run and every custom tool call:
+// it either runs the command immediately (auto-exec) or emits an approval
+// card and waits for the user's Run/Reject decision (or a timeout/cancel).
+func (ag *Agent) runApprovableCommand(ctx context.Context, opts RunOptions, call ToolCall, command string, autoExec bool) string {
 	if autoExec {
-		return ag.runCommand(ctx, opts, call, args.Command, true)
+		return ag.runCommand(ctx, opts, call, command, true)
 	}
 
 	pending := &PendingApproval{
 		ID:         uuid.NewString(),
 		ChatID:     opts.ChatID,
 		ToolCallID: call.ID,
-		Command:    args.Command,
+		Command:    command,
 		resultCh:   make(chan approvalResult, 1),
 	}
 	ag.mu.Lock()
@@ -370,7 +433,7 @@ func (ag *Agent) handleTerminalRun(ctx context.Context, opts RunOptions, call To
 	}()
 
 	ag.emit("ai:tool_call:"+opts.ChatID, map[string]string{
-		"pending_id": pending.ID, "tool_call_id": call.ID, "command": args.Command,
+		"pending_id": pending.ID, "tool_call_id": call.ID, "command": command,
 	})
 
 	select {
@@ -381,7 +444,7 @@ func (ag *Agent) handleTerminalRun(ctx context.Context, opts RunOptions, call To
 			})
 			return "User declined to run this command."
 		}
-		return ag.runCommand(ctx, opts, call, args.Command, false)
+		return ag.runCommand(ctx, opts, call, command, false)
 	case <-time.After(approvalTimeout):
 		return "User did not respond to the approval request in time; the command was not run."
 	case <-ctx.Done():

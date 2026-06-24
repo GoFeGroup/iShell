@@ -7,6 +7,7 @@ import {
 import { getTerminalCWD } from './terminal.js';
 import { showToast } from './toast.js';
 import { t } from './i18n.js';
+import { confirmDialog, promptDialog } from './confirm-dialog.js';
 
 let connID = null;
 let localPath = '';
@@ -621,8 +622,8 @@ function showCtxMenu(e, file, pane) {
   setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
 }
 
-function renamePrompt(file, pane) {
-  const newName = prompt(t('sftp.renamePrompt', { name: file.name }), file.name);
+async function renamePrompt(file, pane) {
+  const newName = await promptDialog(t('sftp.renamePrompt', { name: file.name }), file.name);
   if (!newName || newName === file.name) return;
   const dir = file.path.substring(0, file.path.lastIndexOf('/') + 1) || file.path.substring(0, file.path.lastIndexOf('\\') + 1);
   const newPath = (pane === 'remote' ? dir : '') + newName;
@@ -633,15 +634,15 @@ function renamePrompt(file, pane) {
     showToast(t('sftp.renameLocalUnsupported'));
   }
 }
-function remoteDeletePrompt(file) {
-  if (!confirm(t('sftp.confirmDeleteRemote', { name: file.name }))) return;
+async function remoteDeletePrompt(file) {
+  if (!(await confirmDialog(t('sftp.confirmDeleteRemote', { name: file.name })))) return;
   deleteRemote(connID, file.path).then(() => loadRemote()).catch(e => showToast('❌ ' + e));
 }
 function localDeletePrompt(file) {
   showToast(t('sftp.deleteLocalUnsupported'));
 }
-function permDialog(file) {
-  const oct = prompt(t('sftp.permPrompt', { name: file.name }), '644');
+async function permDialog(file) {
+  const oct = await promptDialog(t('sftp.permPrompt', { name: file.name }), '644');
   if (!oct) return;
   const mode = parseInt(oct, 8);
   setPermissions(connID, file.path, mode).then(() => loadRemote()).catch(e => showToast('❌ ' + e));

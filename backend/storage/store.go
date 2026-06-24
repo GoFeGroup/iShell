@@ -299,6 +299,9 @@ func (s *Store) LoadSettings() (*Settings, error) {
 	if st.QuickCommandGroups == nil {
 		st.QuickCommandGroups = []QuickCommandGroup{}
 	}
+	if st.CustomToolCalls == nil {
+		st.CustomToolCalls = []CustomToolCall{}
+	}
 	if st.Language == "" {
 		st.Language = "auto"
 	}

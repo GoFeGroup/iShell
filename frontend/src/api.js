@@ -38,6 +38,7 @@ export const getRemotePWD   = (id)    => go().GetRemotePWD(id);
 
 export const getSettings    = ()      => go().GetSettings();
 export const saveSettings   = (s)     => go().SaveSettings(s);
+export const listBuiltinToolCalls = () => go().ListBuiltinToolCalls();
 
 export const getKnownHosts  = ()      => go().GetKnownHosts();
 export const acceptHostKey  = (h)     => go().AcceptHostKey(h);

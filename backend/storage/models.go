@@ -56,6 +56,7 @@ type Settings struct {
 	AIWebSearchEngine   string              `json:"ai_web_search_engine" yaml:"ai_web_search_engine"`
 	AIWebSearchEndpoint string              `json:"ai_web_search_endpoint" yaml:"ai_web_search_endpoint"`
 	AIWebSearchAPIKey   string              `json:"ai_web_search_api_key" yaml:"ai_web_search_api_key"`
+	CustomToolCalls     []CustomToolCall    `json:"custom_tool_calls" yaml:"custom_tool_calls"`
 }
 
 func DefaultWebSearchEndpoint(engine string) string {
@@ -109,6 +110,25 @@ type QuickCommandGroup struct {
 	Commands []QuickCommand `json:"commands" yaml:"commands"`
 }
 
+type ToolCallParam struct {
+	Name        string `json:"name" yaml:"name"`
+	Description string `json:"description" yaml:"description"`
+	Required    bool   `json:"required" yaml:"required"`
+}
+
+// CustomToolCall is a user-defined AI tool that executes as a terminal
+// command template — the LLM-supplied parameters are substituted into
+// CommandTemplate's {{name}} placeholders and the result is run through the
+// same approval/auto-exec flow as the built-in terminal_run tool.
+type CustomToolCall struct {
+	ID              string          `json:"id" yaml:"id"`
+	Name            string          `json:"name" yaml:"name"`
+	Description     string          `json:"description" yaml:"description"`
+	CommandTemplate string          `json:"command_template" yaml:"command_template"`
+	Parameters      []ToolCallParam `json:"parameters" yaml:"parameters"`
+	Enabled         bool            `json:"enabled" yaml:"enabled"`
+}
+
 func DefaultSettings() Settings {
 	return Settings{
 		Theme:               "dark",
@@ -134,5 +154,6 @@ func DefaultSettings() Settings {
 		AIModel:             "gpt-4o-mini",
 		AIWebSearchEngine:   "duckduckgo",
 		AIWebSearchEndpoint: DefaultWebSearchEndpoint("duckduckgo"),
+		CustomToolCalls:     []CustomToolCall{},
 	}
 }

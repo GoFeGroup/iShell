@@ -493,7 +493,16 @@ func (a *App) SaveSettings(settings storage.Settings) error {
 	if a.store == nil {
 		return fmt.Errorf("store not ready")
 	}
+	if err := ai.ValidateCustomToolCalls(settings.CustomToolCalls); err != nil {
+		return err
+	}
 	return a.store.SaveSettings(settings)
+}
+
+// ListBuiltinToolCalls returns the read-only listing of built-in AI tools
+// shown in the settings page, alongside the user's custom tool calls.
+func (a *App) ListBuiltinToolCalls() []ai.BuiltinToolInfo {
+	return ai.BuiltinToolInfos()
 }
 
 // ── Known hosts ───────────────────────────────────────────────────────────────

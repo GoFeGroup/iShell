@@ -684,7 +684,10 @@ function renderHistoricalToolCall(call, resultMsg) {
 
   let args = {};
   try { args = JSON.parse(call.function?.arguments || '{}'); } catch { args = {}; }
-  const command = call.function?.name === 'websearch' ? (args.query || '') : (args.command || '');
+  let command;
+  if (call.function?.name === 'websearch') command = args.query || '';
+  else if (call.function?.name === 'terminal_run') command = args.command || '';
+  else command = Object.values(args).map(String).join(' ');
   const rejected = resultMsg?.content === 'User declined to run this command.';
 
   const card = document.createElement('div');

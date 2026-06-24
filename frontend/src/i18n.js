@@ -89,7 +89,7 @@ const dict = {
       nav: {
         appearance: 'Appearance', terminal: 'Terminal', ssh: 'SSH / Security',
         quickCommands: 'Quick Commands', backup: 'Import / Export',
-        shortcuts: 'Shortcuts', about: 'About', ai: 'AI',
+        shortcuts: 'Shortcuts', about: 'About', ai: 'AI - Model Service', toolCalls: 'AI - Tool Calls',
       },
       appearance: {
         theme: 'Theme', colorTheme: 'Color theme', dark: 'Dark', light: 'Light',
@@ -156,6 +156,20 @@ const dict = {
         webSearchAPIKey: 'Search API key',
         webSearchAPIKeyPlaceholder: 'Optional for DuckDuckGo/SearXNG',
         webSearchCustom: 'Custom JSON endpoint',
+      },
+      toolCalls: {
+        builtinTitle: 'Built-in Tools', builtinDesc: 'These tools are always available to the AI assistant and cannot be edited or removed.',
+        customTitle: 'Custom Tools',
+        templateHelp: 'Use {{paramName}} placeholders in the command — they are substituted with the parameter values the AI provides before the command runs.',
+        addToolCall: '+ Add Tool Call', namePlaceholder: 'Tool name (e.g. git_log)',
+        descPlaceholder: 'Description — tells the AI what this tool does and when to use it',
+        templatePlaceholder: 'Command template, e.g. git log -n {{count}}',
+        parameters: 'Parameters', addParameter: '+ Add Parameter',
+        paramNamePlaceholder: 'Parameter name', paramDescPlaceholder: 'Parameter description',
+        required: 'Required', deleteToolCall: 'Delete tool call',
+        confirmDelete: 'Delete this custom tool call?',
+        noCustomToolCalls: 'No custom tool calls yet. Add one to let the AI run your own command templates.',
+        builtinBadge: 'Built-in',
       },
     },
     sftp: {
@@ -282,7 +296,7 @@ const dict = {
       nav: {
         appearance: '外观', terminal: '终端', ssh: 'SSH / 安全',
         quickCommands: '快速命令', backup: '导入 / 导出',
-        shortcuts: '快捷键', about: '关于', ai: 'AI',
+        shortcuts: '快捷键', about: '关于', ai: 'AI-模型服务', toolCalls: 'AI-工具调用',
       },
       appearance: {
         theme: '主题', colorTheme: '配色主题', dark: '深色', light: '浅色',
@@ -349,6 +363,20 @@ const dict = {
         webSearchAPIKey: '搜索 API Key',
         webSearchAPIKeyPlaceholder: 'DuckDuckGo/SearXNG 可留空',
         webSearchCustom: '自定义 JSON 接口',
+      },
+      toolCalls: {
+        builtinTitle: '内置工具', builtinDesc: '这些工具始终对 AI 助手可用，不能编辑或删除。',
+        customTitle: '自定义工具',
+        templateHelp: '在命令中使用 {{参数名}} 占位符 — 命令执行前会替换为 AI 提供的参数值。',
+        addToolCall: '+ 新增工具调用', namePlaceholder: '工具名称（如 git_log）',
+        descPlaceholder: '描述 — 告诉 AI 该工具的用途及调用场景',
+        templatePlaceholder: '命令模板，例如 git log -n {{count}}',
+        parameters: '参数', addParameter: '+ 新增参数',
+        paramNamePlaceholder: '参数名称', paramDescPlaceholder: '参数描述',
+        required: '必填', deleteToolCall: '删除工具调用',
+        confirmDelete: '删除此自定义工具调用？',
+        noCustomToolCalls: '暂无自定义工具调用，新增一个让 AI 运行你自己的命令模板。',
+        builtinBadge: '内置',
       },
     },
     sftp: {
@@ -475,7 +503,7 @@ const dict = {
       nav: {
         appearance: '外觀', terminal: '終端機', ssh: 'SSH / 安全性',
         quickCommands: '快速指令', backup: '匯入 / 匯出',
-        shortcuts: '快捷鍵', about: '關於', ai: 'AI',
+        shortcuts: '快捷鍵', about: '關於', ai: 'AI-模型服務', toolCalls: 'AI-工具呼叫',
       },
       appearance: {
         theme: '主題', colorTheme: '配色主題', dark: '深色', light: '淺色',
@@ -542,6 +570,20 @@ const dict = {
         webSearchAPIKey: '搜尋 API Key',
         webSearchAPIKeyPlaceholder: 'DuckDuckGo/SearXNG 可留空',
         webSearchCustom: '自訂 JSON 介面',
+      },
+      toolCalls: {
+        builtinTitle: '內建工具', builtinDesc: '這些工具始終可供 AI 助理使用，無法編輯或刪除。',
+        customTitle: '自訂工具',
+        templateHelp: '在指令中使用 {{參數名}} 佔位符 — 執行前會替換為 AI 提供的參數值。',
+        addToolCall: '+ 新增工具呼叫', namePlaceholder: '工具名稱（例如 git_log）',
+        descPlaceholder: '描述 — 告訴 AI 此工具的用途及使用場景',
+        templatePlaceholder: '指令範本，例如 git log -n {{count}}',
+        parameters: '參數', addParameter: '+ 新增參數',
+        paramNamePlaceholder: '參數名稱', paramDescPlaceholder: '參數描述',
+        required: '必填', deleteToolCall: '刪除工具呼叫',
+        confirmDelete: '刪除此自訂工具呼叫？',
+        noCustomToolCalls: '尚無自訂工具呼叫，新增一個讓 AI 執行你自己的指令範本。',
+        builtinBadge: '內建',
       },
     },
     sftp: {
