@@ -729,12 +729,24 @@ export async function initSettings(initialPage = 'appearance') {
       container.innerHTML = `<div style="color:var(--text-muted);font-size:13px;padding:8px 0;">${t('settings.ssh.noKnownHosts')}</div>`;
       return;
     }
-    container.innerHTML = kh.map(h => `
-      <div class="settings-row" data-hostname="${esc(h.hostname)}">
-        <div><div class="settings-row-label" style="font-family:var(--font-mono);font-size:12px;">${esc(h.hostname)}</div><div class="settings-row-desc">${esc(h.key_type)} — ${esc(h.fingerprint)}</div></div>
-        ${confirmingHostname === h.hostname ? `
+    // known_hosts can have one line per key type for the same host; group
+    // them so each hostname renders as a single row (removal already
+    // deletes every line for a hostname, see RemoveKnownHost on the Go side).
+    const byHostname = new Map();
+    kh.forEach(h => {
+      if (!byHostname.has(h.hostname)) byHostname.set(h.hostname, []);
+      byHostname.get(h.hostname).push(h);
+    });
+
+    container.innerHTML = Array.from(byHostname.entries()).map(([hostname, entries]) => `
+      <div class="settings-row" data-hostname="${esc(hostname)}">
+        <div>
+          <div class="settings-row-label" style="font-family:var(--font-mono);font-size:12px;">${esc(hostname)}</div>
+          ${entries.map(h => `<div class="settings-row-desc">${esc(h.key_type)} — ${esc(h.fingerprint)}</div>`).join('')}
+        </div>
+        ${confirmingHostname === hostname ? `
           <div class="kh-row-actions">
-            <span class="ai-confirm-label">${t('settings.ssh.confirmRemoveHost', { h: h.hostname })}</span>
+            <span class="ai-confirm-label">${t('settings.ssh.confirmRemoveHost', { h: hostname })}</span>
             <button class="btn btn-danger btn-sm kh-confirm-remove" type="button">${t('common.remove')}</button>
             <button class="btn btn-ghost btn-sm kh-cancel-remove" type="button">${t('common.cancel')}</button>
           </div>
