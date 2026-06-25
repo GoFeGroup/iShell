@@ -125,6 +125,7 @@ export async function openProfilePicker() {
 
   searchEl.addEventListener('keydown', (e) => {
     if (e.key === 'Escape')    { e.preventDefault(); close(); }
+    else if (e.key === 'Tab')   { e.preventDefault(); moveSelection(e.shiftKey ? -1 : 1); }
     else if (e.key === 'ArrowDown') { e.preventDefault(); moveSelection(1); }
     else if (e.key === 'ArrowUp')   { e.preventDefault(); moveSelection(-1); }
     else if (e.key === 'Enter') {
