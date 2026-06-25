@@ -36,6 +36,7 @@ type webSearchResult struct {
 
 type webSearchOutput struct {
 	Query   string
+	Engine  string
 	Answer  string
 	Summary string
 	Source  string
@@ -95,6 +96,7 @@ func searchWeb(ctx context.Context, query string, cfg webSearchConfig) (string, 
 	if err != nil {
 		return "", err
 	}
+	out.Engine = strings.ToLower(strings.TrimSpace(cfg.Engine))
 	return formatWebSearchResults(out), nil
 }
 
@@ -105,32 +107,25 @@ func requestWebSearch(ctx context.Context, query string, cfg webSearchConfig) ([
 		endpoint = storage.DefaultWebSearchEndpoint(engine)
 	}
 
-	var req *http.Request
+	var u string
 	var err error
 	switch engine {
 	case "serpapi":
-		u, err := endpointWithQuery(endpoint, map[string]string{
+		u, err = endpointWithQuery(endpoint, map[string]string{
 			"q":       query,
 			"api_key": cfg.APIKey,
 			"engine":  "google",
 		})
-		if err != nil {
-			return nil, err
-		}
-		req, err = http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	case "custom":
-		u, err := customSearchURL(endpoint, query)
-		if err != nil {
-			return nil, err
-		}
-		req, err = http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		u, err = customSearchURL(endpoint, query)
 	default:
-		u, err := endpointWithQuery(endpoint, searchQueryParams(engine, query))
-		if err != nil {
-			return nil, err
-		}
-		req, err = http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		u, err = endpointWithQuery(endpoint, searchQueryParams(engine, query))
 	}
+	if err != nil {
+		return nil, fmt.Errorf("build websearch request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build websearch request: %w", err)
 	}
@@ -423,9 +418,24 @@ func formatWebSearchResults(out webSearchOutput) string {
 		}
 	}
 	if out.Answer == "" && out.Summary == "" && len(out.Results) == 0 {
-		fmt.Fprintf(&b, "No search results were returned. Check the configured search engine, endpoint, and API key.\n")
+		fmt.Fprintf(&b, "%s\n", noResultsHint(out.Engine))
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// noResultsHint explains why an engine commonly returns nothing, since a bare
+// "no results" message gives users no way to tell a code-path limitation
+// (DuckDuckGo's instant-answer scope, a blocked SearXNG JSON endpoint) apart
+// from a real misconfiguration (missing/invalid API key).
+func noResultsHint(engine string) string {
+	switch engine {
+	case "duckduckgo":
+		return `DuckDuckGo's free API only returns "instant answer" results for encyclopedia-style topics (e.g. "golang", "Albert Einstein") — it returns nothing for most ordinary queries such as news, app features, or recent events. For general web search, switch to Brave, Bing, or SerpAPI with an API key in Settings > AI > Web Search, or point the endpoint at a SearXNG instance that has the "json" output format enabled.`
+	case "searxng":
+		return `The SearXNG instance returned no results. Public instances frequently disable the JSON output format or return a bot-check page instead of search results for unauthenticated requests — confirm the instance has "json" listed under search.formats in its settings.yml, or use a self-hosted instance.`
+	default:
+		return "No search results were returned. Check the configured search engine, endpoint, and API key."
+	}
 }
 
 func firstNonEmpty(values ...string) string {

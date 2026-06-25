@@ -136,6 +136,12 @@ export function toggleAISidebar() {
   setSidebarOpen(sidebar.classList.contains('collapsed'));
 }
 
+// Called when a brand-new terminal tab is created, so it never inherits an
+// "open" sidebar left over from whatever tab was active before it.
+export function closeAISidebar() {
+  setSidebarOpen(false);
+}
+
 function setSidebarOpen(open) {
   const sidebar = document.getElementById('ai-sidebar');
   const resizer = document.getElementById('ai-sidebar-resizer');
@@ -638,6 +644,7 @@ function cardOrPlaceholder(toolCallID, tool, command) {
 function toolLabel(tool, command) {
   if (tool === 'terminal_read') return t('aiSidebar.readAction');
   if (tool === 'websearch') return t('aiSidebar.webSearchAction', { q: command || '' });
+  if (tool === 'open_url') return t('aiSidebar.openURLAction', { url: command || '' });
   return '$ ' + command;
 }
 
@@ -686,6 +693,7 @@ function renderHistoricalToolCall(call, resultMsg) {
   try { args = JSON.parse(call.function?.arguments || '{}'); } catch { args = {}; }
   let command;
   if (call.function?.name === 'websearch') command = args.query || '';
+  else if (call.function?.name === 'open_url') command = args.url || '';
   else if (call.function?.name === 'terminal_run') command = args.command || '';
   else command = Object.values(args).map(String).join(' ');
   const rejected = resultMsg?.content === 'User declined to run this command.';

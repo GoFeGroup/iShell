@@ -7,7 +7,7 @@ import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTe
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
 import { initQuickCommands, setQuickCommandSettings, toggleQuickCommands, updateQuickCommandUI, triggerQuickCommandShortcut } from './quick-command.js';
-import { initAISidebar, setAISidebarSettings, toggleAISidebar, notifyActiveTerminalChanged } from './ai-sidebar.js';
+import { initAISidebar, setAISidebarSettings, toggleAISidebar, notifyActiveTerminalChanged, closeAISidebar } from './ai-sidebar.js';
 import { showToast } from './toast.js';
 import { t, applyI18nAttrs, setLanguage, getLanguagePref } from './i18n.js';
 
@@ -155,6 +155,7 @@ async function connectRemoteTab(tab, overrides = {}) {
 }
 
 async function onLocalConnectRequest(localSess) {
+  closeAISidebar();
   showToast(t('toast.openingLocal', { sub: localSess.sublabel }));
   setSessionStatus('__local__', 'connecting');
 
@@ -208,6 +209,7 @@ function getTerminalSize() {
 }
 
 function createPendingTerminalTab(sess) {
+  closeAISidebar();
   const tab = {
     type: 'terminal-pending',
     id: 'tab-pending-' + Date.now() + '-' + Math.random().toString(36).slice(2),

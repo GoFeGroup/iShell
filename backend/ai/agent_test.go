@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -550,6 +551,65 @@ func TestRunTurnWebSearchTool(t *testing.T) {
 	output, _ := result["output"].(string)
 	if !strings.Contains(output, "Go is an open source programming language.") {
 		t.Fatalf("output = %q, want search summary", output)
+	}
+	rec.waitFor(t, "ai:done:"+sess.ID, time.Second)
+}
+
+func TestRunTurnOpenURLTool(t *testing.T) {
+	pageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><head><title>Tool Page</title></head><body><p>Readable page body.</p></body></html>`))
+	}))
+	defer pageSrv.Close()
+
+	args, err := json.Marshal(map[string]string{"url": pageSrv.URL})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	aiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if !requestHasToolResult(r) {
+			_, _ = w.Write([]byte(sseBody(
+				fmt.Sprintf(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_open","type":"function","function":{"name":"open_url","arguments":%q}}]},"finish_reason":null}]}`, string(args)),
+				`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			)))
+			return
+		}
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"content":"Read it."},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		)))
+	}))
+	defer aiSrv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, aiSrv.URL)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Open URL"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	term := &fakeTerminalIO{}
+	rec := newEventRecorder()
+	ag := NewAgent(st, term, rec.emit)
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, ConnID: "conn-1", UserText: "read this page"})
+
+	result := rec.waitFor(t, "ai:tool_result:"+sess.ID, 2*time.Second).(map[string]any)
+	if result["tool"] != "open_url" {
+		t.Fatalf("tool = %v, want open_url", result["tool"])
+	}
+	if result["command"] != pageSrv.URL {
+		t.Fatalf("command = %v, want %s", result["command"], pageSrv.URL)
+	}
+	output, _ := result["output"].(string)
+	if !strings.Contains(output, "Title: Tool Page") || !strings.Contains(output, "Readable page body.") {
+		t.Fatalf("output = %q, want page content", output)
+	}
+	if len(term.sentCommands()) != 0 {
+		t.Fatal("open_url must not send commands to the terminal")
+	}
+	if rec.has("ai:tool_call:" + sess.ID) {
+		t.Fatal("open_url should not emit an approval card")
 	}
 	rec.waitFor(t, "ai:done:"+sess.ID, time.Second)
 }

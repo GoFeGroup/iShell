@@ -8,7 +8,7 @@ import (
 
 func TestValidateCustomToolCallsRejectsBuiltinNameCollision(t *testing.T) {
 	err := ValidateCustomToolCalls([]storage.CustomToolCall{{
-		Name:            "websearch",
+		Name:            "open_url",
 		CommandTemplate: "echo hi",
 	}})
 	if err == nil {
@@ -74,7 +74,7 @@ func TestBuildToolListIncludesBuiltinAndEnabledCustomTools(t *testing.T) {
 		names[tool.Function.Name] = true
 	}
 
-	for _, want := range []string{"terminal_run", "terminal_read", "websearch", "git_log"} {
+	for _, want := range []string{"terminal_run", "terminal_read", "websearch", "open_url", "git_log"} {
 		if !names[want] {
 			t.Fatalf("tool list missing %q; got %v", want, names)
 		}

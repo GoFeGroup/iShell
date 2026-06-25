@@ -50,6 +50,21 @@ func AgentTools() []Tool {
 				}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name: "open_url",
+				Description: "Open a known URL or domain name and return readable page content. Use this when " +
+					"you already have a specific page to inspect; use websearch when you need to discover pages.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"url": {"type": "string", "description": "The URL or domain to open. Bare domains such as example.com are accepted."}
+					},
+					"required": ["url"]
+				}`),
+			},
+		},
 	}
 }
 
