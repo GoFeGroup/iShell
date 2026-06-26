@@ -126,6 +126,8 @@ class AISidebarInstance {
     this.unsubscribers = [];
     this.cleanupResizerDrag = null;
     this.pendingInnerHideListener = null;
+    this.pendingLayoutChangeListener = null;
+    this.pendingLayoutChangeTimer = 0;
     this.pendingInnerShowRAFs = [];
     this.destroyed = false;
     this.active = false;
@@ -192,6 +194,7 @@ class AISidebarInstance {
     this.destroyed = true;
     this.unsubscribeChatEvents();
     this.cancelPendingInnerHide();
+    this.cancelPendingLayoutChange();
     this.cancelPendingInnerShow();
     this.cleanupResizerDrag?.();
     this.cleanupResizerDrag = null;
@@ -219,9 +222,12 @@ class AISidebarInstance {
     const startedAt = performance.now();
     perfLog('setOpen start', { tab: this.tab.id, open, animate, notify, deferInnerRestore });
     const wasOpen = !this.root.classList.contains('collapsed');
+    const layoutChanging = !!notify && wasOpen !== open;
     this.tab.aiSidebarOpen = !!open;
     this.cancelPendingInnerHide();
+    this.cancelPendingLayoutChange();
     this.cancelPendingInnerShow();
+    if (layoutChanging) this.onResizeStart();
     if (!animate) this.root.classList.add('no-transition');
     // .ai-sidebar-inner keeps a fixed width while collapsed so chat text does
     // not re-wrap mid-transition. content-visibility removes inactive history
@@ -250,7 +256,7 @@ class AISidebarInstance {
         perfLog('setOpen ensureOpenContent done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
       });
     }
-    if (notify && wasOpen !== open) this.onLayoutChange();
+    if (layoutChanging) this.scheduleLayoutChange(!!animate);
     perfLog('setOpen done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
     if (open && !deferInnerRestore) {
       requestAnimationFrame(() => {
@@ -313,6 +319,36 @@ class AISidebarInstance {
 
   cancelPendingInnerShow() {
     this.pendingInnerShowRAFs.splice(0).forEach(id => cancelAnimationFrame(id));
+  }
+
+  scheduleLayoutChange(waitForTransition) {
+    const finish = () => {
+      this.cancelPendingLayoutChange();
+      this.onResizeEnd();
+      this.onLayoutChange();
+    };
+    if (!waitForTransition) {
+      finish();
+      return;
+    }
+    const onEnd = (e) => {
+      if (e.target !== this.root || e.propertyName !== 'width') return;
+      finish();
+    };
+    this.pendingLayoutChangeListener = onEnd;
+    this.root.addEventListener('transitionend', onEnd);
+    this.pendingLayoutChangeTimer = setTimeout(finish, 320);
+  }
+
+  cancelPendingLayoutChange() {
+    if (this.pendingLayoutChangeListener) {
+      this.root?.removeEventListener('transitionend', this.pendingLayoutChangeListener);
+      this.pendingLayoutChangeListener = null;
+    }
+    if (this.pendingLayoutChangeTimer) {
+      clearTimeout(this.pendingLayoutChangeTimer);
+      this.pendingLayoutChangeTimer = 0;
+    }
   }
 
   scheduleInnerHide(animate) {
