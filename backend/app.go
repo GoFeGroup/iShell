@@ -56,6 +56,10 @@ func NewApp() *App {
 	return &App{}
 }
 
+func (a *App) GetVersion() string {
+	return Version
+}
+
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	osutil.InstallEscGuard()
