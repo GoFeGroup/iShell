@@ -178,7 +178,7 @@ class AISidebarInstance {
     const _t0 = performance.now();
     console.log('[AI-SUSPEND] hiding inner for tab', this.tab.id);
     this.pendingInnerShow = false;
-    if (this.inner) this.inner.style.display = 'none';
+    if (this.inner) this.inner.style.contentVisibility = 'hidden';
     console.log('[AI-SUSPEND] done', (performance.now() - _t0).toFixed(1) + 'ms');
   }
 
@@ -219,31 +219,11 @@ class AISidebarInstance {
     // enough history. So lay it out only while actually open or animating,
     // and drop it from layout once fully collapsed.
     if (open && this.inner) {
-      if (animate) {
-        // Immediate show for user-triggered animations (sidebar open/close button).
-        const _t0 = performance.now();
-        this.inner.style.display = '';
-        console.log('[AI-SET-OPEN] inner.display="" took', (performance.now() - _t0).toFixed(1) + 'ms');
-      } else {
-        // Defer inner content to the second frame on tab activation. The first
-        // frame is used to render the terminal; the AI sidebar content appears
-        // in the next frame (~16ms later). This prevents the heavyweight
-        // CSS layout of a long chat history from blocking the terminal's first
-        // paint via getBoundingClientRect() in the fitAddon RAF callback.
-        this.pendingInnerShow = true;
-        const root = this.root;
-        const inner = this.inner;
-        console.log('[AI-SET-OPEN] deferring inner show to double-RAF');
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (!this.pendingInnerShow) return;
-          this.pendingInnerShow = false;
-          if (root && !root.classList.contains('collapsed') && inner) {
-            const _t0 = performance.now();
-            inner.style.display = '';
-            console.log('[AI-SET-OPEN] deferred inner.display="" took', (performance.now() - _t0).toFixed(1) + 'ms');
-          }
-        }));
-      }
+      // content-visibility: hidden preserves the layout cache, so restoring it here
+      // is cheap (no full re-layout). See suspendLayout() / scheduleInnerHide().
+      const _t0 = performance.now();
+      this.inner.style.contentVisibility = '';
+      console.log('[AI-SET-OPEN] inner.contentVisibility="" took', (performance.now() - _t0).toFixed(1) + 'ms');
     }
     const _t1 = performance.now();
     this.root.classList.toggle('collapsed', !open);
@@ -257,11 +237,11 @@ class AISidebarInstance {
 
   scheduleInnerHide(animate) {
     if (!this.inner) return;
-    if (!animate) { this.inner.style.display = 'none'; return; }
+    if (!animate) { this.inner.style.contentVisibility = 'hidden'; return; }
     const onEnd = (e) => {
       if (e.target !== this.root || e.propertyName !== 'width') return;
       this.cancelPendingInnerHide();
-      if (this.root?.classList.contains('collapsed') && this.inner) this.inner.style.display = 'none';
+      if (this.root?.classList.contains('collapsed') && this.inner) this.inner.style.contentVisibility = 'hidden';
     };
     this.pendingInnerHideListener = onEnd;
     this.root.addEventListener('transitionend', onEnd);
