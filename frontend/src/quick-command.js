@@ -4,8 +4,10 @@ import { t } from './i18n.js';
 
 let settingsRef = {};
 let getActiveConn = () => null;
+let getQuickCommandBar = () => document.getElementById('quick-command-bar');
 let scrollResizeObserver = null;
 let currentGroupIndex = 0;
+let renderGeneration = 0;
 
 window.addEventListener('ishell:languageChanged', () => {
   renderQuickCommands();
@@ -90,10 +92,12 @@ export function triggerQuickCommandShortcut(e) {
   return true;
 }
 
-export function initQuickCommands(settings, activeConnGetter) {
+export function initQuickCommands(settings, activeConnGetter, barGetter) {
   settingsRef = settings || {};
   getActiveConn = activeConnGetter || getActiveConn;
+  getQuickCommandBar = barGetter || getQuickCommandBar;
   currentGroupIndex = 0;
+  renderGeneration++;
   renderQuickCommands();
   updateQuickCommandUI();
 }
@@ -101,22 +105,25 @@ export function initQuickCommands(settings, activeConnGetter) {
 export function setQuickCommandSettings(settings) {
   settingsRef = settings || {};
   currentGroupIndex = 0;
+  renderGeneration++;
   renderQuickCommands();
   updateQuickCommandUI();
 }
 
 export function toggleQuickCommands() {
   settingsRef.show_quick_commands = settingsRef.show_quick_commands === false;
+  renderGeneration++;
   renderQuickCommands();
   updateQuickCommandUI();
   saveSettings(settingsRef).catch(e => showToast(t('toast.qcStateSaveFailed', { e })));
 }
 
 export function updateQuickCommandUI() {
-  const bar = document.getElementById('quick-command-bar');
+  const bar = getQuickCommandBar();
   const btn = document.getElementById('btn-quick-command');
   const hasConn = !!getActiveConn();
   const visible = settingsRef.show_quick_commands !== false && hasConn;
+  if (bar && bar.dataset.quickCommandsGeneration !== String(renderGeneration)) renderQuickCommands();
   if (bar) bar.style.display = visible ? '' : 'none';
   if (btn) {
     btn.style.display = hasConn ? '' : 'none';
@@ -126,8 +133,9 @@ export function updateQuickCommandUI() {
 }
 
 function renderQuickCommands() {
-  const bar = document.getElementById('quick-command-bar');
+  const bar = getQuickCommandBar();
   if (!bar) return;
+  bar.dataset.quickCommandsGeneration = String(renderGeneration);
 
   const groups = getGroups();
 

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -19,9 +21,20 @@ const (
 	maxWebReadContentLen    = 32 * 1024
 	webReadTruncation       = "\n... [truncated]"
 	webReadRequestUserAgent = "iShell AI open_url"
+	maxWebReadRedirects     = 5
 )
 
-var webReadClient = &http.Client{Timeout: 12 * time.Second}
+var webReadClient = &http.Client{
+	Timeout: 12 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxWebReadRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxWebReadRedirects)
+		}
+		return validateOpenURLTargetFunc(req.Context(), req.URL)
+	},
+}
+
+var validateOpenURLTargetFunc = validateOpenURLTarget
 
 type webReadResult struct {
 	URL         string
@@ -61,6 +74,9 @@ func openURL(ctx context.Context, raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := validateOpenURLTargetFunc(ctx, u); err != nil {
+		return "", err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -75,6 +91,10 @@ func openURL(ctx context.Context, raw string) (string, error) {
 	}
 	defer resp.Body.Close()
 
+	return webReadResponseOutput(resp)
+}
+
+func webReadResponseOutput(resp *http.Response) (string, error) {
 	body, truncated, err := readLimited(resp.Body, maxWebReadBodyBytes)
 	if err != nil {
 		return "", fmt.Errorf("read open_url response: %w", err)
@@ -110,6 +130,45 @@ func normalizeOpenURL(raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("URL is missing a host")
 	}
 	return u, nil
+}
+
+func validateOpenURLTarget(ctx context.Context, u *url.URL) error {
+	if u == nil {
+		return fmt.Errorf("URL is missing")
+	}
+	hostname := strings.TrimSuffix(u.Hostname(), ".")
+	if hostname == "" {
+		return fmt.Errorf("URL is missing a host")
+	}
+	if addr, err := netip.ParseAddr(hostname); err == nil {
+		return validatePublicAddr(addr, hostname)
+	}
+	addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", hostname)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", hostname, err)
+	}
+	if len(addrs) == 0 {
+		return fmt.Errorf("resolve %s: no addresses", hostname)
+	}
+	for _, addr := range addrs {
+		if err := validatePublicAddr(addr, hostname); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePublicAddr(addr netip.Addr, hostname string) error {
+	if addr.IsLoopback() ||
+		addr.IsPrivate() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() ||
+		addr.IsInterfaceLocalMulticast() ||
+		addr.IsMulticast() ||
+		addr.IsUnspecified() {
+		return fmt.Errorf("refusing to open URL host %q resolved to non-public address %s", hostname, addr)
+	}
+	return nil
 }
 
 func readLimited(r io.Reader, limit int64) ([]byte, bool, error) {
@@ -192,7 +251,7 @@ func extractHTMLText(body []byte) (string, string, error) {
 		}
 	}
 	walk(doc, false)
-	return normalizeWhitespace(title), normalizeWhitespace(strings.Join(parts, " ")), nil
+	return normalizeToolOutput(title), normalizeToolOutput(strings.Join(parts, " ")), nil
 }
 
 func nodeText(n *html.Node) string {
@@ -209,10 +268,6 @@ func nodeText(n *html.Node) string {
 	}
 	walk(n)
 	return b.String()
-}
-
-func normalizeWhitespace(value string) string {
-	return strings.Join(strings.Fields(value), " ")
 }
 
 func truncateWebReadText(value string, limit int) (string, bool) {

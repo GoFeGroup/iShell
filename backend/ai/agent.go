@@ -220,6 +220,14 @@ func (ag *Agent) StopRun(chatID string) {
 	}
 }
 
+// IsRunning reports whether a generation is currently in flight for chatID.
+func (ag *Agent) IsRunning(chatID string) bool {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	_, ok := ag.running[chatID]
+	return ok
+}
+
 // ── internals ────────────────────────────────────────────────────────────────
 
 func (ag *Agent) loadSettingsAndClient() (*storage.Settings, *Client, error) {

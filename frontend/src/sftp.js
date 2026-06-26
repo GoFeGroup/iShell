@@ -3,6 +3,7 @@ import {
   makeRemoteDir, deleteRemote, renameRemote, setPermissions,
   uploadFiles, uploadSpecific, downloadFilesToDir, on,
   getDownloadsDir, getRemotePWD, getSFTPTransfers, clearFinishedSFTPTransfers,
+  cancelSFTPTransfer,
 } from './api.js';
 import { getTerminalCWD } from './terminal.js';
 import { showToast } from './toast.js';
@@ -473,10 +474,26 @@ function addQueueItem(transferID, name, action) {
       </div>
     </div>
     <span class="queue-direction ${isUp?'up':'down'}" id="pd-${transferID}">${isUp?t('sftp.queueUpload'):t('sftp.queueDownload')}</span>
-    <button class="queue-cancel" onclick="document.getElementById('qi-${transferID}')?.remove()">✕</button>`;
+    <button class="queue-cancel" id="qc-${transferID}" onclick="window._sftp.cancelTransfer('${transferID}')">✕</button>`;
   body.insertBefore(item, body.firstChild);
   updateQueueBadge();
 }
+
+window._sftp.cancelTransfer = async (transferID) => {
+  const tr = transfers[transferID];
+  if (!tr || tr.finished) {
+    document.getElementById('qi-' + transferID)?.remove();
+    return;
+  }
+  const btn = document.getElementById('qc-' + transferID);
+  if (btn) btn.disabled = true;
+  try {
+    await cancelSFTPTransfer(transferID);
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    showToast('❌ ' + e);
+  }
+};
 
 function handleProgress(prog, opts = {}) {
   const transferID = prog.transfer_id;
@@ -486,7 +503,7 @@ function handleProgress(prog, opts = {}) {
   const existing = transfers[transferID] || {};
   const action = prog.action || existing.action || 'download';
   const name = prog.name || existing.name || prog.remote_path?.split('/').pop() || 'file';
-  transfers[transferID] = { ...existing, name, action, finished: !!prog.finished, error: prog.error || '' };
+  transfers[transferID] = { ...existing, name, action, finished: !!prog.finished, cancelled: !!prog.cancelled, error: prog.error || '' };
 
   if (!document.getElementById('qi-' + transferID) && document.getElementById('queue-body')) {
     addQueueItem(transferID, name, action);
@@ -502,7 +519,18 @@ function handleProgress(prog, opts = {}) {
   pf.style.width = scanning ? '8%' : pct + '%';
   pp.textContent = prog.finished ? t('sftp.statusDone') : scanning ? t('sftp.statusScanning') : pct + '%';
   if (prog.speed_bps > 0) ps.textContent = fmtSize(prog.speed_bps) + '/s';
-  if (prog.error) {
+  if (prog.finished) {
+    const btn = document.getElementById('qc-' + prog.transfer_id);
+    if (btn) btn.disabled = false;
+  }
+  if (prog.cancelled) {
+    pf.className = 'progress-fill cancelled';
+    pp.textContent = t('sftp.statusCancelled'); pp.style.color = '';
+    if (pd) { pd.className = 'queue-direction cancelled'; pd.textContent = t('sftp.queueCancelledMark'); }
+    if (!opts.silent) showToast(t('toast.transferCancelled', { name }));
+    transfers[prog.transfer_id].finished = true;
+    updateQueueBadge();
+  } else if (prog.error) {
     pf.className = 'progress-fill errored'; pf.style.width='100%';
     pp.textContent = t('sftp.statusError'); pp.style.color = 'var(--red)';
     if (pd) { pd.className = 'queue-direction error'; pd.textContent = t('sftp.queueFailedMark'); }

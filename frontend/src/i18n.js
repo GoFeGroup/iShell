@@ -61,6 +61,7 @@ const dict = {
       quickCommandFailed: 'Quick command failed: {e}',
       qcStateSaveFailed: 'Could not save quick command state: {e}',
       transferFailed: '❌ Transfer failed: {err}', transferDone: '✅ Done: {name}',
+      transferCancelled: 'Cancelled: {name}',
     },
     alert: { connectionFailed: 'Connection failed:\n{e}' },
     sidebar: {
@@ -185,8 +186,8 @@ const dict = {
       confirmDeleteRemote: 'Delete remote "{name}"?', deleteLocalUnsupported: 'Local delete not supported via SFTP',
       permPrompt: 'Set octal permissions for "{name}" (e.g. 644):',
       queueUpload: '⬆ Upload', queueDownload: '⬇ Download',
-      statusDone: 'Done', statusScanning: 'Scanning', statusError: 'Error',
-      queueDoneMark: '✓ Done', queueFailedMark: '✕ Failed', activeBadge: '{n} active',
+      statusDone: 'Done', statusScanning: 'Scanning', statusError: 'Error', statusCancelled: 'Cancelled',
+      queueDoneMark: '✓ Done', queueFailedMark: '✕ Failed', queueCancelledMark: '✕ Cancelled', activeBadge: '{n} active',
     },
     quickCommand: {
       empty: 'No quick commands', openSettings: 'Open Settings',
@@ -268,6 +269,7 @@ const dict = {
       quickCommandFailed: '快速命令执行失败：{e}',
       qcStateSaveFailed: '无法保存快速命令状态：{e}',
       transferFailed: '❌ 传输失败：{err}', transferDone: '✅ 完成：{name}',
+      transferCancelled: '已取消：{name}',
     },
     alert: { connectionFailed: '连接失败：\n{e}' },
     sidebar: {
@@ -392,8 +394,8 @@ const dict = {
       confirmDeleteRemote: '删除远程文件 "{name}"？', deleteLocalUnsupported: 'SFTP 不支持删除本地文件',
       permPrompt: '设置 "{name}" 的八进制权限（如 644）：',
       queueUpload: '⬆ 上传', queueDownload: '⬇ 下载',
-      statusDone: '完成', statusScanning: '扫描中', statusError: '错误',
-      queueDoneMark: '✓ 完成', queueFailedMark: '✕ 失败', activeBadge: '{n} 个进行中',
+      statusDone: '完成', statusScanning: '扫描中', statusError: '错误', statusCancelled: '已取消',
+      queueDoneMark: '✓ 完成', queueFailedMark: '✕ 失败', queueCancelledMark: '✕ 已取消', activeBadge: '{n} 个进行中',
     },
     quickCommand: {
       empty: '暂无快速命令', openSettings: '打开设置',
@@ -475,6 +477,7 @@ const dict = {
       quickCommandFailed: '快速指令執行失敗：{e}',
       qcStateSaveFailed: '無法儲存快速指令狀態：{e}',
       transferFailed: '❌ 傳輸失敗：{err}', transferDone: '✅ 完成：{name}',
+      transferCancelled: '已取消：{name}',
     },
     alert: { connectionFailed: '連線失敗：\n{e}' },
     sidebar: {
@@ -599,8 +602,8 @@ const dict = {
       confirmDeleteRemote: '刪除遠端檔案 "{name}"？', deleteLocalUnsupported: 'SFTP 不支援刪除本機檔案',
       permPrompt: '設定 "{name}" 的八進位權限（例如 644）：',
       queueUpload: '⬆ 上傳', queueDownload: '⬇ 下載',
-      statusDone: '完成', statusScanning: '掃描中', statusError: '錯誤',
-      queueDoneMark: '✓ 完成', queueFailedMark: '✕ 失敗', activeBadge: '{n} 個進行中',
+      statusDone: '完成', statusScanning: '掃描中', statusError: '錯誤', statusCancelled: '已取消',
+      queueDoneMark: '✓ 完成', queueFailedMark: '✕ 失敗', queueCancelledMark: '✕ 已取消', activeBadge: '{n} 個進行中',
     },
     quickCommand: {
       empty: '尚無快速指令', openSettings: '開啟設定',

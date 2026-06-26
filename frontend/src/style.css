@@ -115,9 +115,9 @@ select option{background:var(--bg-elevated);color:var(--text-primary);}
 .modal-body{padding:20px;overflow-y:auto;max-height:65vh;}
 .modal-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--border-subtle);background:var(--bg-elevated);}
 /* Terminal */
-#panel-terminal{flex-direction:row;}
+.terminal-tab-content{width:100%;height:100%;display:flex;flex-direction:row;min-width:0;min-height:0;}
 .terminal-main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0;}
-#terminal-container{flex:1;background:#0D0D13;padding:4px;overflow:hidden;}
+.terminal-container{flex:1;background:#0D0D13;padding:4px;overflow:hidden;}
 .xterm{height:100%;}
 .terminal-state{height:100%;display:flex;align-items:center;justify-content:center;padding:24px;color:var(--text-secondary);background:#0D0D13;}
 .terminal-state-card{width:min(620px,100%);display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;}
@@ -217,6 +217,7 @@ kbd{padding:2px 6px;background:var(--bg-elevated);border:1px solid var(--border)
 .progress-fill{height:100%;border-radius:2px;transition:width .3s;}
 .progress-fill.uploading{background:var(--accent);} .progress-fill.downloading{background:var(--green);}
 .progress-fill.done{background:var(--text-muted);} .progress-fill.errored{background:var(--red);}
+.progress-fill.cancelled{background:var(--text-muted);}
 .queue-pct{font-size:11px;color:var(--text-muted);white-space:nowrap;font-family:var(--font-mono);}
 .queue-speed{font-size:11px;color:var(--text-muted);white-space:nowrap;}
 .queue-direction{font-size:11px;font-weight:600;flex-shrink:0;padding:1px 6px;border-radius:10px;}
@@ -224,8 +225,10 @@ kbd{padding:2px 6px;background:var(--bg-elevated);border:1px solid var(--border)
 .queue-direction.down{background:var(--green-dim);color:var(--green);}
 .queue-direction.done{background:var(--bg-elevated);color:var(--text-muted);}
 .queue-direction.error{background:var(--red-dim);color:var(--red);}
+.queue-direction.cancelled{background:var(--bg-elevated);color:var(--text-muted);}
 .queue-cancel{background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:13px;padding:2px 4px;border-radius:3px;flex-shrink:0;}
 .queue-cancel:hover{color:var(--red);background:var(--red-dim);}
+.queue-cancel:disabled{opacity:.45;cursor:not-allowed;}
 /* Radio option */
 .radio-option{flex:1;display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:13px;transition:border-color .15s,background .15s;}
 .radio-option input[type="radio"]{accent-color:var(--accent);}
@@ -302,6 +305,7 @@ kbd{padding:2px 6px;background:var(--bg-elevated);border:1px solid var(--border)
 .ai-sidebar{width:320px;height:100%;max-height:100%;flex-shrink:0;background:var(--bg-surface);border-left:1px solid var(--border-subtle);display:flex;flex-direction:column;transition:width .22s cubic-bezier(.4,0,.2,1);overflow:hidden;min-height:0;}
 .ai-sidebar.collapsed{width:0;border-left-color:transparent;}
 .ai-sidebar.resizing{transition:none;}
+.ai-sidebar.no-transition{transition:none;}
 /* Fixed-width inner: kept at the sidebar's resting width at all times so its
    content (chat history) never re-wraps while .ai-sidebar's width animates —
    the parent's overflow:hidden just reveals/clips it, which is paint-only and
@@ -323,7 +327,7 @@ kbd{padding:2px 6px;background:var(--bg-elevated);border:1px solid var(--border)
 .ai-empty{padding:24px 16px;text-align:center;color:var(--text-muted);font-size:13px;}
 
 .ai-chat-view{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
-.ai-chat-messages{flex:1;overflow-y:auto;scrollbar-gutter:stable;min-height:0;padding:12px;display:flex;flex-direction:column;gap:10px;user-select:text;}
+.ai-chat-messages{flex:1;overflow-y:auto;scrollbar-gutter:stable;min-height:0;padding:12px;display:flex;flex-direction:column;gap:10px;user-select:text;contain:layout style;}
 .ai-msg{font-size:13px;line-height:1.5;padding:8px 12px;border-radius:var(--radius-md);max-width:100%;word-break:break-word;flex-shrink:0;}
 .ai-msg.user{background:var(--accent-dim);color:var(--text-primary);align-self:flex-end;white-space:pre-wrap;}
 .ai-msg.error{background:var(--red-dim);color:var(--red);align-self:stretch;white-space:pre-wrap;}

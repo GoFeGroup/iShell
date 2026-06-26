@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -556,6 +557,10 @@ func TestRunTurnWebSearchTool(t *testing.T) {
 }
 
 func TestRunTurnOpenURLTool(t *testing.T) {
+	origValidate := validateOpenURLTargetFunc
+	validateOpenURLTargetFunc = func(context.Context, *url.URL) error { return nil }
+	t.Cleanup(func() { validateOpenURLTargetFunc = origValidate })
+
 	pageSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte(`<html><head><title>Tool Page</title></head><body><p>Readable page body.</p></body></html>`))

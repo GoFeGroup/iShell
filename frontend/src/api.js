@@ -30,6 +30,7 @@ export const downloadFiles      = (id, rps)        => go().DownloadFiles(id, rps
 export const downloadFilesToDir = (id, rps, dir)   => go().DownloadFilesToDir(id, rps, dir);
 export const getSFTPTransfers   = (id)             => go().GetSFTPTransfers(id);
 export const clearFinishedSFTPTransfers = (id)     => go().ClearFinishedSFTPTransfers(id);
+export const cancelSFTPTransfer = (transferID)     => go().CancelSFTPTransfer(transferID);
 
 export const listLocalDir   = (p)     => go().ListLocalDir(p);
 export const getHomeDir     = ()      => go().GetHomeDir();
@@ -64,6 +65,7 @@ export const approveAIToolCall   = (pendingID)         => go().ApproveAIToolCall
 export const rejectAIToolCall    = (pendingID)         => go().RejectAIToolCall(pendingID);
 export const setAIAutoExec       = (chatID, on)        => go().SetAIAutoExec(chatID, on);
 export const stopAIRun           = (chatID)            => go().StopAIRun(chatID);
+export const isAIRunActive       = (chatID)            => go().IsAIRunActive(chatID);
 
 export const on  = (event, cb) => window.runtime.EventsOn(event, cb);
 export const off = (event)     => window.runtime.EventsOff(event);

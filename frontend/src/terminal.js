@@ -1,6 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { sendInput, resizeTerm, on, off } from './api.js';
 import { findQuickCommandByShortcut } from './quick-command.js';
 import { createZmodemSentry } from './zmodem.js';
@@ -267,6 +268,16 @@ export function createTerminal(connID, settings, options = {}) {
     window.runtime.BrowserOpenURL(uri);
   }));
   term.open(xtermEl);
+
+  // GPU-accelerated rendering — much cheaper to repaint than xterm's default
+  // DOM renderer, especially noticeable on macOS WKWebView. Falls back to the
+  // default DOM renderer automatically if WebGL is unavailable or the context
+  // is lost (e.g. GPU driver reset).
+  try {
+    const webglAddon = new WebglAddon();
+    webglAddon.onContextLoss(() => webglAddon.dispose());
+    term.loadAddon(webglAddon);
+  } catch { /* WebGL unavailable — keep the default DOM renderer */ }
 
   // Parse CWD reports emitted by shells/terminal integrations.
   const osc7Disposable = term.parser.registerOscHandler(7, (data) => {

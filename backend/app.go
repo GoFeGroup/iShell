@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"ishell/backend/ai"
 	"ishell/backend/local"
@@ -29,6 +30,7 @@ type App struct {
 	aiAgent   *ai.Agent
 	dataDir   string
 	transfers map[string]TransferRecord
+	cancels   map[string]context.CancelFunc
 	txMu      sync.RWMutex
 }
 
@@ -44,6 +46,7 @@ type TransferRecord struct {
 	Percent    float64 `json:"percent"`
 	Speed      float64 `json:"speed_bps"`
 	Finished   bool    `json:"finished"`
+	Cancelled  bool    `json:"cancelled,omitempty"`
 	ErrMsg     string  `json:"error,omitempty"`
 	StartedAt  string  `json:"started_at"`
 	UpdatedAt  string  `json:"updated_at"`
@@ -69,6 +72,7 @@ func (a *App) Startup(ctx context.Context) {
 		wailsRuntime.EventsEmit(a.ctx, event, payload)
 	})
 	a.transfers = make(map[string]TransferRecord)
+	a.cancels = make(map[string]context.CancelFunc)
 }
 
 // FocusWindow brings the app window to the foreground and ensures it has
@@ -321,6 +325,32 @@ func (a *App) SetRemotePermissions(connID, path string, mode uint32) error {
 	return ssh.SetRemotePermissions(cl, path, os.FileMode(mode))
 }
 
+// newCancellableTransfer generates a transfer ID up front and registers a
+// cancel function for it, so CancelSFTPTransfer can stop the goroutine before
+// it even starts (the caller passes the returned ctx into the ssh package
+// transfer function).
+func (a *App) newCancellableTransfer() (string, context.Context) {
+	transferID := uuid.NewString()
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.txMu.Lock()
+	a.cancels[transferID] = cancel
+	a.txMu.Unlock()
+	return transferID, ctx
+}
+
+// CancelSFTPTransfer stops an in-flight upload/download. It is a no-op error
+// if the transfer has already finished or never existed.
+func (a *App) CancelSFTPTransfer(transferID string) error {
+	a.txMu.Lock()
+	cancel, ok := a.cancels[transferID]
+	a.txMu.Unlock()
+	if !ok {
+		return fmt.Errorf("transfer not found or already finished: %s", transferID)
+	}
+	cancel()
+	return nil
+}
+
 // UploadFiles opens a file dialog, then uploads selected files to remotePath.
 func (a *App) UploadFiles(connID, remotePath string) ([]string, error) {
 	localPaths, err := wailsRuntime.OpenMultipleFilesDialog(a.ctx, wailsRuntime.OpenDialogOptions{
@@ -337,11 +367,11 @@ func (a *App) UploadFiles(connID, remotePath string) ([]string, error) {
 	for _, lp := range localPaths {
 		name := filepath.Base(lp)
 		rp := remotePath + "/" + name
-		id, err := ssh.UploadFileWithProgress(a.ctx, cl, lp, rp, a.transferProgressHandler(connID, "upload", rp, lp))
-		if err != nil {
+		transferID, ctx := a.newCancellableTransfer()
+		if err := ssh.UploadFileWithProgress(ctx, transferID, cl, lp, rp, a.transferProgressHandler(connID, "upload", rp, lp)); err != nil {
 			wailsRuntime.LogErrorf(a.ctx, "upload %s: %v", lp, err)
 		}
-		ids = append(ids, id)
+		ids = append(ids, transferID)
 	}
 	return ids, nil
 }
@@ -356,11 +386,11 @@ func (a *App) UploadSpecificFiles(connID string, localPaths []string, remotePath
 	for _, lp := range localPaths {
 		name := filepath.Base(lp)
 		rp := remotePath + "/" + name
-		id, err := ssh.UploadFileWithProgress(a.ctx, cl, lp, rp, a.transferProgressHandler(connID, "upload", rp, lp))
-		if err != nil {
+		transferID, ctx := a.newCancellableTransfer()
+		if err := ssh.UploadFileWithProgress(ctx, transferID, cl, lp, rp, a.transferProgressHandler(connID, "upload", rp, lp)); err != nil {
 			wailsRuntime.LogErrorf(a.ctx, "upload %s: %v", lp, err)
 		}
-		ids = append(ids, id)
+		ids = append(ids, transferID)
 	}
 	return ids, nil
 }
@@ -385,11 +415,11 @@ func (a *App) DownloadFilesToDir(connID string, remotePaths []string, localDir s
 	var ids []string
 	for _, rp := range remotePaths {
 		localPath := filepath.Join(localDir, filepath.Base(rp))
-		id, err := ssh.DownloadPathWithProgress(a.ctx, cl, rp, localDir, a.transferProgressHandler(connID, "download", rp, localPath))
-		if err != nil {
+		transferID, ctx := a.newCancellableTransfer()
+		if err := ssh.DownloadPathWithProgress(ctx, transferID, cl, rp, localDir, a.transferProgressHandler(connID, "download", rp, localPath)); err != nil {
 			wailsRuntime.LogErrorf(a.ctx, "download %s: %v", rp, err)
 		}
-		ids = append(ids, id)
+		ids = append(ids, transferID)
 	}
 	return ids, nil
 }
@@ -443,12 +473,16 @@ func (a *App) transferProgressHandler(connID, action, remotePath, localPath stri
 		rec.Percent = progress.Percent
 		rec.Speed = progress.Speed
 		rec.Finished = progress.Finished
+		rec.Cancelled = progress.Cancelled
 		rec.ErrMsg = progress.ErrMsg
 		rec.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		if progress.Action != "" {
 			rec.Action = progress.Action
 		}
 		a.transfers[progress.TransferID] = rec
+		if progress.Finished {
+			delete(a.cancels, progress.TransferID)
+		}
 		a.txMu.Unlock()
 
 		wailsRuntime.EventsEmit(a.ctx, "sftp:progress", rec)
@@ -718,6 +752,13 @@ func (a *App) GetAIChatMessages(sessionID string) ([]storage.AIChatMessage, erro
 	if a.store == nil {
 		return nil, fmt.Errorf("store not ready")
 	}
+	sess, err := a.store.GetAIChatSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if sess == nil {
+		return nil, fmt.Errorf("chat session %s not found", sessionID)
+	}
 	return a.store.ListAIChatMessages(sessionID)
 }
 
@@ -735,6 +776,13 @@ func (a *App) SendAIMessage(chatID, connID, text string) error {
 	}
 	if !settings.AIEnabled {
 		return fmt.Errorf("AI is not enabled in settings")
+	}
+	sess, err := a.store.GetAIChatSession(chatID)
+	if err != nil {
+		return err
+	}
+	if sess == nil {
+		return fmt.Errorf("chat session %s not found", chatID)
 	}
 	go a.aiAgent.RunTurn(a.ctx, ai.RunOptions{ChatID: chatID, ConnID: connID, UserText: text})
 	return nil
@@ -767,4 +815,15 @@ func (a *App) StopAIRun(chatID string) error {
 	}
 	a.aiAgent.StopRun(chatID)
 	return nil
+}
+
+// IsAIRunActive reports whether chatID currently has a generation in flight,
+// so the frontend can correctly show/hide the stop button after switching
+// terminal tabs away from and back to a chat (events emitted while the tab
+// was inactive are missed since chat events are only subscribed while active).
+func (a *App) IsAIRunActive(chatID string) bool {
+	if a.aiAgent == nil {
+		return false
+	}
+	return a.aiAgent.IsRunning(chatID)
 }

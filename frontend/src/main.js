@@ -7,7 +7,11 @@ import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTe
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
 import { initQuickCommands, setQuickCommandSettings, toggleQuickCommands, updateQuickCommandUI, triggerQuickCommandShortcut } from './quick-command.js';
-import { initAISidebar, setAISidebarSettings, toggleAISidebar, notifyActiveTerminalChanged, closeAISidebar } from './ai-sidebar.js';
+import {
+  initAISidebar, setAISidebarSettings, notifyActiveTerminalChanged,
+  createAISidebarForTab, activateAISidebarForTab, deactivateAISidebar, destroyAISidebarForTab,
+  suspendAISidebarLayout,
+} from './ai-sidebar.js';
 import { showToast } from './toast.js';
 import { t, applyI18nAttrs, setLanguage, getLanguagePref } from './i18n.js';
 
@@ -16,7 +20,7 @@ import { t, applyI18nAttrs, setLanguage, getLanguagePref } from './i18n.js';
 applyI18nAttrs();
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let tabs = [];          // terminal/sftp: { type, id, connID, sessionID, sessionLabel, host, username }; pending/failed terminal: { type, id, sess, error }; settings: { type, id, sessionLabel }
+let tabs = [];          // terminal/sftp: { type, id, connID, sessionID, sessionLabel, host, username, terminalContent, aiSidebarOpen }; pending/failed terminal: { type, id, sess, error }; settings: { type, id, sessionLabel }
 let activeTab = null;
 let settings = null;
 let isFullscreen = false;
@@ -39,8 +43,9 @@ window.addEventListener('load', async () => {
 
   initSidebar(onConnectRequest);
   initProfilePicker(onConnectRequest);
-  initQuickCommands(settings, () => isTerminalTab(activeTab) ? activeTab.connID : null);
-  initAISidebar(settings, () => isTerminalTab(activeTab) ? { targetID: activeTab.sessionID, connID: activeTab.connID } : null);
+  initQuickCommands(settings, () => isTerminalTab(activeTab) ? activeTab.connID : null,
+    () => activeTab?.quickCommandBar || null);
+  initAISidebar(settings, () => isTerminalTab(activeTab) ? activeTab : null);
 
   // Toolbar buttons
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
@@ -49,10 +54,8 @@ window.addEventListener('load', async () => {
   document.getElementById('btn-quick-command').addEventListener('click', toggleQuickCommands);
   document.getElementById('btn-settings').addEventListener('click', () => openSettingsPanel());
   document.getElementById('btn-new-instance').addEventListener('click', openNewInstance);
-  document.getElementById('btn-toggle-ai').addEventListener('click', toggleAISidebar);
   document.getElementById('btn-search-term').addEventListener('click', toggleFind);
   document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
-  document.getElementById('find-close').addEventListener('click', () => setFindBar(false));
 
   // Update shortcut hints based on platform
   const fsKey = isMac ? '⌘↩' : 'Alt+Enter';
@@ -112,6 +115,7 @@ async function onConnectRequest(sess) {
 
 async function connectRemoteTab(tab, overrides = {}) {
   const sess = tab.sess;
+  ensureTerminalContent(tab);
   showToast(t('toast.connecting', { host: sess.host }));
   setSessionStatus(sess.id, 'connecting');
 
@@ -155,7 +159,6 @@ async function connectRemoteTab(tab, overrides = {}) {
 }
 
 async function onLocalConnectRequest(localSess) {
-  closeAISidebar();
   showToast(t('toast.openingLocal', { sub: localSess.sublabel }));
   setSessionStatus('__local__', 'connecting');
 
@@ -201,7 +204,7 @@ async function afterConnect(connID, sess, existingTab = null) {
 }
 
 function getTerminalSize() {
-  const el = document.getElementById('terminal-container');
+  const el = activeTab?.terminalContainer || document.getElementById('panel-terminal');
   return {
     cols: Math.floor((el?.clientWidth || 800) / 8),
     rows: Math.floor((el?.clientHeight || 400) / 17),
@@ -209,7 +212,6 @@ function getTerminalSize() {
 }
 
 function createPendingTerminalTab(sess) {
-  closeAISidebar();
   const tab = {
     type: 'terminal-pending',
     id: 'tab-pending-' + Date.now() + '-' + Math.random().toString(36).slice(2),
@@ -220,10 +222,83 @@ function createPendingTerminalTab(sess) {
     sess: { ...sess },
     error: '',
     pendingMessage: '',
+    aiSidebarOpen: false,
   };
   tabs.push(tab);
   renderTabs();
   return tab;
+}
+
+function ensureTerminalContent(tab) {
+  if (!tab || tab.terminalContent) return;
+  const panel = document.getElementById('panel-terminal');
+  if (!panel) return;
+  const suffix = tab.id.replace(/[^a-zA-Z0-9_-]/g, '-');
+  tab.terminalContainerId = 'terminal-container-' + suffix;
+  tab.sizeElId = 'sb-size-' + suffix;
+
+  const content = document.createElement('div');
+  content.className = 'terminal-tab-content';
+  content.style.display = 'none';
+  content.innerHTML = `
+    <div class="terminal-main">
+      <div class="terminal-container" id="${tab.terminalContainerId}"></div>
+      <div class="find-bar" style="display:none;">
+        <input placeholder="Find…" data-i18n-placeholder="terminal.findPlaceholder" />
+        <span class="find-count"></span>
+        <button class="btn btn-ghost btn-icon find-prev">▲</button>
+        <button class="btn btn-ghost btn-icon find-next">▼</button>
+        <button class="btn btn-ghost btn-icon find-close">✕</button>
+      </div>
+      <div class="quick-command-bar" style="display:none;"></div>
+      <div class="terminal-statusbar">
+        <div class="statusbar-left">
+          <span class="statusbar-item terminal-status">🟢 ${t('common.connected')}</span>
+          <span class="statusbar-item terminal-latency"></span>
+        </div>
+        <div class="statusbar-right">
+          <span class="statusbar-item">UTF-8</span>
+          <span class="statusbar-item terminal-size" id="${tab.sizeElId}">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="ai-sidebar-resizer" style="display:none;"></div>
+    <aside class="ai-sidebar collapsed">
+      <div class="ai-sidebar-inner">
+        <div class="ai-sidebar-header">
+          <button class="btn btn-ghost btn-icon ai-back" title="${t('aiSidebar.back')}" style="display:none;">←</button>
+          <div class="ai-sidebar-title">${t('aiSidebar.title')}</div>
+          <button class="btn btn-ghost btn-icon ai-close" title="${t('common.close')}">✕</button>
+        </div>
+        <div class="ai-session-list" style="display:none;"></div>
+        <div class="ai-chat-view" style="display:none;"></div>
+      </div>
+    </aside>`;
+
+  tab.terminalContent = content;
+  tab.terminalContainer = content.querySelector('.terminal-container');
+  tab.findBar = content.querySelector('.find-bar');
+  tab.findInput = tab.findBar?.querySelector('input');
+  tab.quickCommandBar = content.querySelector('.quick-command-bar');
+  tab.statusEl = content.querySelector('.terminal-status');
+  tab.sizeEl = content.querySelector('.terminal-size');
+  tab.findBar?.querySelector('.find-close')?.addEventListener('click', () => setFindBar(false));
+
+  createAISidebarForTab(tab, {
+    root: content.querySelector('.ai-sidebar'),
+    inner: content.querySelector('.ai-sidebar-inner'),
+    resizer: content.querySelector('.ai-sidebar-resizer'),
+    listEl: content.querySelector('.ai-session-list'),
+    chatEl: content.querySelector('.ai-chat-view'),
+    backBtn: content.querySelector('.ai-back'),
+    closeBtn: content.querySelector('.ai-close'),
+  }, {
+    getConnID: () => activeTab === tab ? tab.connID : '',
+    onLayoutChange: refitActiveTerminalAfterLayout,
+  });
+
+  panel.appendChild(content);
 }
 
 function failTerminalTab(tab, err) {
@@ -241,7 +316,8 @@ function failTerminalTab(tab, err) {
 }
 
 function renderTerminalState(tab) {
-  const container = document.getElementById('terminal-container');
+  ensureTerminalContent(tab);
+  const container = tab.terminalContainer;
   if (!container) return;
   container.innerHTML = '';
   const isFailed = tab.type === 'terminal-failed';
@@ -268,8 +344,8 @@ function renderTerminalState(tab) {
     </div>`;
   container.appendChild(state);
 
-  const status = document.getElementById('sb-status');
-  const size = document.getElementById('sb-size');
+  const status = tab.statusEl;
+  const size = tab.sizeEl;
   if (status) status.textContent = isFailed ? t('common.failed') : t('terminal.connectingStatus');
   if (size) size.textContent = '-';
 
@@ -310,6 +386,7 @@ async function doDisconnect(connID) {
     setSessionStatus(sessionID, 'disconnected');
   }
   off('terminal:closed:' + connID);
+  destroyTerminalContent(tab);
   destroyTerminal(connID);
   renderTabs();
   if (wasActive) activateFallbackTab(closedIndex);
@@ -352,49 +429,72 @@ function renderTabs() {
   scroll.appendChild(addBtn);
 }
 
+// Switching tabs only ever changes which tab is active — the rest of the
+// strip (labels, status dots, indices) is untouched, so toggling the
+// `.active` class on the two affected elements avoids tearing down and
+// rebuilding every tab's DOM node (and re-binding its click listener) on
+// every single switch. Falls back to a full renderTabs() the one time it's
+// needed: a brand-new tab (settings/sftp/pending) that has no DOM node yet.
+function updateActiveTabClass() {
+  const scroll = document.getElementById('tabs-scroll');
+  if (!scroll) return;
+  const activeId = activeTab?.id;
+  let found = !activeId;
+  scroll.querySelectorAll('.tab').forEach(el => {
+    const isActive = el.dataset.tabId === activeId;
+    el.classList.toggle('active', isActive);
+    if (isActive) found = true;
+  });
+  if (!found) renderTabs();
+}
+
 async function switchToTab(tab) {
   if (!tab) return;
   if (hasTerminalConn(activeTab)) rememberTerminalViewport(activeTab.connID);
   if (tab.type === 'settings') {
     activeTab = tab;
-    renderTabs();
+    updateActiveTabClass();
     showPanel('settings');
     updateConnUI(null);
-    updateQuickCommandUI();
+    deactivateAISidebar();
     notifyActiveTerminalChanged();
     await initSettings(tab.settingsPage);
     return;
   }
   if (tab.type === 'sftp') {
     activeTab = tab;
-    renderTabs();
+    updateActiveTabClass();
     showPanel('sftp');
     updateConnUI(tab);
-    updateQuickCommandUI();
+    deactivateAISidebar();
     notifyActiveTerminalChanged();
     await initSFTP(tab.connID);
     return;
   }
   if (tab.type === 'terminal-pending' || tab.type === 'terminal-failed') {
     activeTab = tab;
-    renderTabs();
+    ensureTerminalContent(tab);
+    updateActiveTabClass();
     showPanel('terminal');
+    showTerminalContent(tab);
     updateConnUI(null);
-    updateQuickCommandUI();
     renderTerminalState(tab);
+    deactivateAISidebar();
     notifyActiveTerminalChanged();
     return;
   }
   activeTab = tab;
-  renderTabs();
+  ensureTerminalContent(tab);
+  updateActiveTabClass();
   showPanel('terminal');
+  showTerminalContent(tab);
   updateConnUI(tab);
-  updateQuickCommandUI();
-  createTerminal(tab.connID, settings);
-  const status = document.getElementById('sb-status');
+  createTerminal(tab.connID, settings, { containerId: tab.terminalContainerId, sizeElId: tab.sizeElId });
+  const status = tab.statusEl;
   if (status) status.textContent = t('common.connected');
   refitActiveTerminal({ restoreScroll: true });
   focusTerminal(tab.connID);
+  activateAISidebarForTab(tab);
   notifyActiveTerminalChanged();
 }
 
@@ -450,6 +550,7 @@ function closeTransientTerminalTab(tab) {
     setSessionStatus(tab.sessionID, 'disconnected');
   }
   tabs = tabs.filter(t => t !== tab);
+  destroyTerminalContent(tab);
   renderTabs();
   if (wasActive) activateFallbackTab(closedIndex);
 }
@@ -467,7 +568,7 @@ function showWelcome() {
   renderTabs();
   showPanel('welcome');
   updateConnUI(null);
-  updateQuickCommandUI();
+  deactivateAISidebar();
   notifyActiveTerminalChanged();
 }
 
@@ -490,6 +591,30 @@ function showPanel(name) {
     const el = document.getElementById('panel-' + p);
     if (el) el.style.display = p === name ? '' : 'none';
   });
+}
+
+function showTerminalContent(tab) {
+  document.querySelectorAll('#panel-terminal .terminal-tab-content').forEach(el => {
+    const isActive = el === tab.terminalContent;
+    if (!isActive) {
+      const t = tabs.find(t => t.terminalContent === el);
+      suspendAISidebarLayout(t);
+    }
+    el.style.display = isActive ? '' : 'none';
+  });
+}
+
+function destroyTerminalContent(tab) {
+  if (!tab) return;
+  destroyAISidebarForTab(tab);
+  tab.terminalContent?.remove();
+  tab.terminalContent = null;
+  tab.terminalContainer = null;
+  tab.findBar = null;
+  tab.findInput = null;
+  tab.quickCommandBar = null;
+  tab.statusEl = null;
+  tab.sizeEl = null;
 }
 
 function refitActiveTerminal(options = {}) {
@@ -572,11 +697,13 @@ function toggleSidebar() {
 // ── Find bar ─────────────────────────────────────────────────────────────────
 
 function toggleFind() {
-  setFindBar(document.getElementById('find-bar').style.display === 'none');
+  if (!activeTab?.findBar) return;
+  setFindBar(activeTab.findBar.style.display === 'none');
 }
 function setFindBar(show) {
-  document.getElementById('find-bar').style.display = show ? '' : 'none';
-  if (show) document.getElementById('find-input').focus();
+  if (!activeTab?.findBar) return;
+  activeTab.findBar.style.display = show ? '' : 'none';
+  if (show) activeTab.findInput?.focus();
   refitActiveTerminal();
 }
 

@@ -1,329 +1,817 @@
 import {
   listAIChatSessionsForTarget, createAIChatSession, renameAIChatSession, deleteAIChatSession,
   getAIChatMessages, sendAIMessage, approveAIToolCall, rejectAIToolCall, setAIAutoExec,
-  stopAIRun, on, off,
+  stopAIRun, isAIRunActive, on, off,
 } from './api.js';
 import { t } from './i18n.js';
 import { showToast } from './toast.js';
 import { renderMarkdown } from './markdown.js';
 
-// getActiveTerminal() returns null (no terminal tab active) or
-// { targetID, connID } — targetID is the bound SSH Session.ID / "__local__"
-// (stable across reconnects, shared by simultaneous tabs to the same
-// profile); connID is the live connection used for tool-call I/O, re-read
-// fresh at send time so it always reflects whichever tab is actually active.
-let getActiveTerminal = () => null;
-
+let getActiveTab = () => null;
 let aiEnabled = false;
-let currentTargetID = null;
-let chatsForTarget = [];
-let currentChatID = null;
-let currentAutoExec = false;
-let currentAssistantBubble = null;
-let currentAssistantRaw = '';
-let isSending = false;
-let cardsByToolCallID = {};
+let activeInstance = null;
 
 const MIN_SIDEBAR_WIDTH = 240;
 const MAX_SIDEBAR_WIDTH = 640;
 const DEFAULT_SIDEBAR_WIDTH = 320;
 
-export function initAISidebar(settings, activeTerminalGetter) {
-  getActiveTerminal = activeTerminalGetter;
+export function initAISidebar(settings, activeTabGetter) {
+  getActiveTab = activeTabGetter;
   setAISidebarSettings(settings);
-  initResizer();
-
   document.getElementById('btn-toggle-ai')?.addEventListener('click', toggleAISidebar);
-  document.getElementById('ai-close')?.addEventListener('click', () => setSidebarOpen(false));
-  document.getElementById('ai-back')?.addEventListener('click', showSessionList);
 }
 
-function savedSidebarWidth() {
-  try {
-    const saved = parseInt(localStorage.getItem('ai-sidebar-width'), 10);
-    if (saved >= MIN_SIDEBAR_WIDTH && saved <= MAX_SIDEBAR_WIDTH) return saved;
-  } catch { /* ignore */ }
-  return DEFAULT_SIDEBAR_WIDTH;
-}
-
-// Width is applied as an inline style (not left to the .collapsed CSS class
-// alone) so a user-dragged width survives collapse/expand — inline style
-// always wins over the class rule, so collapsing must explicitly set 0 too.
-//
-// #ai-sidebar-inner is kept at the resting width at all times (even while
-// collapsed) so the open/close transition only animates the outer clip —
-// the chat content never re-wraps mid-animation, which is what made the
-// transition janky once a chat had a lot of history.
-function applySidebarWidth() {
-  const sidebar = document.getElementById('ai-sidebar');
-  const inner = document.getElementById('ai-sidebar-inner');
-  if (!sidebar) return;
-  const width = savedSidebarWidth();
-  sidebar.style.width = sidebar.classList.contains('collapsed') ? '0px' : width + 'px';
-  if (inner) inner.style.width = width + 'px';
-}
-
-function initResizer() {
-  const resizer = document.getElementById('ai-sidebar-resizer');
-  const sidebar = document.getElementById('ai-sidebar');
-  const inner = document.getElementById('ai-sidebar-inner');
-  if (!resizer || !sidebar) return;
-  applySidebarWidth();
-
-  let startX = 0;
-  let startWidth = 0;
-
-  function onMouseMove(e) {
-    const next = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, startWidth + (startX - e.clientX)));
-    sidebar.style.width = next + 'px';
-    if (inner) inner.style.width = next + 'px';
-  }
-  function onMouseUp() {
-    document.removeEventListener('mousemove', onMouseMove);
-    document.removeEventListener('mouseup', onMouseUp);
-    document.body.style.cursor = '';
-    sidebar.classList.remove('resizing');
-    try { localStorage.setItem('ai-sidebar-width', parseInt(sidebar.style.width, 10)); } catch { /* ignore */ }
-    window.dispatchEvent(new CustomEvent('ishell:aiSidebarToggled'));
-  }
-  resizer.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    if (sidebar.classList.contains('collapsed')) return;
-    startX = e.clientX;
-    startWidth = sidebar.getBoundingClientRect().width;
-    sidebar.classList.add('resizing');
-    document.body.style.cursor = 'col-resize';
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  });
-}
-
-// Called whenever settings are (re)loaded or saved, so the toolbar entry
-// reacts live to the "Enable AI" checkbox without a reload.
 export function setAISidebarSettings(settings) {
   aiEnabled = !!settings?.ai_enabled;
+  if (!aiEnabled) activeInstance?.setOpen(false, { animate: true, notify: true });
   updateToolbarButton();
-  if (!aiEnabled) setSidebarOpen(false);
 }
 
-// Called by main.js every time the active terminal tab changes (switch,
-// connect, disconnect, or leaving to a non-terminal panel) — this is what
-// makes each terminal "own" its AI conversation: switching tabs swaps the
-// bound chat entirely, and the toolbar entry only shows while a terminal
-// tab is actually active.
+export function createAISidebarForTab(tab, els, options = {}) {
+  if (tab.aiSidebar) return tab.aiSidebar;
+  tab.aiSidebar = new AISidebarInstance(tab, els, options);
+  return tab.aiSidebar;
+}
+
+export function activateAISidebarForTab(tab) {
+  if (activeInstance && activeInstance !== tab?.aiSidebar) activeInstance.deactivate();
+  activeInstance = tab?.aiSidebar || null;
+  activeInstance?.activate();
+  updateToolbarButton();
+}
+
+export function deactivateAISidebar() {
+  activeInstance?.deactivate();
+  activeInstance = null;
+  updateToolbarButton();
+}
+
+export function suspendAISidebarLayout(tab) {
+  tab?.aiSidebar?.suspendLayout();
+}
+
+export function destroyAISidebarForTab(tab) {
+  if (!tab?.aiSidebar) return;
+  if (activeInstance === tab.aiSidebar) activeInstance = null;
+  tab.aiSidebar.destroy();
+  tab.aiSidebar = null;
+  updateToolbarButton();
+}
+
 export function notifyActiveTerminalChanged() {
   updateToolbarButton();
-  const resolved = getActiveTerminal();
-  const newTargetID = resolved?.targetID || null;
-  if (newTargetID === currentTargetID) return;
-  currentTargetID = newTargetID;
-  leaveChat();
-  if (!currentTargetID) return; // sidebar's container is hidden too (not a terminal panel)
-  loadForTarget(currentTargetID);
+  activeInstance?.syncTarget();
+}
+
+export function toggleAISidebar() {
+  activeInstance?.toggleByUser();
 }
 
 function updateToolbarButton() {
-  const show = aiEnabled && !!getActiveTerminal();
+  const show = aiEnabled && !!activeInstance && activeInstance.isTerminalActive();
   const btn = document.getElementById('btn-toggle-ai');
   const vdiv = document.getElementById('ai-toolbar-vdiv');
   if (btn) btn.style.display = show ? '' : 'none';
   if (vdiv) vdiv.style.display = show ? '' : 'none';
 }
 
-export function toggleAISidebar() {
-  const sidebar = document.getElementById('ai-sidebar');
-  if (!sidebar) return;
-  setSidebarOpen(sidebar.classList.contains('collapsed'));
-}
-
-// Called when a brand-new terminal tab is created, so it never inherits an
-// "open" sidebar left over from whatever tab was active before it.
-export function closeAISidebar() {
-  setSidebarOpen(false);
-}
-
-function setSidebarOpen(open) {
-  const sidebar = document.getElementById('ai-sidebar');
-  const resizer = document.getElementById('ai-sidebar-resizer');
-  if (!sidebar) return;
-  const wasOpen = !sidebar.classList.contains('collapsed');
-  if (wasOpen === open) return;
-  sidebar.classList.toggle('collapsed', !open);
-  applySidebarWidth();
-  if (resizer) resizer.style.display = open ? '' : 'none';
-  // The sidebar takes width away from the terminal next to it — let main.js
-  // re-fit the active xterm instance after the CSS width transition.
-  window.dispatchEvent(new CustomEvent('ishell:aiSidebarToggled'));
-}
-
-// ── Loading a terminal's chats ──────────────────────────────────────────────
-
-async function loadForTarget(targetID) {
+function savedSidebarWidth(tab) {
+  const key = tab?.id ? 'ai-sidebar-width-' + tab.id : 'ai-sidebar-width';
   try {
-    chatsForTarget = (await listAIChatSessionsForTarget(targetID)) || [];
-  } catch (e) {
-    console.error('listAIChatSessionsForTarget:', e);
-    chatsForTarget = [];
-  }
-  if (chatsForTarget.length > 0) {
-    openChat(chatsForTarget[0].id); // most recently updated
-  } else {
-    showSessionList();
-  }
+    const perTab = parseInt(localStorage.getItem(key), 10);
+    if (perTab >= MIN_SIDEBAR_WIDTH && perTab <= MAX_SIDEBAR_WIDTH) return perTab;
+    const saved = parseInt(localStorage.getItem('ai-sidebar-width'), 10);
+    if (saved >= MIN_SIDEBAR_WIDTH && saved <= MAX_SIDEBAR_WIDTH) return saved;
+  } catch { /* ignore */ }
+  return DEFAULT_SIDEBAR_WIDTH;
 }
 
-// ── Session list view (other chats for the current terminal) ───────────────
-
-function showSessionList() {
-  leaveChat();
-  confirmingDeleteID = null;
-  const listEl = document.getElementById('ai-session-list');
-  const chatEl = document.getElementById('ai-chat-view');
-  if (chatEl) chatEl.style.display = 'none';
-  if (listEl) listEl.style.display = '';
-  const backBtn = document.getElementById('ai-back');
-  if (backBtn) backBtn.style.display = 'none';
-  renderSessionList();
-}
-
-async function renderSessionList() {
-  const listEl = document.getElementById('ai-session-list');
-  if (!listEl || !currentTargetID) return;
-  listEl.innerHTML = '';
-
-  const newBtn = document.createElement('button');
-  newBtn.className = 'btn btn-primary btn-sm';
-  newBtn.style.width = '100%';
-  newBtn.style.marginBottom = '8px';
-  newBtn.textContent = t('aiSidebar.newChat');
-  newBtn.addEventListener('click', handleNewChat);
-  listEl.appendChild(newBtn);
-
+function saveSidebarWidth(tab, width) {
   try {
-    chatsForTarget = (await listAIChatSessionsForTarget(currentTargetID)) || [];
-  } catch (e) {
-    console.error('listAIChatSessionsForTarget:', e);
-    showToast('❌ ' + e);
-    chatsForTarget = [];
-  }
-
-  if (chatsForTarget.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'ai-empty';
-    empty.textContent = t('aiSidebar.noChats');
-    listEl.appendChild(empty);
-    return;
-  }
-  chatsForTarget.forEach(sess => listEl.appendChild(renderSessionItem(sess)));
+    localStorage.setItem('ai-sidebar-width-' + tab.id, String(width));
+    localStorage.setItem('ai-sidebar-width', String(width));
+  } catch { /* ignore */ }
 }
 
-// ID of the row currently armed for delete (showing the inline "Delete? /
-// Cancel" confirmation in place of its icons) — at most one at a time.
-let confirmingDeleteID = null;
+class AISidebarInstance {
+  constructor(tab, els, options) {
+    this.tab = tab;
+    this.root = els.root;
+    this.inner = els.inner;
+    this.resizer = els.resizer;
+    this.listEl = els.listEl;
+    this.chatEl = els.chatEl;
+    this.backBtn = els.backBtn;
+    this.closeBtn = els.closeBtn;
+    this.getConnID = options.getConnID || (() => '');
+    this.onLayoutChange = options.onLayoutChange || (() => {});
 
-// Single delegated click listener (rather than separate listeners per
-// button with stopPropagation) — mirrors sidebar.js's profile-list pattern,
-// which is the established, known-working way this codebase tells "open"
-// clicks apart from "edit/delete" clicks on a row. Delete/rename avoid the
-// native confirm()/prompt() dialogs entirely (inline confirm + inline edit
-// instead), since those are an extra, harder-to-debug dependency on the
-// host webview's dialog handling.
-function renderSessionItem(sess) {
-  const item = document.createElement('div');
-  item.className = 'ai-session-item';
-  item.dataset.id = sess.id;
-  const confirming = confirmingDeleteID === sess.id;
-  item.innerHTML = `
-    <div class="ai-session-item-info">
-      <div class="ai-session-item-title">${escHtml(sess.title || t('aiSidebar.defaultChatTitle'))}</div>
-      <div class="ai-session-item-sub">${escHtml(formatRelativeTime(sess.updated_at))}</div>
-    </div>
-    <div class="ai-session-item-actions${confirming ? ' confirming' : ''}">
-      ${confirming ? `
-        <span class="ai-confirm-label">${t('aiSidebar.confirmDeleteShort')}</span>
-        <button class="btn btn-danger btn-sm" data-action="confirm-delete" type="button">${t('common.delete')}</button>
-        <button class="btn btn-ghost btn-sm" data-action="cancel-delete" type="button">${t('common.cancel')}</button>
-      ` : `
-        <button class="btn btn-ghost btn-icon btn-sm" data-action="rename" title="${t('common.rename')}" type="button">✏️</button>
-        <button class="btn btn-ghost btn-icon btn-sm" data-action="delete" title="${t('common.delete')}" type="button">🗑</button>
-      `}
-    </div>`;
+    this.currentTargetID = null;
+    this.chatsForTarget = [];
+    this.currentChatID = null;
+    this.lastRenderedSignature = null;
+    this.currentAutoExec = false;
+    this.currentAssistantBubble = null;
+    this.currentAssistantRaw = '';
+    this.isSending = false;
+    this.cardsByToolCallID = {};
+    this.confirmingDeleteID = null;
+    this.unsubscribers = [];
+    this.cleanupResizerDrag = null;
+    this.pendingInnerHideListener = null;
+    this.destroyed = false;
+    this.active = false;
 
-  item.addEventListener('click', (e) => {
-    const action = e.target.closest('[data-action]')?.dataset.action;
-    if (action === 'rename') { startRename(sess, item); return; }
-    if (action === 'delete') { confirmingDeleteID = sess.id; renderSessionList(); return; }
-    if (action === 'confirm-delete') { confirmingDeleteID = null; handleDelete(sess); return; }
-    if (action === 'cancel-delete') { confirmingDeleteID = null; renderSessionList(); return; }
-    if (confirming) return; // row is armed for delete; don't also open the chat
-    openChat(sess.id);
-  });
-  return item;
+    this.backBtn?.addEventListener('click', () => this.showSessionList());
+    this.closeBtn?.addEventListener('click', () => this.setOpen(false, { animate: true, notify: true }));
+    this.initResizer();
+    this.applySidebarWidth();
+    this.setOpen(!!this.tab.aiSidebarOpen, { animate: false, notify: false });
+  }
+
+  isTerminalActive() {
+    return getActiveTab() === this.tab;
+  }
+
+  activate() {
+    if (this.destroyed) return;
+    this.active = true;
+    if (!aiEnabled) {
+      this.setOpen(false, { animate: false, notify: false });
+      return;
+    }
+    this.setOpen(!!this.tab.aiSidebarOpen, { animate: false, notify: false });
+    const targetBeforeSync = this.currentTargetID;
+    this.syncTarget();
+    if (this.currentTargetID && this.currentTargetID === targetBeforeSync) {
+      if (this.currentChatID) {
+        const chatID = this.currentChatID;
+        this.subscribeChatEvents(chatID);
+        if (this.isSending) {
+          // AI was running when this tab was deactivated — re-sync missed events.
+          this.refreshCurrentChat(chatID).finally(async () => {
+            if (!this.active || this.currentChatID !== chatID) return;
+            let running = false;
+            try { running = await isAIRunActive(chatID); } catch { /* default to false */ }
+            if (this.active && this.currentChatID === chatID) this.setSending(running);
+          });
+        }
+        // If AI was not running, DOM state is already correct — no refresh needed.
+      }
+      // Session list state is preserved in DOM — no refresh needed on reactivation.
+    }
+  }
+
+  deactivate() {
+    this.active = false;
+    this.unsubscribeChatEvents();
+  }
+
+  suspendLayout() {
+    if (this.inner) this.inner.style.display = 'none';
+  }
+
+  destroy() {
+    this.destroyed = true;
+    this.unsubscribeChatEvents();
+    this.cancelPendingInnerHide();
+    this.cleanupResizerDrag?.();
+    this.cleanupResizerDrag = null;
+  }
+
+  syncTarget() {
+    if (!this.active || !this.isTerminalActive() || !aiEnabled) return;
+    const newTargetID = this.tab.sessionID || null;
+    if (newTargetID === this.currentTargetID) return;
+    this.currentTargetID = newTargetID;
+    this.leaveChat();
+    if (this.currentTargetID) this.loadForTarget(this.currentTargetID);
+  }
+
+  toggleByUser() {
+    this.setOpen(this.root.classList.contains('collapsed'), { animate: true, notify: true });
+  }
+
+  setOpen(open, { animate, notify } = {}) {
+    if (!this.root) return;
+    const wasOpen = !this.root.classList.contains('collapsed');
+    this.tab.aiSidebarOpen = !!open;
+    this.cancelPendingInnerHide();
+    if (!animate) this.root.classList.add('no-transition');
+    // .ai-sidebar-inner keeps a fixed 320px width even while collapsed (see its
+    // rule below) so chat text doesn't re-wrap mid-transition. But that means
+    // a long chat history stays fully laid out — just clipped via the
+    // collapsed parent's overflow:hidden — and browsers still do real work
+    // against that hidden subtree (e.g. focus-triggered a11y-tree sync),
+    // which measurably stalls every terminal-tab switch once a chat has
+    // enough history. So lay it out only while actually open or animating,
+    // and drop it from layout once fully collapsed.
+    if (open && this.inner) this.inner.style.display = '';
+    this.root.classList.toggle('collapsed', !open);
+    this.applySidebarWidth();
+    if (this.resizer) this.resizer.style.display = open ? '' : 'none';
+    if (!animate) requestAnimationFrame(() => this.root?.classList.remove('no-transition'));
+    if (!open) this.scheduleInnerHide(animate);
+    if (notify && wasOpen !== open) this.onLayoutChange();
+  }
+
+  scheduleInnerHide(animate) {
+    if (!this.inner) return;
+    if (!animate) { this.inner.style.display = 'none'; return; }
+    const onEnd = (e) => {
+      if (e.target !== this.root || e.propertyName !== 'width') return;
+      this.cancelPendingInnerHide();
+      if (this.root?.classList.contains('collapsed') && this.inner) this.inner.style.display = 'none';
+    };
+    this.pendingInnerHideListener = onEnd;
+    this.root.addEventListener('transitionend', onEnd);
+  }
+
+  cancelPendingInnerHide() {
+    if (this.pendingInnerHideListener) {
+      this.root?.removeEventListener('transitionend', this.pendingInnerHideListener);
+      this.pendingInnerHideListener = null;
+    }
+  }
+
+  applySidebarWidth() {
+    const width = savedSidebarWidth(this.tab);
+    if (this.root) this.root.style.width = this.root.classList.contains('collapsed') ? '0px' : width + 'px';
+    if (this.inner) this.inner.style.width = width + 'px';
+  }
+
+  initResizer() {
+    if (!this.resizer || !this.root) return;
+    let startX = 0;
+    let startWidth = 0;
+    const onMouseMove = (e) => {
+      const next = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, startWidth + (startX - e.clientX)));
+      this.root.style.width = next + 'px';
+      if (this.inner) this.inner.style.width = next + 'px';
+    };
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      this.root.classList.remove('resizing');
+      saveSidebarWidth(this.tab, parseInt(this.root.style.width, 10));
+      this.cleanupResizerDrag = null;
+      this.onLayoutChange();
+    };
+    this.resizer.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (this.root.classList.contains('collapsed')) return;
+      this.cleanupResizerDrag?.();
+      startX = e.clientX;
+      startWidth = this.root.getBoundingClientRect().width;
+      this.root.classList.add('resizing');
+      document.body.style.cursor = 'col-resize';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      this.cleanupResizerDrag = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        document.body.style.cursor = '';
+        this.root?.classList.remove('resizing');
+      };
+    });
+  }
+
+  async loadForTarget(targetID) {
+    try {
+      this.chatsForTarget = (await listAIChatSessionsForTarget(targetID)) || [];
+    } catch (e) {
+      console.error('listAIChatSessionsForTarget:', e);
+      this.chatsForTarget = [];
+    }
+    if (!this.active || this.currentTargetID !== targetID) return;
+    if (this.chatsForTarget.length > 0) {
+      this.openChat(this.currentChatID || this.chatsForTarget[0].id);
+    } else {
+      this.showSessionList();
+    }
+  }
+
+  async refreshSessionsForTarget(targetID) {
+    try {
+      const chats = (await listAIChatSessionsForTarget(targetID)) || [];
+      if (!this.active || this.destroyed || this.currentTargetID !== targetID) return;
+      this.chatsForTarget = chats;
+      if (this.currentChatID && !this.chatsForTarget.some(sess => sess.id === this.currentChatID)) {
+        this.leaveChat();
+        if (this.chatsForTarget.length > 0) {
+          await this.openChat(this.chatsForTarget[0].id);
+        } else {
+          this.showSessionList();
+        }
+      } else if (this.listEl && this.listEl.style.display !== 'none') {
+        this.renderSessionList();
+      }
+    } catch (e) {
+      console.error('listAIChatSessionsForTarget:', e);
+    }
+  }
+
+  showSessionList() {
+    this.leaveChat();
+    this.confirmingDeleteID = null;
+    if (this.chatEl) this.chatEl.style.display = 'none';
+    if (this.listEl) this.listEl.style.display = '';
+    if (this.backBtn) this.backBtn.style.display = 'none';
+    this.renderSessionList();
+  }
+
+  async renderSessionList() {
+    if (!this.listEl || !this.currentTargetID) return;
+    this.listEl.innerHTML = '';
+
+    const newBtn = document.createElement('button');
+    newBtn.className = 'btn btn-primary btn-sm';
+    newBtn.style.width = '100%';
+    newBtn.style.marginBottom = '8px';
+    newBtn.textContent = t('aiSidebar.newChat');
+    newBtn.addEventListener('click', () => this.handleNewChat());
+    this.listEl.appendChild(newBtn);
+
+    try {
+      this.chatsForTarget = (await listAIChatSessionsForTarget(this.currentTargetID)) || [];
+    } catch (e) {
+      console.error('listAIChatSessionsForTarget:', e);
+      showToast('❌ ' + e);
+      this.chatsForTarget = [];
+    }
+
+    if (this.chatsForTarget.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'ai-empty';
+      empty.textContent = t('aiSidebar.noChats');
+      this.listEl.appendChild(empty);
+      return;
+    }
+    this.chatsForTarget.forEach(sess => this.listEl.appendChild(this.renderSessionItem(sess)));
+  }
+
+  renderSessionItem(sess) {
+    const item = document.createElement('div');
+    item.className = 'ai-session-item';
+    item.dataset.id = sess.id;
+    const confirming = this.confirmingDeleteID === sess.id;
+    item.innerHTML = `
+      <div class="ai-session-item-info">
+        <div class="ai-session-item-title">${escHtml(sess.title || t('aiSidebar.defaultChatTitle'))}</div>
+        <div class="ai-session-item-sub">${escHtml(formatRelativeTime(sess.updated_at))}</div>
+      </div>
+      <div class="ai-session-item-actions${confirming ? ' confirming' : ''}">
+        ${confirming ? `
+          <span class="ai-confirm-label">${t('aiSidebar.confirmDeleteShort')}</span>
+          <button class="btn btn-danger btn-sm" data-action="confirm-delete" type="button">${t('common.delete')}</button>
+          <button class="btn btn-ghost btn-sm" data-action="cancel-delete" type="button">${t('common.cancel')}</button>
+        ` : `
+          <button class="btn btn-ghost btn-icon btn-sm" data-action="rename" title="${t('common.rename')}" type="button">✏️</button>
+          <button class="btn btn-ghost btn-icon btn-sm" data-action="delete" title="${t('common.delete')}" type="button">🗑</button>
+        `}
+      </div>`;
+
+    item.addEventListener('click', (e) => {
+      const action = e.target.closest('[data-action]')?.dataset.action;
+      if (action === 'rename') { this.startRename(sess, item); return; }
+      if (action === 'delete') { this.confirmingDeleteID = sess.id; this.renderSessionList(); return; }
+      if (action === 'confirm-delete') { this.confirmingDeleteID = null; this.handleDelete(sess); return; }
+      if (action === 'cancel-delete') { this.confirmingDeleteID = null; this.renderSessionList(); return; }
+      if (confirming) return;
+      this.openChat(sess.id);
+    });
+    return item;
+  }
+
+  startRename(sess, item) {
+    const titleEl = item.querySelector('.ai-session-item-title');
+    if (!titleEl) return;
+    const input = document.createElement('input');
+    input.className = 'input ai-session-rename-input';
+    input.value = sess.title || '';
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+    input.addEventListener('click', (e) => e.stopPropagation());
+
+    let settled = false;
+    const commit = async () => {
+      if (settled) return;
+      settled = true;
+      const next = input.value.trim();
+      if (next && next !== sess.title) {
+        try { await renameAIChatSession(sess.id, next); } catch (e) { showToast('❌ ' + e); }
+      }
+      this.renderSessionList();
+    };
+    const cancel = () => {
+      if (settled) return;
+      settled = true;
+      this.renderSessionList();
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    input.addEventListener('blur', commit);
+  }
+
+  async handleDelete(sess) {
+    try {
+      await deleteAIChatSession(sess.id);
+    } catch (e) {
+      showToast('❌ ' + e);
+      return;
+    }
+    if (this.currentChatID === sess.id) {
+      this.leaveChat();
+      this.showSessionList();
+    } else {
+      this.renderSessionList();
+    }
+  }
+
+  async handleNewChat() {
+    if (!this.currentTargetID) return;
+    try {
+      const sess = await createAIChatSession(this.currentTargetID, t('aiSidebar.defaultChatTitle'));
+      this.chatsForTarget = [sess, ...this.chatsForTarget];
+      await this.openChat(sess.id);
+    } catch (e) {
+      showToast('❌ ' + e);
+    }
+  }
+
+  async openChat(chatID) {
+    if (this.currentChatID && this.currentChatID !== chatID) this.unsubscribeChatEvents();
+    this.currentChatID = chatID;
+    this.currentAssistantBubble = null;
+    this.cardsByToolCallID = {};
+
+    const sess = this.chatsForTarget.find(s => s.id === chatID);
+    this.currentAutoExec = !!sess?.auto_exec;
+
+    if (this.listEl) this.listEl.style.display = 'none';
+    if (this.backBtn) this.backBtn.style.display = '';
+    if (this.chatEl) {
+      this.chatEl.style.display = '';
+      this.buildChatViewSkeleton(this.chatEl);
+    }
+
+    if (this.active) this.subscribeChatEvents(chatID);
+    this.setSending(false);
+    this.lastRenderedSignature = null;
+    await this.refreshCurrentChat(chatID);
+  }
+
+  // Re-fetches chatID's messages and re-renders only if they actually
+  // changed since the last render. Skipping the no-op case matters because
+  // this runs on every single tab (re)activation, and re-rendering a long
+  // chat history just to scroll it back to an unchanged bottom forces an
+  // expensive layout — see the tab-switch performance investigation.
+  async refreshCurrentChat(chatID = this.currentChatID) {
+    if (!chatID || !this.chatEl) return;
+    try {
+      const messages = (await getAIChatMessages(chatID)) || [];
+      if (this.destroyed || this.currentChatID !== chatID) return;
+      const signature = messages.length + ':' + (messages.at(-1)?.id ?? '');
+      if (signature === this.lastRenderedSignature) return;
+      this.lastRenderedSignature = signature;
+      this.renderHistory(messages);
+    } catch (e) {
+      if (this.destroyed || this.currentChatID !== chatID) return;
+      console.error('getAIChatMessages:', e);
+      showToast('❌ ' + e);
+    }
+  }
+
+  leaveChat() {
+    this.unsubscribeChatEvents();
+    this.currentChatID = null;
+    this.currentAssistantBubble = null;
+    this.cardsByToolCallID = {};
+  }
+
+  buildChatViewSkeleton(chatView) {
+    chatView.innerHTML = '';
+
+    const messages = document.createElement('div');
+    messages.className = 'ai-chat-messages';
+
+    const autoexecRow = document.createElement('div');
+    autoexecRow.className = 'ai-autoexec-row';
+    const label = document.createElement('span');
+    label.textContent = t('aiSidebar.autoExecLabel');
+    label.title = t('aiSidebar.autoExecDesc');
+    const toggle = document.createElement('div');
+    toggle.className = 'toggle-switch' + (this.currentAutoExec ? ' on' : '');
+    toggle.addEventListener('click', async () => {
+      const next = !toggle.classList.contains('on');
+      toggle.classList.toggle('on', next);
+      this.currentAutoExec = next;
+      try { await setAIAutoExec(this.currentChatID, next); } catch (e) { showToast('❌ ' + e); }
+    });
+    autoexecRow.append(label, toggle);
+
+    const inputRow = document.createElement('div');
+    inputRow.className = 'ai-chat-input-row';
+    const textarea = document.createElement('textarea');
+    textarea.rows = 1;
+    textarea.placeholder = t('aiSidebar.inputPlaceholder');
+    let composing = false;
+    let compositionJustEndedUntil = 0;
+    textarea.addEventListener('compositionstart', () => { composing = true; });
+    textarea.addEventListener('compositionend', () => {
+      composing = false;
+      compositionJustEndedUntil = Date.now() + 80;
+    });
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.isComposing || composing || e.keyCode === 229 || Date.now() < compositionJustEndedUntil) return;
+        e.preventDefault();
+        this.handleSend();
+      }
+    });
+    const sendBtn = document.createElement('button');
+    sendBtn.className = 'btn btn-primary btn-sm ai-chat-send';
+    sendBtn.textContent = t('aiSidebar.send');
+    sendBtn.addEventListener('click', () => this.handleSend());
+    const stopBtn = document.createElement('button');
+    stopBtn.className = 'btn btn-secondary btn-sm ai-chat-stop';
+    stopBtn.textContent = t('aiSidebar.stop');
+    stopBtn.style.display = 'none';
+    stopBtn.addEventListener('click', async () => {
+      try { await stopAIRun(this.currentChatID); } catch (e) { showToast('❌ ' + e); }
+    });
+    inputRow.append(textarea, sendBtn, stopBtn);
+    this.messagesEl = messages;
+    this.inputEl = textarea;
+    this.sendBtn = sendBtn;
+    this.stopBtn = stopBtn;
+
+    chatView.append(messages, autoexecRow, inputRow);
+  }
+
+  async handleSend() {
+    if (!this.inputEl || this.isSending || !this.currentChatID) return;
+    const text = this.inputEl.value.trim();
+    if (!text) return;
+    this.inputEl.value = '';
+    this.appendUserBubble(text);
+    this.setSending(true);
+    try {
+      await sendAIMessage(this.currentChatID, this.getConnID() || '', text);
+    } catch (e) {
+      this.appendErrorBubble(String(e));
+      this.setSending(false);
+    }
+  }
+
+  setSending(sending) {
+    this.isSending = sending;
+    if (this.sendBtn) this.sendBtn.style.display = sending ? 'none' : '';
+    if (this.stopBtn) this.stopBtn.style.display = sending ? '' : 'none';
+    if (this.inputEl) this.inputEl.disabled = sending;
+  }
+
+  subscribeChatEvents(chatID) {
+    this.unsubscribeChatEvents();
+    this.addEvent('ai:delta:' + chatID, payload => this.handleDelta(payload));
+    this.addEvent('ai:tool_call:' + chatID, payload => this.handleToolCall(payload));
+    this.addEvent('ai:tool_result:' + chatID, payload => this.handleToolResult(payload));
+    this.addEvent('ai:tool_rejected:' + chatID, payload => this.handleToolRejected(payload));
+    this.addEvent('ai:done:' + chatID, payload => this.handleDone(payload));
+    this.addEvent('ai:error:' + chatID, payload => this.handleError(payload));
+  }
+
+  addEvent(event, handler) {
+    const cancel = on(event, handler);
+    this.unsubscribers.push(() => {
+      if (typeof cancel === 'function') cancel();
+      else off(event);
+    });
+  }
+
+  unsubscribeChatEvents() {
+    this.unsubscribers.splice(0).forEach(cancel => cancel());
+  }
+
+  handleDelta({ content }) {
+    this.appendAssistantDelta(content);
+  }
+
+  handleToolCall(payload) {
+    this.renderPendingToolCard(payload);
+  }
+
+  handleToolResult(payload) {
+    this.applyToolResult(payload);
+  }
+
+  handleToolRejected(payload) {
+    this.applyToolRejected(payload);
+  }
+
+  handleDone() {
+    this.currentAssistantBubble = null;
+    this.setSending(false);
+  }
+
+  handleError({ message }) {
+    this.currentAssistantBubble = null;
+    this.appendErrorBubble(t('aiSidebar.chatError', { e: message }));
+    this.setSending(false);
+  }
+
+  scrollToBottom() {
+    if (this.messagesEl) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  appendUserBubble(text) {
+    const el = document.createElement('div');
+    el.className = 'ai-msg user';
+    el.textContent = text;
+    this.messagesEl?.appendChild(el);
+    this.scrollToBottom();
+  }
+
+  appendErrorBubble(text) {
+    const el = document.createElement('div');
+    el.className = 'ai-msg error';
+    el.textContent = text;
+    this.messagesEl?.appendChild(el);
+    this.scrollToBottom();
+  }
+
+  appendAssistantDelta(content) {
+    if (!this.currentAssistantBubble) {
+      this.currentAssistantBubble = document.createElement('div');
+      this.currentAssistantBubble.className = 'ai-msg assistant';
+      this.messagesEl?.appendChild(this.currentAssistantBubble);
+      this.currentAssistantRaw = '';
+    }
+    this.currentAssistantRaw += content;
+    this.currentAssistantBubble.innerHTML = renderMarkdown(this.currentAssistantRaw);
+    this.scrollToBottom();
+  }
+
+  renderPendingToolCard({ pending_id, tool_call_id, command }) {
+    this.currentAssistantBubble = null;
+    const card = document.createElement('div');
+    card.className = 'ai-tool-card pending';
+
+    const cmdEl = document.createElement('div');
+    cmdEl.className = 'ai-tool-card-command';
+    cmdEl.textContent = '$ ' + command;
+
+    const actions = document.createElement('div');
+    actions.className = 'ai-tool-card-actions';
+    const runBtn = document.createElement('button');
+    runBtn.className = 'btn btn-primary btn-sm';
+    runBtn.textContent = t('aiSidebar.runButton');
+    const rejectBtn = document.createElement('button');
+    rejectBtn.className = 'btn btn-danger btn-sm';
+    rejectBtn.textContent = t('aiSidebar.rejectButton');
+
+    const status = document.createElement('div');
+    status.className = 'ai-tool-card-status';
+    status.textContent = t('aiSidebar.proposedCommand');
+
+    runBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      rejectBtn.disabled = true;
+      status.textContent = t('aiSidebar.running');
+      try { await approveAIToolCall(pending_id); } catch (e) { status.textContent = String(e); }
+    });
+    rejectBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      rejectBtn.disabled = true;
+      try { await rejectAIToolCall(pending_id); } catch (e) { status.textContent = String(e); }
+    });
+    actions.append(runBtn, rejectBtn);
+
+    card.append(cmdEl, actions, status);
+    this.messagesEl?.appendChild(card);
+    this.scrollToBottom();
+    this.cardsByToolCallID[tool_call_id] = card;
+  }
+
+  applyToolResult({ tool_call_id, tool, command, output }) {
+    this.currentAssistantBubble = null;
+    const card = this.cardOrPlaceholder(tool_call_id, tool, command);
+    card.className = 'ai-tool-card done';
+    card.querySelector('.ai-tool-card-actions')?.remove();
+    card.querySelector('.ai-tool-card-status')?.remove();
+    const outEl = document.createElement('div');
+    outEl.className = 'ai-tool-card-output';
+    outEl.textContent = output || '(no output)';
+    card.appendChild(outEl);
+    this.scrollToBottom();
+  }
+
+  applyToolRejected({ tool_call_id }) {
+    this.currentAssistantBubble = null;
+    const card = this.cardsByToolCallID[tool_call_id];
+    if (!card) return;
+    card.className = 'ai-tool-card rejected';
+    card.querySelector('.ai-tool-card-actions')?.remove();
+    let status = card.querySelector('.ai-tool-card-status');
+    if (!status) {
+      status = document.createElement('div');
+      status.className = 'ai-tool-card-status';
+      card.appendChild(status);
+    }
+    status.textContent = t('aiSidebar.rejected');
+    this.scrollToBottom();
+  }
+
+  cardOrPlaceholder(toolCallID, tool, command) {
+    let card = this.cardsByToolCallID[toolCallID];
+    if (card) return card;
+    card = document.createElement('div');
+    card.className = 'ai-tool-card';
+    const cmdEl = document.createElement('div');
+    cmdEl.className = 'ai-tool-card-command';
+    cmdEl.textContent = toolLabel(tool, command);
+    card.appendChild(cmdEl);
+    this.messagesEl?.appendChild(card);
+    this.cardsByToolCallID[toolCallID] = card;
+    return card;
+  }
+
+  renderHistory(messages) {
+    if (!this.messagesEl) return;
+    this.messagesEl.innerHTML = '';
+    this.cardsByToolCallID = {};
+    this.currentAssistantBubble = null;
+
+    const toolResultsByID = {};
+    messages.forEach(m => {
+      if (m.role === 'tool' && m.tool_call_id) toolResultsByID[m.tool_call_id] = m;
+    });
+
+    messages.forEach(m => {
+      if (m.role === 'user') {
+        const el = document.createElement('div');
+        el.className = 'ai-msg user';
+        el.textContent = m.content;
+        this.messagesEl.appendChild(el);
+      } else if (m.role === 'assistant') {
+        if (m.content) {
+          const el = document.createElement('div');
+          el.className = 'ai-msg assistant';
+          el.innerHTML = renderMarkdown(m.content);
+          this.messagesEl.appendChild(el);
+        }
+        if (m.tool_calls) {
+          let calls = [];
+          try { calls = JSON.parse(m.tool_calls); } catch { calls = []; }
+          calls.forEach(call => this.renderHistoricalToolCall(call, toolResultsByID[call.id]));
+        }
+      }
+    });
+    this.scrollToBottom();
+  }
+
+  renderHistoricalToolCall(call, resultMsg) {
+    if (!this.messagesEl) return;
+    let args = {};
+    try { args = JSON.parse(call.function?.arguments || '{}'); } catch { args = {}; }
+    let command;
+    if (call.function?.name === 'websearch') command = args.query || '';
+    else if (call.function?.name === 'open_url') command = args.url || '';
+    else if (call.function?.name === 'terminal_run') command = args.command || '';
+    else command = Object.values(args).map(String).join(' ');
+    const rejected = resultMsg?.content === 'User declined to run this command.';
+
+    const card = document.createElement('div');
+    card.className = 'ai-tool-card ' + (rejected ? 'rejected' : 'done');
+
+    const cmdEl = document.createElement('div');
+    cmdEl.className = 'ai-tool-card-command';
+    cmdEl.textContent = toolLabel(call.function?.name, command);
+    card.appendChild(cmdEl);
+
+    if (rejected) {
+      const status = document.createElement('div');
+      status.className = 'ai-tool-card-status';
+      status.textContent = t('aiSidebar.rejected');
+      card.appendChild(status);
+    } else if (resultMsg) {
+      const outEl = document.createElement('div');
+      outEl.className = 'ai-tool-card-output';
+      outEl.textContent = resultMsg.content || '(no output)';
+      card.appendChild(outEl);
+    }
+
+    this.messagesEl.appendChild(card);
+    if (call.id) this.cardsByToolCallID[call.id] = card;
+  }
 }
 
 function escHtml(s) {
   return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// Swaps the row's title for an inline <input>, pre-filled with the current
-// title; Enter/blur commits, Escape cancels.
-function startRename(sess, item) {
-  const titleEl = item.querySelector('.ai-session-item-title');
-  if (!titleEl) return;
-  const input = document.createElement('input');
-  input.className = 'input ai-session-rename-input';
-  input.value = sess.title || '';
-  titleEl.replaceWith(input);
-  input.focus();
-  input.select();
-  input.addEventListener('click', (e) => e.stopPropagation()); // don't trigger the row's openChat while editing
-
-  let settled = false;
-  const commit = async () => {
-    if (settled) return;
-    settled = true;
-    const next = input.value.trim();
-    if (next && next !== sess.title) {
-      try { await renameAIChatSession(sess.id, next); } catch (e) { showToast('❌ ' + e); }
-    }
-    renderSessionList();
-  };
-  const cancel = () => {
-    if (settled) return;
-    settled = true;
-    renderSessionList();
-  };
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-  });
-  input.addEventListener('blur', commit);
-}
-
-async function handleDelete(sess) {
-  try {
-    await deleteAIChatSession(sess.id);
-  } catch (e) {
-    showToast('❌ ' + e);
-    return;
-  }
-  if (currentChatID === sess.id) {
-    leaveChat();
-    showSessionList();
-  } else {
-    renderSessionList();
-  }
-}
-
-async function handleNewChat() {
-  if (!currentTargetID) return;
-  try {
-    const sess = await createAIChatSession(currentTargetID, t('aiSidebar.defaultChatTitle'));
-    chatsForTarget = [sess, ...chatsForTarget];
-    await openChat(sess.id);
-  } catch (e) {
-    showToast('❌ ' + e);
-  }
 }
 
 function formatRelativeTime(iso) {
@@ -333,391 +821,9 @@ function formatRelativeTime(iso) {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-// ── Chat view ────────────────────────────────────────────────────────────────
-
-async function openChat(chatID) {
-  if (currentChatID && currentChatID !== chatID) {
-    unsubscribeChatEvents(currentChatID);
-  }
-  currentChatID = chatID;
-  currentAssistantBubble = null;
-  cardsByToolCallID = {};
-
-  const sess = chatsForTarget.find(s => s.id === chatID);
-  currentAutoExec = !!sess?.auto_exec;
-
-  const listEl = document.getElementById('ai-session-list');
-  const chatEl = document.getElementById('ai-chat-view');
-  const backBtn = document.getElementById('ai-back');
-  if (listEl) listEl.style.display = 'none';
-  if (backBtn) backBtn.style.display = '';
-  if (chatEl) {
-    chatEl.style.display = '';
-    buildChatViewSkeleton(chatEl);
-  }
-
-  subscribeChatEvents(chatID);
-  setSending(false);
-
-  try {
-    const messages = (await getAIChatMessages(chatID)) || [];
-    renderHistory(messages);
-  } catch (e) {
-    console.error('getAIChatMessages:', e);
-    showToast('❌ ' + e);
-  }
-}
-
-function leaveChat() {
-  if (currentChatID) unsubscribeChatEvents(currentChatID);
-  currentChatID = null;
-  currentAssistantBubble = null;
-  cardsByToolCallID = {};
-}
-
-function buildChatViewSkeleton(chatView) {
-  chatView.innerHTML = '';
-
-  const messages = document.createElement('div');
-  messages.className = 'ai-chat-messages';
-  messages.id = 'ai-chat-messages';
-
-  const autoexecRow = document.createElement('div');
-  autoexecRow.className = 'ai-autoexec-row';
-  const label = document.createElement('span');
-  label.textContent = t('aiSidebar.autoExecLabel');
-  label.title = t('aiSidebar.autoExecDesc');
-  const toggle = document.createElement('div');
-  toggle.className = 'toggle-switch' + (currentAutoExec ? ' on' : '');
-  toggle.id = 'ai-autoexec-toggle';
-  toggle.addEventListener('click', async () => {
-    const next = !toggle.classList.contains('on');
-    toggle.classList.toggle('on', next);
-    currentAutoExec = next;
-    try { await setAIAutoExec(currentChatID, next); } catch (e) { showToast('❌ ' + e); }
-  });
-  autoexecRow.append(label, toggle);
-
-  const inputRow = document.createElement('div');
-  inputRow.className = 'ai-chat-input-row';
-  const textarea = document.createElement('textarea');
-  textarea.id = 'ai-chat-input';
-  textarea.rows = 1;
-  textarea.placeholder = t('aiSidebar.inputPlaceholder');
-  let composing = false;
-  let compositionJustEndedUntil = 0;
-  textarea.addEventListener('compositionstart', () => {
-    composing = true;
-  });
-  textarea.addEventListener('compositionend', () => {
-    composing = false;
-    compositionJustEndedUntil = Date.now() + 80;
-  });
-  textarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      if (e.isComposing || composing || e.keyCode === 229 || Date.now() < compositionJustEndedUntil) return;
-      e.preventDefault();
-      handleSend();
-    }
-  });
-  const sendBtn = document.createElement('button');
-  sendBtn.className = 'btn btn-primary btn-sm';
-  sendBtn.id = 'ai-chat-send';
-  sendBtn.textContent = t('aiSidebar.send');
-  sendBtn.addEventListener('click', handleSend);
-  const stopBtn = document.createElement('button');
-  stopBtn.className = 'btn btn-secondary btn-sm';
-  stopBtn.id = 'ai-chat-stop';
-  stopBtn.textContent = t('aiSidebar.stop');
-  stopBtn.style.display = 'none';
-  stopBtn.addEventListener('click', async () => {
-    try { await stopAIRun(currentChatID); } catch (e) { showToast('❌ ' + e); }
-  });
-  inputRow.append(textarea, sendBtn, stopBtn);
-
-  chatView.append(messages, autoexecRow, inputRow);
-}
-
-async function handleSend() {
-  const textarea = document.getElementById('ai-chat-input');
-  if (!textarea || isSending || !currentChatID) return;
-  const text = textarea.value.trim();
-  if (!text) return;
-  textarea.value = '';
-  appendUserBubble(text);
-  setSending(true);
-  try {
-    await sendAIMessage(currentChatID, getActiveTerminal()?.connID || '', text);
-  } catch (e) {
-    appendErrorBubble(String(e));
-    setSending(false);
-  }
-}
-
-function setSending(sending) {
-  isSending = sending;
-  const sendBtn = document.getElementById('ai-chat-send');
-  const stopBtn = document.getElementById('ai-chat-stop');
-  const textarea = document.getElementById('ai-chat-input');
-  if (sendBtn) sendBtn.style.display = sending ? 'none' : '';
-  if (stopBtn) stopBtn.style.display = sending ? '' : 'none';
-  if (textarea) textarea.disabled = sending;
-}
-
-// ── Event subscriptions (live streaming) ────────────────────────────────────
-
-function subscribeChatEvents(chatID) {
-  on('ai:delta:' + chatID, handleDelta);
-  on('ai:tool_call:' + chatID, handleToolCall);
-  on('ai:tool_result:' + chatID, handleToolResult);
-  on('ai:tool_rejected:' + chatID, handleToolRejected);
-  on('ai:done:' + chatID, handleDone);
-  on('ai:error:' + chatID, handleError);
-}
-
-function unsubscribeChatEvents(chatID) {
-  off('ai:delta:' + chatID);
-  off('ai:tool_call:' + chatID);
-  off('ai:tool_result:' + chatID);
-  off('ai:tool_rejected:' + chatID);
-  off('ai:done:' + chatID);
-  off('ai:error:' + chatID);
-}
-
-function handleDelta({ content }) {
-  appendAssistantDelta(content);
-}
-
-function handleToolCall(payload) {
-  renderPendingToolCard(payload);
-}
-
-function handleToolResult(payload) {
-  applyToolResult(payload);
-}
-
-function handleToolRejected(payload) {
-  applyToolRejected(payload);
-}
-
-function handleDone() {
-  currentAssistantBubble = null;
-  setSending(false);
-}
-
-function handleError({ message }) {
-  currentAssistantBubble = null;
-  appendErrorBubble(t('aiSidebar.chatError', { e: message }));
-  setSending(false);
-}
-
-// ── Message rendering (live) ─────────────────────────────────────────────────
-
-function messagesContainer() {
-  return document.getElementById('ai-chat-messages');
-}
-
-function scrollToBottom() {
-  const c = messagesContainer();
-  if (c) c.scrollTop = c.scrollHeight;
-}
-
-function appendUserBubble(text) {
-  const el = document.createElement('div');
-  el.className = 'ai-msg user';
-  el.textContent = text;
-  messagesContainer()?.appendChild(el);
-  scrollToBottom();
-}
-
-function appendErrorBubble(text) {
-  const el = document.createElement('div');
-  el.className = 'ai-msg error';
-  el.textContent = text;
-  messagesContainer()?.appendChild(el);
-  scrollToBottom();
-}
-
-function appendAssistantDelta(content) {
-  if (!currentAssistantBubble) {
-    currentAssistantBubble = document.createElement('div');
-    currentAssistantBubble.className = 'ai-msg assistant';
-    messagesContainer()?.appendChild(currentAssistantBubble);
-    currentAssistantRaw = '';
-  }
-  currentAssistantRaw += content;
-  // Markdown is re-parsed from the full accumulated text on every chunk —
-  // simpler and robust to streaming splitting tokens mid-syntax (e.g. a
-  // fenced code block opened in one delta, closed several deltas later).
-  currentAssistantBubble.innerHTML = renderMarkdown(currentAssistantRaw);
-  scrollToBottom();
-}
-
-function renderPendingToolCard({ pending_id, tool_call_id, command }) {
-  currentAssistantBubble = null; // next delta (if any) starts a fresh bubble
-
-  const card = document.createElement('div');
-  card.className = 'ai-tool-card pending';
-
-  const cmdEl = document.createElement('div');
-  cmdEl.className = 'ai-tool-card-command';
-  cmdEl.textContent = '$ ' + command;
-
-  const actions = document.createElement('div');
-  actions.className = 'ai-tool-card-actions';
-  const runBtn = document.createElement('button');
-  runBtn.className = 'btn btn-primary btn-sm';
-  runBtn.textContent = t('aiSidebar.runButton');
-  const rejectBtn = document.createElement('button');
-  rejectBtn.className = 'btn btn-danger btn-sm';
-  rejectBtn.textContent = t('aiSidebar.rejectButton');
-
-  const status = document.createElement('div');
-  status.className = 'ai-tool-card-status';
-  status.textContent = t('aiSidebar.proposedCommand');
-
-  runBtn.addEventListener('click', async () => {
-    runBtn.disabled = true;
-    rejectBtn.disabled = true;
-    status.textContent = t('aiSidebar.running');
-    try { await approveAIToolCall(pending_id); } catch (e) { status.textContent = String(e); }
-  });
-  rejectBtn.addEventListener('click', async () => {
-    runBtn.disabled = true;
-    rejectBtn.disabled = true;
-    try { await rejectAIToolCall(pending_id); } catch (e) { status.textContent = String(e); }
-  });
-  actions.append(runBtn, rejectBtn);
-
-  card.append(cmdEl, actions, status);
-  messagesContainer()?.appendChild(card);
-  scrollToBottom();
-  cardsByToolCallID[tool_call_id] = card;
-}
-
-function applyToolResult({ tool_call_id, tool, command, output }) {
-  currentAssistantBubble = null;
-  const card = cardOrPlaceholder(tool_call_id, tool, command);
-  card.className = 'ai-tool-card done';
-  card.querySelector('.ai-tool-card-actions')?.remove();
-  card.querySelector('.ai-tool-card-status')?.remove();
-  const outEl = document.createElement('div');
-  outEl.className = 'ai-tool-card-output';
-  outEl.textContent = output || '(no output)';
-  card.appendChild(outEl);
-  scrollToBottom();
-}
-
-function applyToolRejected({ tool_call_id }) {
-  currentAssistantBubble = null;
-  const card = cardsByToolCallID[tool_call_id];
-  if (!card) return;
-  card.className = 'ai-tool-card rejected';
-  card.querySelector('.ai-tool-card-actions')?.remove();
-  let status = card.querySelector('.ai-tool-card-status');
-  if (!status) {
-    status = document.createElement('div');
-    status.className = 'ai-tool-card-status';
-    card.appendChild(status);
-  }
-  status.textContent = t('aiSidebar.rejected');
-  scrollToBottom();
-}
-
-// Returns the existing pending card for tool_call_id, or builds a fresh one
-// — needed because auto-executed tool calls never go through
-// renderPendingToolCard (no approval card was ever shown).
-function cardOrPlaceholder(toolCallID, tool, command) {
-  let card = cardsByToolCallID[toolCallID];
-  if (card) return card;
-  card = document.createElement('div');
-  card.className = 'ai-tool-card';
-  const cmdEl = document.createElement('div');
-  cmdEl.className = 'ai-tool-card-command';
-  cmdEl.textContent = toolLabel(tool, command);
-  card.appendChild(cmdEl);
-  messagesContainer()?.appendChild(card);
-  cardsByToolCallID[toolCallID] = card;
-  return card;
-}
-
 function toolLabel(tool, command) {
   if (tool === 'terminal_read') return t('aiSidebar.readAction');
   if (tool === 'websearch') return t('aiSidebar.webSearchAction', { q: command || '' });
   if (tool === 'open_url') return t('aiSidebar.openURLAction', { url: command || '' });
   return '$ ' + command;
-}
-
-// ── History rendering (on chat open) ────────────────────────────────────────
-
-function renderHistory(messages) {
-  const container = messagesContainer();
-  if (!container) return;
-  container.innerHTML = '';
-  cardsByToolCallID = {};
-  currentAssistantBubble = null;
-
-  const toolResultsByID = {};
-  messages.forEach(m => {
-    if (m.role === 'tool' && m.tool_call_id) toolResultsByID[m.tool_call_id] = m;
-  });
-
-  messages.forEach(m => {
-    if (m.role === 'user') {
-      const el = document.createElement('div');
-      el.className = 'ai-msg user';
-      el.textContent = m.content;
-      container.appendChild(el);
-    } else if (m.role === 'assistant') {
-      if (m.content) {
-        const el = document.createElement('div');
-        el.className = 'ai-msg assistant';
-        el.innerHTML = renderMarkdown(m.content);
-        container.appendChild(el);
-      }
-      if (m.tool_calls) {
-        let calls = [];
-        try { calls = JSON.parse(m.tool_calls); } catch { calls = []; }
-        calls.forEach(call => renderHistoricalToolCall(call, toolResultsByID[call.id]));
-      }
-    }
-  });
-  scrollToBottom();
-}
-
-function renderHistoricalToolCall(call, resultMsg) {
-  const container = messagesContainer();
-  if (!container) return;
-
-  let args = {};
-  try { args = JSON.parse(call.function?.arguments || '{}'); } catch { args = {}; }
-  let command;
-  if (call.function?.name === 'websearch') command = args.query || '';
-  else if (call.function?.name === 'open_url') command = args.url || '';
-  else if (call.function?.name === 'terminal_run') command = args.command || '';
-  else command = Object.values(args).map(String).join(' ');
-  const rejected = resultMsg?.content === 'User declined to run this command.';
-
-  const card = document.createElement('div');
-  card.className = 'ai-tool-card ' + (rejected ? 'rejected' : 'done');
-
-  const cmdEl = document.createElement('div');
-  cmdEl.className = 'ai-tool-card-command';
-  cmdEl.textContent = toolLabel(call.function?.name, command);
-  card.appendChild(cmdEl);
-
-  if (rejected) {
-    const status = document.createElement('div');
-    status.className = 'ai-tool-card-status';
-    status.textContent = t('aiSidebar.rejected');
-    card.appendChild(status);
-  } else if (resultMsg) {
-    const outEl = document.createElement('div');
-    outEl.className = 'ai-tool-card-output';
-    outEl.textContent = resultMsg.content || '(no output)';
-    card.appendChild(outEl);
-  }
-
-  container.appendChild(card);
-  if (call.id) cardsByToolCallID[call.id] = card;
 }

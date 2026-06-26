@@ -35,6 +35,7 @@ type TransferProgress struct {
 	Percent    float64 `json:"percent"`
 	Speed      float64 `json:"speed_bps"`
 	Finished   bool    `json:"finished"`
+	Cancelled  bool    `json:"cancelled,omitempty"`
 	ErrMsg     string  `json:"error,omitempty"`
 }
 
@@ -111,15 +112,17 @@ func SetRemotePermissions(client *sftp.Client, path string, mode os.FileMode) er
 // UploadFile uploads a single local file to remotePath on the SFTP server.
 // Progress is emitted as "sftp:progress" Wails events.
 func UploadFile(ctx context.Context, client *sftp.Client, localPath, remotePath string) (string, error) {
-	return UploadFileWithProgress(ctx, client, localPath, remotePath, nil)
+	transferID := uuid.NewString()
+	return transferID, UploadFileWithProgress(ctx, transferID, client, localPath, remotePath, nil)
 }
 
-func UploadFileWithProgress(ctx context.Context, client *sftp.Client, localPath, remotePath string, onProgress ProgressHandler) (string, error) {
-	transferID := uuid.NewString()
-
+// UploadFileWithProgress uploads localPath to remotePath under transferID,
+// which the caller generates up front so it can be cancelled (by cancelling
+// ctx) before the transfer goroutine even starts.
+func UploadFileWithProgress(ctx context.Context, transferID string, client *sftp.Client, localPath, remotePath string, onProgress ProgressHandler) error {
 	src, err := os.Open(localPath)
 	if err != nil {
-		return transferID, fmt.Errorf("open local file: %w", err)
+		return fmt.Errorf("open local file: %w", err)
 	}
 
 	info, _ := src.Stat()
@@ -129,21 +132,27 @@ func UploadFileWithProgress(ctx context.Context, client *sftp.Client, localPath,
 	dst, err := client.Create(remotePath)
 	if err != nil {
 		src.Close()
-		return transferID, fmt.Errorf("create remote file: %w", err)
+		return fmt.Errorf("create remote file: %w", err)
 	}
 
 	go func() {
 		defer src.Close()
 		defer dst.Close()
-		emitProgress(ctx, onProgress, transferID, name, "upload", 0, total, 0, false, "")
+		emitProgress(ctx, onProgress, transferID, name, "upload", 0, total, 0, false, false, "")
 		start := time.Now()
 		var done int64
 		buf := make([]byte, 32*1024)
 		for {
+			select {
+			case <-ctx.Done():
+				emitProgress(ctx, onProgress, transferID, name, "upload", done, total, 0, true, true, "")
+				return
+			default:
+			}
 			n, err := src.Read(buf)
 			if n > 0 {
 				if _, werr := dst.Write(buf[:n]); werr != nil {
-					emitProgress(ctx, onProgress, transferID, name, "upload", done, total, 0, true, werr.Error())
+					emitProgress(ctx, onProgress, transferID, name, "upload", done, total, 0, true, false, werr.Error())
 					return
 				}
 				done += int64(n)
@@ -152,35 +161,37 @@ func UploadFileWithProgress(ctx context.Context, client *sftp.Client, localPath,
 				if elapsed > 0 {
 					speed = float64(done) / elapsed
 				}
-				emitProgress(ctx, onProgress, transferID, name, "upload", done, total, speed, false, "")
+				emitProgress(ctx, onProgress, transferID, name, "upload", done, total, speed, false, false, "")
 			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				emitProgress(ctx, onProgress, transferID, name, "upload", done, total, 0, true, err.Error())
+				emitProgress(ctx, onProgress, transferID, name, "upload", done, total, 0, true, false, err.Error())
 				return
 			}
 		}
-		emitProgress(ctx, onProgress, transferID, name, "upload", total, total, 0, true, "")
+		emitProgress(ctx, onProgress, transferID, name, "upload", total, total, 0, true, false, "")
 	}()
 
-	return transferID, nil
+	return nil
 }
 
 // ── Transfer: download ────────────────────────────────────────────────────────
 
 // DownloadFile downloads a single remote file to localDir.
 func DownloadFile(ctx context.Context, client *sftp.Client, remotePath, localDir string) (string, error) {
-	return DownloadFileWithProgress(ctx, client, remotePath, localDir, nil)
+	transferID := uuid.NewString()
+	return transferID, DownloadFileWithProgress(ctx, transferID, client, remotePath, localDir, nil)
 }
 
-func DownloadFileWithProgress(ctx context.Context, client *sftp.Client, remotePath, localDir string, onProgress ProgressHandler) (string, error) {
-	transferID := uuid.NewString()
-
+// DownloadFileWithProgress downloads remotePath into localDir under
+// transferID, which the caller generates up front so it can be cancelled (by
+// cancelling ctx) before the transfer goroutine even starts.
+func DownloadFileWithProgress(ctx context.Context, transferID string, client *sftp.Client, remotePath, localDir string, onProgress ProgressHandler) error {
 	src, err := client.Open(remotePath)
 	if err != nil {
-		return transferID, fmt.Errorf("open remote file: %w", err)
+		return fmt.Errorf("open remote file: %w", err)
 	}
 
 	info, _ := src.Stat()
@@ -191,21 +202,27 @@ func DownloadFileWithProgress(ctx context.Context, client *sftp.Client, remotePa
 	dst, err := os.Create(localPath)
 	if err != nil {
 		src.Close()
-		return transferID, fmt.Errorf("create local file: %w", err)
+		return fmt.Errorf("create local file: %w", err)
 	}
 
 	go func() {
 		defer src.Close()
 		defer dst.Close()
-		emitProgress(ctx, onProgress, transferID, name, "download", 0, total, 0, false, "")
+		emitProgress(ctx, onProgress, transferID, name, "download", 0, total, 0, false, false, "")
 		start := time.Now()
 		var done int64
 		buf := make([]byte, 32*1024)
 		for {
+			select {
+			case <-ctx.Done():
+				emitProgress(ctx, onProgress, transferID, name, "download", done, total, 0, true, true, "")
+				return
+			default:
+			}
 			n, err := src.Read(buf)
 			if n > 0 {
 				if _, werr := dst.Write(buf[:n]); werr != nil {
-					emitProgress(ctx, onProgress, transferID, name, "download", done, total, 0, true, werr.Error())
+					emitProgress(ctx, onProgress, transferID, name, "download", done, total, 0, true, false, werr.Error())
 					return
 				}
 				done += int64(n)
@@ -214,39 +231,40 @@ func DownloadFileWithProgress(ctx context.Context, client *sftp.Client, remotePa
 				if elapsed > 0 {
 					speed = float64(done) / elapsed
 				}
-				emitProgress(ctx, onProgress, transferID, name, "download", done, total, speed, false, "")
+				emitProgress(ctx, onProgress, transferID, name, "download", done, total, speed, false, false, "")
 			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				emitProgress(ctx, onProgress, transferID, name, "download", done, total, 0, true, err.Error())
+				emitProgress(ctx, onProgress, transferID, name, "download", done, total, 0, true, false, err.Error())
 				return
 			}
 		}
-		emitProgress(ctx, onProgress, transferID, name, "download", total, total, 0, true, "")
+		emitProgress(ctx, onProgress, transferID, name, "download", total, total, 0, true, false, "")
 	}()
 
-	return transferID, nil
+	return nil
 }
 
-// DownloadPathWithProgress downloads a remote file or directory into localDir.
-// Directory trees are processed one directory at a time, with heartbeat progress
-// while large directory listings are being read.
-func DownloadPathWithProgress(ctx context.Context, client *sftp.Client, remotePath, localDir string, onProgress ProgressHandler) (string, error) {
+// DownloadPathWithProgress downloads a remote file or directory into localDir
+// under transferID. Directory trees are processed one directory at a time,
+// with heartbeat progress while large directory listings are being read, and
+// a cancellation check before each directory/file so a cancelled ctx stops
+// the walk promptly between entries.
+func DownloadPathWithProgress(ctx context.Context, transferID string, client *sftp.Client, remotePath, localDir string, onProgress ProgressHandler) error {
 	info, err := client.Stat(remotePath)
 	if err != nil {
-		return "", fmt.Errorf("stat remote path: %w", err)
+		return fmt.Errorf("stat remote path: %w", err)
 	}
 	if !info.IsDir() {
-		return DownloadFileWithProgress(ctx, client, remotePath, localDir, onProgress)
+		return DownloadFileWithProgress(ctx, transferID, client, remotePath, localDir, onProgress)
 	}
 
-	transferID := uuid.NewString()
 	name := path.Base(remotePath)
 	localRoot := filepath.Join(localDir, name)
 	if err := os.MkdirAll(localRoot, 0o755); err != nil {
-		return transferID, fmt.Errorf("create local directory: %w", err)
+		return fmt.Errorf("create local directory: %w", err)
 	}
 
 	go func() {
@@ -256,7 +274,7 @@ func DownloadPathWithProgress(ctx context.Context, client *sftp.Client, remotePa
 		var progressMu sync.Mutex
 		var lastEmit time.Time
 
-		emit := func(finished bool, errMsg string) {
+		emit := func(finished, cancelled bool, errMsg string) {
 			progressMu.Lock()
 			snapshotDone := done
 			snapshotTotal := total
@@ -268,14 +286,14 @@ func DownloadPathWithProgress(ctx context.Context, client *sftp.Client, remotePa
 			if elapsed > 0 {
 				speed = float64(snapshotDone) / elapsed
 			}
-			emitProgress(ctx, onProgress, transferID, name, "download", snapshotDone, snapshotTotal, speed, finished, errMsg)
+			emitProgress(ctx, onProgress, transferID, name, "download", snapshotDone, snapshotTotal, speed, finished, cancelled, errMsg)
 		}
 		maybeEmit := func() {
 			progressMu.Lock()
 			shouldEmit := time.Since(lastEmit) >= 200*time.Millisecond
 			progressMu.Unlock()
 			if shouldEmit {
-				emit(false, "")
+				emit(false, false, "")
 			}
 		}
 		addTotal := func(n int64) {
@@ -289,7 +307,7 @@ func DownloadPathWithProgress(ctx context.Context, client *sftp.Client, remotePa
 			progressMu.Unlock()
 		}
 
-		emit(false, "")
+		emit(false, false, "")
 		doneCh := make(chan struct{})
 		go func() {
 			ticker := time.NewTicker(time.Second)
@@ -299,7 +317,7 @@ func DownloadPathWithProgress(ctx context.Context, client *sftp.Client, remotePa
 				case <-doneCh:
 					return
 				case <-ticker.C:
-					emit(false, "")
+					emit(false, false, "")
 				}
 			}
 		}()
@@ -313,20 +331,34 @@ func DownloadPathWithProgress(ctx context.Context, client *sftp.Client, remotePa
 		buf := make([]byte, 32*1024)
 
 		for len(stack) > 0 {
+			select {
+			case <-ctx.Done():
+				emit(true, true, "")
+				return
+			default:
+			}
+
 			job := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			if err := os.MkdirAll(job.local, 0o755); err != nil {
-				emit(true, err.Error())
+				emit(true, false, err.Error())
 				return
 			}
 
 			entries, err := client.ReadDir(job.remote)
 			if err != nil {
-				emit(true, fmt.Sprintf("list %s: %v", job.remote, err))
+				emit(true, false, fmt.Sprintf("list %s: %v", job.remote, err))
 				return
 			}
 			maybeEmit()
 			for _, entry := range entries {
+				select {
+				case <-ctx.Done():
+					emit(true, true, "")
+					return
+				default:
+				}
+
 				remoteChild := path.Join(job.remote, entry.Name())
 				localChild := filepath.Join(job.local, entry.Name())
 				if entry.IsDir() {
@@ -341,17 +373,17 @@ func DownloadPathWithProgress(ctx context.Context, client *sftp.Client, remotePa
 					addDone(n)
 					maybeEmit()
 				}); err != nil {
-					emit(true, fmt.Sprintf("download %s: %v", remoteChild, err))
+					emit(true, false, fmt.Sprintf("download %s: %v", remoteChild, err))
 					return
 				}
 				maybeEmit()
 			}
 		}
 
-		emit(true, "")
+		emit(true, false, "")
 	}()
 
-	return transferID, nil
+	return nil
 }
 
 func downloadRemoteFile(client *sftp.Client, remotePath, localPath string, buf []byte, onBytes func(int64)) error {
@@ -387,7 +419,7 @@ func downloadRemoteFile(client *sftp.Client, remotePath, localPath string, buf [
 	}
 }
 
-func emitProgress(ctx context.Context, onProgress ProgressHandler, id, name, action string, done, total int64, speed float64, finished bool, errMsg string) {
+func emitProgress(ctx context.Context, onProgress ProgressHandler, id, name, action string, done, total int64, speed float64, finished, cancelled bool, errMsg string) {
 	var pct float64
 	if total > 0 {
 		pct = float64(done) / float64(total) * 100
@@ -401,6 +433,7 @@ func emitProgress(ctx context.Context, onProgress ProgressHandler, id, name, act
 		Percent:    pct,
 		Speed:      speed,
 		Finished:   finished,
+		Cancelled:  cancelled,
 		ErrMsg:     errMsg,
 	}
 	if onProgress != nil {

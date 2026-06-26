@@ -3,8 +3,9 @@ package ai
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -28,9 +29,7 @@ func TestNormalizeOpenURLRejectsUnsupportedSchemes(t *testing.T) {
 }
 
 func TestOpenURLExtractsHTMLText(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!doctype html>
+	out, err := webReadResponseOutput(testWebReadResponse("text/html; charset=utf-8", http.StatusOK, `<!doctype html>
 			<html>
 				<head>
 					<title>Example Page</title>
@@ -39,12 +38,8 @@ func TestOpenURLExtractsHTMLText(t *testing.T) {
 				</head>
 				<body><h1>Hello</h1><p>Visible text.</p><noscript>noscript text</noscript></body>
 			</html>`))
-	}))
-	defer srv.Close()
-
-	out, err := openURL(context.Background(), srv.URL)
 	if err != nil {
-		t.Fatalf("openURL: %v", err)
+		t.Fatalf("webReadResponseOutput: %v", err)
 	}
 	for _, want := range []string{"Title: Example Page", "Hello", "Visible text."} {
 		if !strings.Contains(out, want) {
@@ -59,15 +54,9 @@ func TestOpenURLExtractsHTMLText(t *testing.T) {
 }
 
 func TestOpenURLTruncatesLargeResponses(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte(strings.Repeat("x", maxWebReadContentLen*2)))
-	}))
-	defer srv.Close()
-
-	out, err := openURL(context.Background(), srv.URL)
+	out, err := webReadResponseOutput(testWebReadResponse("text/plain", http.StatusOK, strings.Repeat("x", maxWebReadContentLen*2)))
 	if err != nil {
-		t.Fatalf("openURL: %v", err)
+		t.Fatalf("webReadResponseOutput: %v", err)
 	}
 	if !strings.Contains(out, webReadTruncation) || !strings.Contains(out, "Note: response content was truncated.") {
 		t.Fatalf("output should be truncated:\n%s", out)
@@ -75,14 +64,9 @@ func TestOpenURLTruncatesLargeResponses(t *testing.T) {
 }
 
 func TestOpenURLReturnsHTTPStatusErrors(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "missing page", http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	_, err := openURL(context.Background(), srv.URL)
+	_, err := webReadResponseOutput(testWebReadResponse("text/plain", http.StatusNotFound, "missing page\n"))
 	if err == nil {
-		t.Fatal("openURL returned nil error for non-2xx response")
+		t.Fatal("webReadResponseOutput returned nil error for non-2xx response")
 	}
 	if !strings.Contains(fmt.Sprint(err), "404") || !strings.Contains(fmt.Sprint(err), "missing page") {
 		t.Fatalf("error = %v, want status and body", err)
@@ -90,17 +74,48 @@ func TestOpenURLReturnsHTTPStatusErrors(t *testing.T) {
 }
 
 func TestOpenURLRejectsBinaryContent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write([]byte{0, 1, 2, 3})
-	}))
-	defer srv.Close()
-
-	_, err := openURL(context.Background(), srv.URL)
+	resp := testWebReadResponse("application/octet-stream", http.StatusOK, string([]byte{0, 1, 2, 3}))
+	_, err := webReadResponseOutput(resp)
 	if err == nil {
-		t.Fatal("openURL returned nil error for binary content")
+		t.Fatal("webReadResponseOutput returned nil error for binary content")
 	}
 	if !strings.Contains(fmt.Sprint(err), "unsupported content type") {
 		t.Fatalf("error = %v, want unsupported content type", err)
+	}
+}
+
+func TestOpenURLRejectsNonPublicAddresses(t *testing.T) {
+	for _, raw := range []string{
+		"http://127.0.0.1:8080",
+		"http://localhost:8080",
+		"http://169.254.169.254/latest/meta-data",
+		"http://10.0.0.5",
+		"http://192.168.1.10",
+		"http://[::1]/",
+	} {
+		u, err := normalizeOpenURL(raw)
+		if err != nil {
+			t.Fatalf("normalizeOpenURL(%q): %v", raw, err)
+		}
+		if err := validateOpenURLTarget(context.Background(), u); err == nil {
+			t.Fatalf("validateOpenURLTarget(%q) returned nil error", raw)
+		}
+	}
+}
+
+func testWebReadResponse(contentType string, status int, body string) *http.Response {
+	statusText := fmt.Sprintf("%d %s", status, http.StatusText(status))
+	if statusText == fmt.Sprintf("%d ", status) {
+		statusText = fmt.Sprint(status)
+	}
+	u, _ := url.Parse("https://example.com/page")
+	return &http.Response{
+		StatusCode: status,
+		Status:     statusText,
+		Header: http.Header{
+			"Content-Type": []string{contentType},
+		},
+		Body:    io.NopCloser(strings.NewReader(body)),
+		Request: &http.Request{URL: u},
 	}
 }
