@@ -244,7 +244,6 @@ function ensureTerminalContent(tab) {
 
   const content = document.createElement('div');
   content.className = 'terminal-tab-content';
-  content.style.display = 'none';
   content.innerHTML = `
     <div class="terminal-main">
       <div class="terminal-container" id="${tab.terminalContainerId}"></div>
@@ -621,19 +620,23 @@ function showPanel(name) {
 function showTerminalContent(tab, previousTab = null) {
   if (previousTab?.terminalContent && previousTab.terminalContent !== tab.terminalContent) {
     suspendAISidebarLayout(previousTab);
-    previousTab.terminalContent.style.display = 'none';
+    previousTab.terminalContent.classList.remove('active');
+    previousTab.terminalContent.setAttribute('aria-hidden', 'true');
   }
   if (tab?.terminalContent) {
-    tab.terminalContent.style.display = '';
+    tab.terminalContent.classList.add('active');
+    tab.terminalContent.removeAttribute('aria-hidden');
     return;
   }
   document.querySelectorAll('#panel-terminal .terminal-tab-content').forEach(el => {
-    const isActive = el === tab.terminalContent;
+    const isActive = el === tab?.terminalContent;
     if (!isActive) {
       const t = tabs.find(t => t.terminalContent === el);
       suspendAISidebarLayout(t);
     }
-    el.style.display = isActive ? '' : 'none';
+    el.classList.toggle('active', isActive);
+    if (isActive) el.removeAttribute('aria-hidden');
+    else el.setAttribute('aria-hidden', 'true');
   });
 }
 

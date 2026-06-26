@@ -211,6 +211,8 @@ function scheduleTerminalFit(connID, inst, options = {}) {
 function visibleTerminalRect(inst) {
   const el = inst?.containerEl;
   if (!el || !el.isConnected) return null;
+  const tabContent = el.closest('.terminal-tab-content');
+  if (tabContent && !tabContent.classList.contains('active')) return null;
   const rect = el.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0 || getComputedStyle(el).display === 'none') return null;
   return rect;
