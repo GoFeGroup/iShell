@@ -25,6 +25,7 @@ let activeTab = null;
 let settings = null;
 let isFullscreen = false;
 const pendingConnects = {}; // sessionID → { sess, req, tab, attemptID } — kept until host key dialog resolves
+const closingConnIDs = new Set();
 let connectAttemptSeq = 0;
 const PERF_DEBUG = true;
 
@@ -552,25 +553,45 @@ function formatSessionEndpoint(sess) {
   return `${user}${host}${host ? ':' + port : ''}`;
 }
 
-async function doDisconnect(connID) {
-  const tab = tabs.find(t => t.connID === connID);
-  off('terminal:closed:' + connID);
-  try { await disconnect(connID); } catch {}
-  const closedIndex = tabs.indexOf(tab);
-  const wasActive = !!activeTab && activeTab.connID === connID;
-  const sessionID = tab?.sessionID;
-  tabs = tabs.filter(t => t.connID !== connID);
-  // Only mark disconnected when no remaining tabs for this profile
-  if (sessionID && !tabs.some(t => t.sessionID === sessionID && hasTerminalConn(t))) {
-    setSessionStatus(sessionID, 'disconnected');
+function doDisconnect(connID) {
+  if (!connID || closingConnIDs.has(connID)) return;
+  closingConnIDs.add(connID);
+
+  const removedTabs = tabs.filter(t => t.connID === connID);
+  if (removedTabs.length === 0) {
+    closingConnIDs.delete(connID);
+    return;
   }
-  destroyTerminalContent(tab);
-  destroyTerminal(connID);
+
+  const wasActive = !!activeTab && activeTab.connID === connID;
+  const primaryClosedTab = wasActive ? activeTab : removedTabs[0];
+  const closedIndex = Math.max(0, tabs.indexOf(primaryClosedTab));
+  const sessionIDs = new Set(removedTabs.map(t => t.sessionID).filter(Boolean));
+
+  tabs = tabs.filter(t => t.connID !== connID);
+  off('terminal:closed:' + connID);
+
+  // Only mark disconnected when no remaining connection tab for this profile.
+  sessionIDs.forEach(sessionID => {
+    if (!tabs.some(t => hasTerminalConn(t) && t.sessionID === sessionID)) {
+      setSessionStatus(sessionID, 'disconnected');
+    }
+  });
+
+  // Update tab bar UI before cleanup — guarantees renderTabs() runs even if cleanup throws.
   renderTabs();
   if (wasActive) activateFallbackTab(closedIndex);
   else if (activeTab) updateConnUI(tabForConnActions(activeTab));
   else showWelcome();
   showToast(t('toast.disconnected'));
+
+  // Cleanup after UI update; exceptions here won't leave a ghost tab.
+  removedTabs.forEach(destroyTerminalContent);
+  destroyTerminal(connID);
+
+  disconnect(connID)
+    .catch(e => console.warn('disconnect:', e))
+    .finally(() => closingConnIDs.delete(connID));
 }
 
 // ── Tab management ────────────────────────────────────────────────────────────
@@ -990,7 +1011,11 @@ function handleKeydown(e) {
     }
     return;
   }
-  if ((isMac ? e.metaKey : e.altKey) && e.key === 'w') {
+  const key = e.key.toLowerCase();
+  const appMod = isMac
+    ? (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey)
+    : (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey);
+  if (appMod && key === 'w') {
     e.preventDefault();
     closeTab(activeTab);
     return;
@@ -1003,12 +1028,12 @@ function handleKeydown(e) {
     switchToTabByIndex(parseInt(e.key));
     return;
   }
-  if ((isMac ? e.metaKey : e.altKey) && e.key.toLowerCase() === 't') {
+  if (appMod && key === 't') {
     e.preventDefault();
     onLocalConnectRequest(LOCAL_SESSION);
     return;
   }
-  if ((isMac ? e.metaKey : e.altKey) && e.key.toLowerCase() === 'o') {
+  if (appMod && key === 'o') {
     e.preventDefault();
     openProfilePicker();
     return;
@@ -1018,12 +1043,12 @@ function handleKeydown(e) {
     toggleFullscreen();
     return;
   }
-  if ((isMac ? e.metaKey : e.altKey) && e.key.toLowerCase() === 'b') {
+  if (appMod && key === 'b') {
     e.preventDefault();
     toggleSidebar();
     return;
   }
-  if ((isMac ? e.metaKey : e.altKey) && e.key.toLowerCase() === 'f') {
+  if (appMod && key === 'f') {
     const panelTerm = document.getElementById('panel-terminal');
     if (panelTerm && panelTerm.style.display !== 'none') {
       e.preventDefault();
@@ -1031,7 +1056,7 @@ function handleKeydown(e) {
     }
     return;
   }
-  if ((isMac ? e.metaKey : e.altKey) && e.key === ',') {
+  if (appMod && e.key === ',') {
     e.preventDefault();
     openSettingsPanel();
     return;
