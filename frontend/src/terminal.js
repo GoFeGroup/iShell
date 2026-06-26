@@ -149,13 +149,17 @@ function canFitTerminal(inst) {
   return rect.width > 0 && rect.height > 0 && getComputedStyle(el).display !== 'none';
 }
 
-function fitVisibleTerminal(connID, inst, { restoreScroll = false, snapshot = null } = {}) {
+function fitVisibleTerminal(connID, inst, { restoreScroll = false, snapshot = null, caller = '?' } = {}) {
   if (!canFitTerminal(inst)) return false;
+  const _t0 = performance.now();
   const restoreSnapshot = restoreScroll ? (snapshot || {
     viewportY: inst.savedViewportY ?? inst.term.buffer.active.viewportY,
     baseY: inst.savedBaseY ?? inst.term.buffer.active.baseY,
   }) : null;
+  const prevCols = inst.term.cols, prevRows = inst.term.rows;
   inst.fitAddon.fit();
+  const fitMs = (performance.now() - _t0).toFixed(1);
+  console.log('[FIT] caller:', caller, 'cols:', prevCols, '→', inst.term.cols, 'rows:', prevRows, '→', inst.term.rows, 'fit took', fitMs + 'ms');
   resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
   const sizeEl = document.getElementById(inst.sizeElId || 'sb-size');
   if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
@@ -220,7 +224,8 @@ export function createTerminal(connID, settings, options = {}) {
       // is unchanged, so we must call resizeTerm explicitly here.
       requestAnimationFrame(() => {
         if (instances[connID] !== inst) return;
-        fitVisibleTerminal(connID, inst, { restoreScroll: true, snapshot: restoreSnapshot });
+        console.log('[FIT] RAF from createTerminal fired', performance.now().toFixed(1) + 'ms');
+        fitVisibleTerminal(connID, inst, { restoreScroll: true, snapshot: restoreSnapshot, caller: 'createTerminal-RAF' });
       });
       return inst.term;
     }
@@ -641,12 +646,14 @@ export function createTerminal(connID, settings, options = {}) {
   const resizeObs = new ResizeObserver(() => {
     const inst = instances[connID];
     if (!inst) return;
+    console.log('[FIT] ResizeObserver fired', performance.now().toFixed(1) + 'ms');
     const restoreSnapshot = Date.now() - (inst._lastTabSwitch ?? 0) < 500
       ? inst.restoreSnapshot
       : null;
     const didFit = fitVisibleTerminal(connID, inst, {
       restoreScroll: !!restoreSnapshot,
       snapshot: restoreSnapshot,
+      caller: 'ResizeObserver',
     });
     if (!didFit) return;
     // After a tab switch the container often resizes due to layout settling;
@@ -714,10 +721,10 @@ export function getTerminalCWD(connID) {
   return instances[connID]?.cwd ?? cwdByConn[connID] ?? null;
 }
 
-export function fitTerminal(connID, { restoreScroll = false } = {}) {
+export function fitTerminal(connID, { restoreScroll = false, caller = 'fitTerminal' } = {}) {
   const inst = instances[connID];
   if (!inst) return;
-  fitVisibleTerminal(connID, inst, { restoreScroll });
+  fitVisibleTerminal(connID, inst, { restoreScroll, caller });
 }
 
 function setTerminalCWD(connID, cwd) {

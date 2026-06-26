@@ -450,6 +450,8 @@ function updateActiveTabClass() {
 
 async function switchToTab(tab) {
   if (!tab) return;
+  const _t0 = performance.now();
+  console.log('[TAB-SWITCH] start →', tab.id, tab.type, 'aiSidebarOpen:', tab.aiSidebarOpen);
   if (hasTerminalConn(activeTab)) rememberTerminalViewport(activeTab.connID);
   if (tab.type === 'settings') {
     activeTab = tab;
@@ -488,14 +490,25 @@ async function switchToTab(tab) {
   updateActiveTabClass();
   showPanel('terminal');
   showTerminalContent(tab);
+  console.log('[TAB-SWITCH] after showTerminalContent', (performance.now() - _t0).toFixed(1) + 'ms');
   updateConnUI(tab);
   createTerminal(tab.connID, settings, { containerId: tab.terminalContainerId, sizeElId: tab.sizeElId });
   const status = tab.statusEl;
   if (status) status.textContent = t('common.connected');
   refitActiveTerminal({ restoreScroll: true });
+  console.log('[TAB-SWITCH] after refitActiveTerminal', (performance.now() - _t0).toFixed(1) + 'ms');
   focusTerminal(tab.connID);
   activateAISidebarForTab(tab);
+  console.log('[TAB-SWITCH] after activateAISidebarForTab', (performance.now() - _t0).toFixed(1) + 'ms');
   notifyActiveTerminalChanged();
+  console.log('[TAB-SWITCH] done', (performance.now() - _t0).toFixed(1) + 'ms');
+  const _tabSwitchT0 = _t0;
+  requestAnimationFrame(() => {
+    console.log('[TAB-SWITCH] first RAF frame', (performance.now() - _tabSwitchT0).toFixed(1) + 'ms');
+    requestAnimationFrame(() => {
+      console.log('[TAB-SWITCH] second RAF frame (after all RAF callbacks)', (performance.now() - _tabSwitchT0).toFixed(1) + 'ms');
+    });
+  });
 }
 
 function switchToTabByIndex(n) {
@@ -594,14 +607,17 @@ function showPanel(name) {
 }
 
 function showTerminalContent(tab) {
+  const _t0 = performance.now();
   document.querySelectorAll('#panel-terminal .terminal-tab-content').forEach(el => {
     const isActive = el === tab.terminalContent;
     if (!isActive) {
       const t = tabs.find(t => t.terminalContent === el);
+      console.log('[SHOW-TC] suspendLayout for tab', t?.id, 'open:', t?.aiSidebarOpen);
       suspendAISidebarLayout(t);
     }
     el.style.display = isActive ? '' : 'none';
   });
+  console.log('[SHOW-TC] done', (performance.now() - _t0).toFixed(1) + 'ms');
 }
 
 function destroyTerminalContent(tab) {
@@ -622,7 +638,8 @@ function refitActiveTerminal(options = {}) {
   requestAnimationFrame(() => {
     if (!isTerminalTab(activeTab)) return;
     if (document.getElementById('panel-terminal')?.style.display === 'none') return;
-    fitTerminal(activeTab.connID, options);
+    console.log('[FIT] RAF from refitActiveTerminal fired', performance.now().toFixed(1) + 'ms');
+    fitTerminal(activeTab.connID, { ...options, caller: 'refitActiveTerminal-RAF' });
   });
 }
 

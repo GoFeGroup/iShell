@@ -159,6 +159,40 @@ func requestHasTools(r *http.Request) bool {
 	return len(req.Tools) > 0
 }
 
+func newToolCallTestServer(t *testing.T, toolName string, args any) *httptest.Server {
+	t.Helper()
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		t.Fatalf("marshal tool args: %v", err)
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if !requestHasToolResult(r) {
+			_, _ = w.Write([]byte(sseBody(
+				fmt.Sprintf(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":%q,"arguments":%q}}]},"finish_reason":null}]}`, toolName, string(argsJSON)),
+				`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			)))
+			return
+		}
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"content":"Done."},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		)))
+	}))
+}
+
+func saveQuickCommandTestSettings(t *testing.T, st *storage.Store) {
+	t.Helper()
+	settings, err := st.LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	settings.QuickCommandGroups = quickCommandTestSettings().QuickCommandGroups
+	if err := st.SaveSettings(*settings); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+}
+
 func TestRunTurnPlainReplyNoTools(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -397,6 +431,147 @@ func TestRunTurnCustomToolCallMissingRequiredParam(t *testing.T) {
 	}
 	if !strings.Contains(toolMsg, `missing required parameter "count"`) {
 		t.Fatalf("tool message = %q, want missing-parameter error", toolMsg)
+	}
+}
+
+func TestRunTurnQuickCommandByNameRequiresApproval(t *testing.T) {
+	srv := newToolCallTestServer(t, "terminal_quick_command", map[string]string{"name": "Status"})
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	saveQuickCommandTestSettings(t, st)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Quick Command"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	term := &fakeTerminalIO{}
+	rec := newEventRecorder()
+	ag := NewAgent(st, term, rec.emit)
+
+	runDone := make(chan struct{})
+	go func() {
+		ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, ConnID: "conn-1", UserText: "run status quick command"})
+		close(runDone)
+	}()
+
+	toolCall := rec.waitFor(t, "ai:tool_call:"+sess.ID, 2*time.Second).(map[string]string)
+	if toolCall["command"] != "git status" {
+		t.Fatalf("command = %q, want git status", toolCall["command"])
+	}
+	if len(term.sentCommands()) != 0 {
+		t.Fatal("quick command must not be sent before approval")
+	}
+
+	if err := ag.ApproveToolCall(toolCall["pending_id"]); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunTurn did not finish after approval")
+	}
+
+	sent := term.sentCommands()
+	if len(sent) != 1 || sent[0] != "git status\n" {
+		t.Fatalf("sent = %v, want [%q]", sent, "git status\n")
+	}
+	rec.waitFor(t, "ai:done:"+sess.ID, time.Second)
+}
+
+func TestRunTurnQuickCommandAutoExecByShortcutAndGroup(t *testing.T) {
+	srv := newToolCallTestServer(t, "terminal_quick_command", map[string]string{"shortcut": "Ctrl+2", "group": "Shell"})
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	saveQuickCommandTestSettings(t, st)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Quick Auto", AutoExec: true})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	term := &fakeTerminalIO{}
+	rec := newEventRecorder()
+	ag := NewAgent(st, term, rec.emit)
+
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, ConnID: "conn-1", UserText: "run the second shell quick command"})
+
+	rec.waitFor(t, "ai:done:"+sess.ID, 2*time.Second)
+	if rec.has("ai:tool_call:" + sess.ID) {
+		t.Fatal("auto-exec quick command should not emit an approval card")
+	}
+	sent := term.sentCommands()
+	if len(sent) != 1 || sent[0] != "pwd\n" {
+		t.Fatalf("sent = %v, want [%q]", sent, "pwd\n")
+	}
+}
+
+func TestRunTurnQuickCommandAmbiguousDoesNotSend(t *testing.T) {
+	srv := newToolCallTestServer(t, "terminal_quick_command", map[string]string{"shortcut": "^1"})
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	saveQuickCommandTestSettings(t, st)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Quick Ambiguous"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	term := &fakeTerminalIO{}
+	rec := newEventRecorder()
+	ag := NewAgent(st, term, rec.emit)
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, ConnID: "conn-1", UserText: "run ctrl one"})
+
+	rec.waitFor(t, "ai:done:"+sess.ID, 2*time.Second)
+	if rec.has("ai:tool_call:" + sess.ID) {
+		t.Fatal("ambiguous quick command must not enter approval flow")
+	}
+	if len(term.sentCommands()) != 0 {
+		t.Fatal("ambiguous quick command must not be sent")
+	}
+
+	msgs, err := st.ListAIChatMessages(sess.ID)
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	var toolMsg string
+	for _, m := range msgs {
+		if m.Role == "tool" {
+			toolMsg = m.Content
+		}
+	}
+	if !strings.Contains(toolMsg, "ambiguous") {
+		t.Fatalf("tool message = %q, want ambiguity error", toolMsg)
+	}
+}
+
+func TestRunTurnQuickCommandNoActiveTerminalDoesNotSend(t *testing.T) {
+	srv := newToolCallTestServer(t, "terminal_quick_command", map[string]string{"name": "Status"})
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	saveQuickCommandTestSettings(t, st)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Quick No Terminal"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	term := &fakeTerminalIO{}
+	rec := newEventRecorder()
+	ag := NewAgent(st, term, rec.emit)
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, UserText: "run status"})
+
+	rec.waitFor(t, "ai:done:"+sess.ID, 2*time.Second)
+	if rec.has("ai:tool_call:" + sess.ID) {
+		t.Fatal("missing active terminal must not enter approval flow")
+	}
+	if len(term.sentCommands()) != 0 {
+		t.Fatal("quick command must not be sent without an active terminal")
 	}
 }
 

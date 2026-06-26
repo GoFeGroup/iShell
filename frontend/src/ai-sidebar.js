@@ -119,6 +119,7 @@ class AISidebarInstance {
     this.unsubscribers = [];
     this.cleanupResizerDrag = null;
     this.pendingInnerHideListener = null;
+    this.pendingInnerShow = false;
     this.destroyed = false;
     this.active = false;
 
@@ -135,18 +136,23 @@ class AISidebarInstance {
 
   activate() {
     if (this.destroyed) return;
+    const _t0 = performance.now();
+    console.log('[AI-ACTIVATE] start open:', this.tab.aiSidebarOpen, 'chatID:', this.currentChatID, 'isSending:', this.isSending, 'tab:', this.tab.id);
     this.active = true;
     if (!aiEnabled) {
       this.setOpen(false, { animate: false, notify: false });
       return;
     }
     this.setOpen(!!this.tab.aiSidebarOpen, { animate: false, notify: false });
+    console.log('[AI-ACTIVATE] after setOpen', (performance.now() - _t0).toFixed(1) + 'ms');
     const targetBeforeSync = this.currentTargetID;
     this.syncTarget();
+    console.log('[AI-ACTIVATE] after syncTarget', (performance.now() - _t0).toFixed(1) + 'ms');
     if (this.currentTargetID && this.currentTargetID === targetBeforeSync) {
       if (this.currentChatID) {
         const chatID = this.currentChatID;
         this.subscribeChatEvents(chatID);
+        console.log('[AI-ACTIVATE] subscribed events', (performance.now() - _t0).toFixed(1) + 'ms');
         if (this.isSending) {
           // AI was running when this tab was deactivated — re-sync missed events.
           this.refreshCurrentChat(chatID).finally(async () => {
@@ -160,6 +166,7 @@ class AISidebarInstance {
       }
       // Session list state is preserved in DOM — no refresh needed on reactivation.
     }
+    console.log('[AI-ACTIVATE] done', (performance.now() - _t0).toFixed(1) + 'ms');
   }
 
   deactivate() {
@@ -168,7 +175,11 @@ class AISidebarInstance {
   }
 
   suspendLayout() {
+    const _t0 = performance.now();
+    console.log('[AI-SUSPEND] hiding inner for tab', this.tab.id);
+    this.pendingInnerShow = false;
     if (this.inner) this.inner.style.display = 'none';
+    console.log('[AI-SUSPEND] done', (performance.now() - _t0).toFixed(1) + 'ms');
   }
 
   destroy() {
@@ -194,6 +205,7 @@ class AISidebarInstance {
 
   setOpen(open, { animate, notify } = {}) {
     if (!this.root) return;
+    console.log('[AI-SET-OPEN] open:', open, 'animate:', animate, 'tab:', this.tab.id);
     const wasOpen = !this.root.classList.contains('collapsed');
     this.tab.aiSidebarOpen = !!open;
     this.cancelPendingInnerHide();
@@ -206,8 +218,36 @@ class AISidebarInstance {
     // which measurably stalls every terminal-tab switch once a chat has
     // enough history. So lay it out only while actually open or animating,
     // and drop it from layout once fully collapsed.
-    if (open && this.inner) this.inner.style.display = '';
+    if (open && this.inner) {
+      if (animate) {
+        // Immediate show for user-triggered animations (sidebar open/close button).
+        const _t0 = performance.now();
+        this.inner.style.display = '';
+        console.log('[AI-SET-OPEN] inner.display="" took', (performance.now() - _t0).toFixed(1) + 'ms');
+      } else {
+        // Defer inner content to the second frame on tab activation. The first
+        // frame is used to render the terminal; the AI sidebar content appears
+        // in the next frame (~16ms later). This prevents the heavyweight
+        // CSS layout of a long chat history from blocking the terminal's first
+        // paint via getBoundingClientRect() in the fitAddon RAF callback.
+        this.pendingInnerShow = true;
+        const root = this.root;
+        const inner = this.inner;
+        console.log('[AI-SET-OPEN] deferring inner show to double-RAF');
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (!this.pendingInnerShow) return;
+          this.pendingInnerShow = false;
+          if (root && !root.classList.contains('collapsed') && inner) {
+            const _t0 = performance.now();
+            inner.style.display = '';
+            console.log('[AI-SET-OPEN] deferred inner.display="" took', (performance.now() - _t0).toFixed(1) + 'ms');
+          }
+        }));
+      }
+    }
+    const _t1 = performance.now();
     this.root.classList.toggle('collapsed', !open);
+    console.log('[AI-SET-OPEN] classList.toggle took', (performance.now() - _t1).toFixed(1) + 'ms');
     this.applySidebarWidth();
     if (this.resizer) this.resizer.style.display = open ? '' : 'none';
     if (!animate) requestAnimationFrame(() => this.root?.classList.remove('no-transition'));
@@ -228,6 +268,7 @@ class AISidebarInstance {
   }
 
   cancelPendingInnerHide() {
+    this.pendingInnerShow = false;
     if (this.pendingInnerHideListener) {
       this.root?.removeEventListener('transitionend', this.pendingInnerHideListener);
       this.pendingInnerHideListener = null;
@@ -472,13 +513,21 @@ class AISidebarInstance {
   // expensive layout — see the tab-switch performance investigation.
   async refreshCurrentChat(chatID = this.currentChatID) {
     if (!chatID || !this.chatEl) return;
+    const _t0 = performance.now();
+    console.log('[AI-REFRESH] start chatID:', chatID);
     try {
       const messages = (await getAIChatMessages(chatID)) || [];
+      console.log('[AI-REFRESH] fetched', messages.length, 'msgs', (performance.now() - _t0).toFixed(1) + 'ms');
       if (this.destroyed || this.currentChatID !== chatID) return;
       const signature = messages.length + ':' + (messages.at(-1)?.id ?? '');
-      if (signature === this.lastRenderedSignature) return;
+      if (signature === this.lastRenderedSignature) {
+        console.log('[AI-REFRESH] skip render (signature unchanged)');
+        return;
+      }
+      console.log('[AI-REFRESH] rendering history...');
       this.lastRenderedSignature = signature;
       this.renderHistory(messages);
+      console.log('[AI-REFRESH] done', (performance.now() - _t0).toFixed(1) + 'ms');
     } catch (e) {
       if (this.destroyed || this.currentChatID !== chatID) return;
       console.error('getAIChatMessages:', e);
@@ -625,7 +674,10 @@ class AISidebarInstance {
   }
 
   scrollToBottom() {
-    if (this.messagesEl) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+    if (!this.messagesEl) return;
+    const _t0 = performance.now();
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+    console.log('[AI-SCROLL] scrollToBottom took', (performance.now() - _t0).toFixed(1) + 'ms', 'scrollHeight:', this.messagesEl.scrollHeight);
   }
 
   appendUserBubble(text) {
@@ -742,9 +794,12 @@ class AISidebarInstance {
 
   renderHistory(messages) {
     if (!this.messagesEl) return;
+    const _t0 = performance.now();
+    console.log('[AI-RENDER] start', messages.length, 'messages');
     this.messagesEl.innerHTML = '';
     this.cardsByToolCallID = {};
     this.currentAssistantBubble = null;
+    console.log('[AI-RENDER] cleared innerHTML', (performance.now() - _t0).toFixed(1) + 'ms');
 
     const toolResultsByID = {};
     messages.forEach(m => {
@@ -771,7 +826,9 @@ class AISidebarInstance {
         }
       }
     });
+    console.log('[AI-RENDER] built all DOM', (performance.now() - _t0).toFixed(1) + 'ms');
     this.scrollToBottom();
+    console.log('[AI-RENDER] after scrollToBottom', (performance.now() - _t0).toFixed(1) + 'ms');
   }
 
   renderHistoricalToolCall(call, resultMsg) {

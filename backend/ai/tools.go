@@ -38,6 +38,23 @@ func AgentTools() []Tool {
 		{
 			Type: "function",
 			Function: ToolFunction{
+				Name: "terminal_quick_command",
+				Description: "Send one of the user's configured quick commands to the currently active terminal. " +
+					"Identify it by quick-command name/label, by shortcut such as Ctrl+1 through Ctrl+9, or both. " +
+					"Include group when the same name or shortcut could exist in more than one quick-command group.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"name": {"type": "string", "description": "The configured quick-command label/name."},
+						"shortcut": {"type": "string", "description": "The quick-command keyboard shortcut, for example Ctrl+1, Control+1, ^1, or ⌃1."},
+						"group": {"type": "string", "description": "Optional quick-command group name used to disambiguate matches."}
+					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
 				Name: "websearch",
 				Description: "Search the web for current or external information and return a concise " +
 					"summary with result titles and links. Use this when the user's question needs up-to-date facts.",
