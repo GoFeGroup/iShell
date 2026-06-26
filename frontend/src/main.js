@@ -3,7 +3,7 @@ import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off,
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { openProfileForm } from './profile-form.js';
 import { initProfilePicker, openProfilePicker } from './profile-picker.js';
-import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTerminalViewport } from './terminal.js';
+import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTerminalViewport, suspendTerminalAutoFit } from './terminal.js';
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
 import { initQuickCommands, setQuickCommandSettings, toggleQuickCommands, updateQuickCommandUI, triggerQuickCommandShortcut } from './quick-command.js';
@@ -26,6 +26,11 @@ let settings = null;
 let isFullscreen = false;
 const pendingConnects = {}; // sessionID → { sess, req, tab, attemptID } — kept until host key dialog resolves
 let connectAttemptSeq = 0;
+const PERF_DEBUG = true;
+
+function perfLog(label, ...args) {
+  if (PERF_DEBUG) console.log('[PERF-TAB]', label, ...args);
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('load', async () => {
@@ -296,6 +301,8 @@ function ensureTerminalContent(tab) {
   }, {
     getConnID: () => activeTab === tab ? tab.connID : '',
     onLayoutChange: refitActiveTerminalAfterLayout,
+    onResizeStart: () => suspendTerminalAutoFit(true),
+    onResizeEnd: () => suspendTerminalAutoFit(false),
   });
 
   panel.appendChild(content);
@@ -450,8 +457,14 @@ function updateActiveTabClass() {
 
 async function switchToTab(tab) {
   if (!tab) return;
-  const _t0 = performance.now();
-  console.log('[TAB-SWITCH] start →', tab.id, tab.type, 'aiSidebarOpen:', tab.aiSidebarOpen);
+  const switchStartedAt = performance.now();
+  const previousTab = activeTab;
+  perfLog('start', {
+    targetTab: tab.id,
+    targetType: tab.type,
+    targetAIOpen: !!tab.aiSidebarOpen,
+    previousTab: previousTab?.id || null,
+  });
   if (hasTerminalConn(activeTab)) rememberTerminalViewport(activeTab.connID);
   if (tab.type === 'settings') {
     activeTab = tab;
@@ -478,7 +491,7 @@ async function switchToTab(tab) {
     ensureTerminalContent(tab);
     updateActiveTabClass();
     showPanel('terminal');
-    showTerminalContent(tab);
+    showTerminalContent(tab, previousTab);
     updateConnUI(null);
     renderTerminalState(tab);
     deactivateAISidebar();
@@ -489,24 +502,23 @@ async function switchToTab(tab) {
   ensureTerminalContent(tab);
   updateActiveTabClass();
   showPanel('terminal');
-  showTerminalContent(tab);
-  console.log('[TAB-SWITCH] after showTerminalContent', (performance.now() - _t0).toFixed(1) + 'ms');
+  showTerminalContent(tab, previousTab);
+  perfLog('after showTerminalContent', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
   updateConnUI(tab);
   createTerminal(tab.connID, settings, { containerId: tab.terminalContainerId, sizeElId: tab.sizeElId });
+  perfLog('after createTerminal', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
   const status = tab.statusEl;
   if (status) status.textContent = t('common.connected');
-  refitActiveTerminal({ restoreScroll: true });
-  console.log('[TAB-SWITCH] after refitActiveTerminal', (performance.now() - _t0).toFixed(1) + 'ms');
   focusTerminal(tab.connID);
+  perfLog('after focusTerminal', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
   activateAISidebarForTab(tab);
-  console.log('[TAB-SWITCH] after activateAISidebarForTab', (performance.now() - _t0).toFixed(1) + 'ms');
+  perfLog('after activateAISidebarForTab', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
   notifyActiveTerminalChanged();
-  console.log('[TAB-SWITCH] done', (performance.now() - _t0).toFixed(1) + 'ms');
-  const _tabSwitchT0 = _t0;
+  perfLog('done', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
   requestAnimationFrame(() => {
-    console.log('[TAB-SWITCH] first RAF frame', (performance.now() - _tabSwitchT0).toFixed(1) + 'ms');
+    perfLog('first RAF', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
     requestAnimationFrame(() => {
-      console.log('[TAB-SWITCH] second RAF frame (after all RAF callbacks)', (performance.now() - _tabSwitchT0).toFixed(1) + 'ms');
+      perfLog('second RAF', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
     });
   });
 }
@@ -606,18 +618,23 @@ function showPanel(name) {
   });
 }
 
-function showTerminalContent(tab) {
-  const _t0 = performance.now();
+function showTerminalContent(tab, previousTab = null) {
+  if (previousTab?.terminalContent && previousTab.terminalContent !== tab.terminalContent) {
+    suspendAISidebarLayout(previousTab);
+    previousTab.terminalContent.style.display = 'none';
+  }
+  if (tab?.terminalContent) {
+    tab.terminalContent.style.display = '';
+    return;
+  }
   document.querySelectorAll('#panel-terminal .terminal-tab-content').forEach(el => {
     const isActive = el === tab.terminalContent;
     if (!isActive) {
       const t = tabs.find(t => t.terminalContent === el);
-      console.log('[SHOW-TC] suspendLayout for tab', t?.id, 'open:', t?.aiSidebarOpen);
       suspendAISidebarLayout(t);
     }
     el.style.display = isActive ? '' : 'none';
   });
-  console.log('[SHOW-TC] done', (performance.now() - _t0).toFixed(1) + 'ms');
 }
 
 function destroyTerminalContent(tab) {
@@ -638,7 +655,6 @@ function refitActiveTerminal(options = {}) {
   requestAnimationFrame(() => {
     if (!isTerminalTab(activeTab)) return;
     if (document.getElementById('panel-terminal')?.style.display === 'none') return;
-    console.log('[FIT] RAF from refitActiveTerminal fired', performance.now().toFixed(1) + 'ms');
     fitTerminal(activeTab.connID, { ...options, caller: 'refitActiveTerminal-RAF' });
   });
 }

@@ -13,6 +13,12 @@ const DEFAULT_FONT_SIZE = 16;
 const RESTORE_DELAYS = [0, 50, 150, 300];
 const INPUT_CHUNK_SIZE = 8192;
 const INPUT_YIELD_EVERY_CHUNKS = 8;
+const PERF_DEBUG = true;
+let autoFitSuspended = false;
+
+function perfLog(label, ...args) {
+  if (PERF_DEBUG) console.log('[PERF-FIT]', label, ...args);
+}
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -119,6 +125,8 @@ function syncViewportScroll(inst, snapshot = null) {
 function scheduleViewportRestore(connID, delays = RESTORE_DELAYS, snapshot = null, markTabSwitch = false) {
   const inst = instances[connID];
   if (!inst) return;
+  const canceled = inst.restoreTimers?.length || 0;
+  cancelViewportRestore(inst);
   if (!snapshot) {
     rememberViewport(inst);
   }
@@ -130,6 +138,14 @@ function scheduleViewportRestore(connID, delays = RESTORE_DELAYS, snapshot = nul
     baseY: inst.savedBaseY,
   };
   inst.restoreSnapshot = restoreSnapshot;
+  inst.restoreTimers = [];
+  perfLog('scheduleViewportRestore', {
+    connID,
+    delays,
+    canceled,
+    markTabSwitch,
+    snapshot: restoreSnapshot,
+  });
 
   delays.forEach(delay => {
     const run = () => {
@@ -137,33 +153,96 @@ function scheduleViewportRestore(connID, delays = RESTORE_DELAYS, snapshot = nul
       if (!current || current.restoreSeq !== restoreSeq) return;
       syncViewportScroll(current, restoreSnapshot);
     };
-    if (delay === 0) requestAnimationFrame(() => requestAnimationFrame(run));
-    else setTimeout(run, delay);
+    if (delay === 0) {
+      const first = requestAnimationFrame(() => {
+        const second = requestAnimationFrame(run);
+        inst.restoreTimers.push({ type: 'raf', id: second });
+      });
+      inst.restoreTimers.push({ type: 'raf', id: first });
+    } else {
+      const id = setTimeout(run, delay);
+      inst.restoreTimers.push({ type: 'timeout', id });
+    }
   });
 }
 
-function canFitTerminal(inst) {
-  const el = inst?.containerEl;
-  if (!el || !el.isConnected) return false;
-  const rect = el.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0 && getComputedStyle(el).display !== 'none';
+function cancelViewportRestore(inst) {
+  inst.restoreTimers?.forEach(timer => {
+    if (timer.type === 'raf') cancelAnimationFrame(timer.id);
+    else clearTimeout(timer.id);
+  });
+  inst.restoreTimers = [];
 }
 
-function fitVisibleTerminal(connID, inst, { restoreScroll = false, snapshot = null, caller = '?' } = {}) {
-  if (!canFitTerminal(inst)) return false;
-  const _t0 = performance.now();
+function cancelPendingFit(inst) {
+  if (inst?.pendingFitRAF) {
+    perfLog('cancelPendingFit', { connID: inst.connID });
+    cancelAnimationFrame(inst.pendingFitRAF);
+  }
+  if (inst) inst.pendingFitRAF = 0;
+}
+
+function scheduleTerminalFit(connID, inst, options = {}) {
+  if (!inst) return;
+  if (autoFitSuspended && options.caller === 'ResizeObserver') {
+    inst.needsFitAfterSuspend = true;
+    perfLog('scheduleTerminalFit suspended', { connID, caller: options.caller || '' });
+    return;
+  }
+  const requestedAt = performance.now();
+  cancelPendingFit(inst);
+  perfLog('scheduleTerminalFit', {
+    connID,
+    restoreScroll: !!options.restoreScroll,
+    caller: options.caller || '',
+  });
+  inst.pendingFitRAF = requestAnimationFrame(() => {
+    inst.pendingFitRAF = 0;
+    if (instances[connID] !== inst) return;
+    perfLog('runTerminalFit', {
+      connID,
+      caller: options.caller || '',
+      wait: (performance.now() - requestedAt).toFixed(1) + 'ms',
+    });
+    fitVisibleTerminal(connID, inst, options);
+  });
+}
+
+function visibleTerminalRect(inst) {
+  const el = inst?.containerEl;
+  if (!el || !el.isConnected) return null;
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0 || getComputedStyle(el).display === 'none') return null;
+  return rect;
+}
+
+function fitVisibleTerminal(connID, inst, { restoreScroll = false, snapshot = null } = {}) {
+  const rect = visibleTerminalRect(inst);
+  if (!rect) return false;
+  const startedAt = performance.now();
   const restoreSnapshot = restoreScroll ? (snapshot || {
     viewportY: inst.savedViewportY ?? inst.term.buffer.active.viewportY,
     baseY: inst.savedBaseY ?? inst.term.buffer.active.baseY,
   }) : null;
   const prevCols = inst.term.cols, prevRows = inst.term.rows;
   inst.fitAddon.fit();
-  const fitMs = (performance.now() - _t0).toFixed(1);
-  console.log('[FIT] caller:', caller, 'cols:', prevCols, '→', inst.term.cols, 'rows:', prevRows, '→', inst.term.rows, 'fit took', fitMs + 'ms');
-  resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
+  const resized = inst.term.cols !== prevCols || inst.term.rows !== prevRows;
+  if (resized) {
+    resizeTerm(connID, inst.term.cols, inst.term.rows).catch(() => {});
+  }
   const sizeEl = document.getElementById(inst.sizeElId || 'sb-size');
   if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
   if (restoreScroll) scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot);
+  inst.lastFitWidth = rect.width;
+  inst.lastFitHeight = rect.height;
+  perfLog('fitVisibleTerminal', {
+    connID,
+    restoreScroll,
+    resized,
+    cols: `${prevCols}->${inst.term.cols}`,
+    rows: `${prevRows}->${inst.term.rows}`,
+    cost: (performance.now() - startedAt).toFixed(1) + 'ms',
+  });
   return true;
 }
 
@@ -206,27 +285,28 @@ export function createTerminal(connID, settings, options = {}) {
     const inst = instances[connID];
     if (inst.fontFamily === resolvedFont && inst.fontSize === resolvedSize) {
       rememberViewport(inst);
-      const restoreSnapshot = {
-        viewportY: inst.savedViewportY,
-        baseY: inst.savedBaseY,
-      };
-      scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot, true);
-      if (inst.xtermEl.parentElement !== container) {
+      const alreadyMounted = inst.xtermEl.parentElement === container;
+      if (!alreadyMounted) {
+        const restoreSnapshot = {
+          viewportY: inst.savedViewportY,
+          baseY: inst.savedBaseY,
+        };
+        scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot, true);
         container.innerHTML = '';
         container.appendChild(inst.xtermEl);
+        inst.resizeObs.disconnect();
+        inst.resizeObs.observe(container);
+        // Defer fit after a real DOM move. When the terminal is already mounted
+        // in this tab's container, keep the existing xterm DOM/history intact
+        // and let ResizeObserver handle only actual size changes.
+        scheduleTerminalFit(connID, inst, { restoreScroll: true, snapshot: restoreSnapshot, caller: 'createTerminal-RAF' });
+      } else {
+        cancelPendingFit(inst);
+        perfLog('reuseMountedTerminal skip fit', { connID, containerId });
       }
       inst.containerEl = container;
       inst.containerId = containerId;
       inst.sizeElId = sizeElId;
-      inst.resizeObs.disconnect();
-      inst.resizeObs.observe(container);
-      // Defer fit to after layout; ResizeObserver won't fire if container size
-      // is unchanged, so we must call resizeTerm explicitly here.
-      requestAnimationFrame(() => {
-        if (instances[connID] !== inst) return;
-        console.log('[FIT] RAF from createTerminal fired', performance.now().toFixed(1) + 'ms');
-        fitVisibleTerminal(connID, inst, { restoreScroll: true, snapshot: restoreSnapshot, caller: 'createTerminal-RAF' });
-      });
       return inst.term;
     }
     // Font changed: tear down old instance and fall through to rebuild.
@@ -241,6 +321,8 @@ export function createTerminal(connID, settings, options = {}) {
     document.removeEventListener('mousemove', inst.mouseMoveHandler, true);
     document.removeEventListener('mouseup',   inst.mouseUpHandler,   true);
     inst.resizeObs.disconnect();
+    cancelPendingFit(inst);
+    cancelViewportRestore(inst);
     inst.term.dispose();
     delete instances[connID];
   }
@@ -646,24 +728,26 @@ export function createTerminal(connID, settings, options = {}) {
   const resizeObs = new ResizeObserver(() => {
     const inst = instances[connID];
     if (!inst) return;
-    console.log('[FIT] ResizeObserver fired', performance.now().toFixed(1) + 'ms');
+    const rect = visibleTerminalRect(inst);
+    if (!rect) return;
+    if (rect.width === inst.lastFitWidth && rect.height === inst.lastFitHeight) {
+      perfLog('ResizeObserver skip unchanged size', { connID, width: rect.width, height: rect.height });
+      return;
+    }
     const restoreSnapshot = Date.now() - (inst._lastTabSwitch ?? 0) < 500
       ? inst.restoreSnapshot
       : null;
-    const didFit = fitVisibleTerminal(connID, inst, {
+    scheduleTerminalFit(connID, inst, {
       restoreScroll: !!restoreSnapshot,
       snapshot: restoreSnapshot,
       caller: 'ResizeObserver',
     });
-    if (!didFit) return;
-    // After a tab switch the container often resizes due to layout settling;
-    // re-sync the viewport so the user lands back where they were (bottom if
-    // following, otherwise the historical line).
   });
   resizeObs.observe(container);
 
   instances[connID] = {
     term, fitAddon, resizeObs, dataHandler,
+    connID,
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
     compositionStartHandler, compositionEndHandler, beforeInputHandler, pasteHandler,
     xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize,
@@ -672,6 +756,11 @@ export function createTerminal(connID, settings, options = {}) {
     savedBaseY: term.buffer.active.baseY,
     restoreSnapshot: null,
     restoreSeq: 0,
+    restoreTimers: [],
+    pendingFitRAF: 0,
+    needsFitAfterSuspend: false,
+    lastFitWidth: 0,
+    lastFitHeight: 0,
     disposables: [osc7Disposable, osc1337Disposable, dataDisposable, scrollDisposable],
   };
 
@@ -697,6 +786,8 @@ export function destroyTerminal(connID) {
   const inst = instances[connID];
   if (!inst) return;
   off('terminal:data:' + connID);
+  cancelPendingFit(inst);
+  cancelViewportRestore(inst);
   inst.disposables?.forEach(d => d.dispose());
   inst.xtermEl.removeEventListener('compositionstart', inst.compositionStartHandler, true);
   inst.xtermEl.removeEventListener('compositionend',   inst.compositionEndHandler,   true);
@@ -725,6 +816,17 @@ export function fitTerminal(connID, { restoreScroll = false, caller = 'fitTermin
   const inst = instances[connID];
   if (!inst) return;
   fitVisibleTerminal(connID, inst, { restoreScroll, caller });
+}
+
+export function suspendTerminalAutoFit(suspended) {
+  autoFitSuspended = !!suspended;
+  perfLog('suspendTerminalAutoFit', { suspended: autoFitSuspended });
+  if (autoFitSuspended) return;
+  Object.entries(instances).forEach(([connID, inst]) => {
+    if (!inst.needsFitAfterSuspend) return;
+    inst.needsFitAfterSuspend = false;
+    scheduleTerminalFit(connID, inst, { restoreScroll: false, caller: 'resume-auto-fit' });
+  });
 }
 
 function setTerminalCWD(connID, cwd) {

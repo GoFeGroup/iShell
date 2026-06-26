@@ -10,6 +10,11 @@ import { renderMarkdown } from './markdown.js';
 let getActiveTab = () => null;
 let aiEnabled = false;
 let activeInstance = null;
+const PERF_DEBUG = true;
+
+function perfLog(label, ...args) {
+  if (PERF_DEBUG) console.log('[PERF-AI]', label, ...args);
+}
 
 const MIN_SIDEBAR_WIDTH = 240;
 const MAX_SIDEBAR_WIDTH = 640;
@@ -105,6 +110,8 @@ class AISidebarInstance {
     this.closeBtn = els.closeBtn;
     this.getConnID = options.getConnID || (() => '');
     this.onLayoutChange = options.onLayoutChange || (() => {});
+    this.onResizeStart = options.onResizeStart || (() => {});
+    this.onResizeEnd = options.onResizeEnd || (() => {});
 
     this.currentTargetID = null;
     this.chatsForTarget = [];
@@ -119,7 +126,7 @@ class AISidebarInstance {
     this.unsubscribers = [];
     this.cleanupResizerDrag = null;
     this.pendingInnerHideListener = null;
-    this.pendingInnerShow = false;
+    this.pendingInnerShowRAFs = [];
     this.destroyed = false;
     this.active = false;
 
@@ -127,7 +134,7 @@ class AISidebarInstance {
     this.closeBtn?.addEventListener('click', () => this.setOpen(false, { animate: true, notify: true }));
     this.initResizer();
     this.applySidebarWidth();
-    this.setOpen(!!this.tab.aiSidebarOpen, { animate: false, notify: false });
+    this.setOpen(!!this.tab.aiSidebarOpen, { animate: false, notify: false, deferInnerRestore: true });
   }
 
   isTerminalActive() {
@@ -136,23 +143,26 @@ class AISidebarInstance {
 
   activate() {
     if (this.destroyed) return;
-    const _t0 = performance.now();
-    console.log('[AI-ACTIVATE] start open:', this.tab.aiSidebarOpen, 'chatID:', this.currentChatID, 'isSending:', this.isSending, 'tab:', this.tab.id);
+    const startedAt = performance.now();
+    perfLog('activate start', {
+      tab: this.tab.id,
+      open: !!this.tab.aiSidebarOpen,
+      collapsed: this.root?.classList.contains('collapsed'),
+      currentChatID: this.currentChatID,
+      messageNodes: this.messagesEl?.children.length || 0,
+    });
     this.active = true;
     if (!aiEnabled) {
       this.setOpen(false, { animate: false, notify: false });
       return;
     }
-    this.setOpen(!!this.tab.aiSidebarOpen, { animate: false, notify: false });
-    console.log('[AI-ACTIVATE] after setOpen', (performance.now() - _t0).toFixed(1) + 'ms');
+    this.setOpen(!!this.tab.aiSidebarOpen, { animate: false, notify: false, deferInnerRestore: true });
     const targetBeforeSync = this.currentTargetID;
     this.syncTarget();
-    console.log('[AI-ACTIVATE] after syncTarget', (performance.now() - _t0).toFixed(1) + 'ms');
     if (this.currentTargetID && this.currentTargetID === targetBeforeSync) {
       if (this.currentChatID) {
         const chatID = this.currentChatID;
         this.subscribeChatEvents(chatID);
-        console.log('[AI-ACTIVATE] subscribed events', (performance.now() - _t0).toFixed(1) + 'ms');
         if (this.isSending) {
           // AI was running when this tab was deactivated — re-sync missed events.
           this.refreshCurrentChat(chatID).finally(async () => {
@@ -166,7 +176,7 @@ class AISidebarInstance {
       }
       // Session list state is preserved in DOM — no refresh needed on reactivation.
     }
-    console.log('[AI-ACTIVATE] done', (performance.now() - _t0).toFixed(1) + 'ms');
+    perfLog('activate done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
   }
 
   deactivate() {
@@ -175,17 +185,14 @@ class AISidebarInstance {
   }
 
   suspendLayout() {
-    const _t0 = performance.now();
-    console.log('[AI-SUSPEND] hiding inner for tab', this.tab.id);
-    this.pendingInnerShow = false;
-    if (this.inner) this.inner.style.contentVisibility = 'hidden';
-    console.log('[AI-SUSPEND] done', (performance.now() - _t0).toFixed(1) + 'ms');
+    this.setInnerHidden(true);
   }
 
   destroy() {
     this.destroyed = true;
     this.unsubscribeChatEvents();
     this.cancelPendingInnerHide();
+    this.cancelPendingInnerShow();
     this.cleanupResizerDrag?.();
     this.cleanupResizerDrag = null;
   }
@@ -203,52 +210,129 @@ class AISidebarInstance {
     this.setOpen(this.root.classList.contains('collapsed'), { animate: true, notify: true });
   }
 
-  setOpen(open, { animate, notify } = {}) {
+  isOpen() {
+    return !!this.root && !this.root.classList.contains('collapsed');
+  }
+
+  setOpen(open, { animate, notify, deferInnerRestore = false } = {}) {
     if (!this.root) return;
-    console.log('[AI-SET-OPEN] open:', open, 'animate:', animate, 'tab:', this.tab.id);
+    const startedAt = performance.now();
+    perfLog('setOpen start', { tab: this.tab.id, open, animate, notify, deferInnerRestore });
     const wasOpen = !this.root.classList.contains('collapsed');
     this.tab.aiSidebarOpen = !!open;
     this.cancelPendingInnerHide();
+    this.cancelPendingInnerShow();
     if (!animate) this.root.classList.add('no-transition');
-    // .ai-sidebar-inner keeps a fixed 320px width even while collapsed (see its
-    // rule below) so chat text doesn't re-wrap mid-transition. But that means
-    // a long chat history stays fully laid out — just clipped via the
-    // collapsed parent's overflow:hidden — and browsers still do real work
-    // against that hidden subtree (e.g. focus-triggered a11y-tree sync),
-    // which measurably stalls every terminal-tab switch once a chat has
-    // enough history. So lay it out only while actually open or animating,
-    // and drop it from layout once fully collapsed.
+    // .ai-sidebar-inner keeps a fixed width while collapsed so chat text does
+    // not re-wrap mid-transition. content-visibility removes inactive history
+    // from layout until the sidebar is opened again.
     if (open && this.inner) {
-      // content-visibility: hidden preserves the layout cache, so restoring it here
-      // is cheap (no full re-layout). See suspendLayout() / scheduleInnerHide().
-      const _t0 = performance.now();
-      this.inner.style.contentVisibility = '';
-      console.log('[AI-SET-OPEN] inner.contentVisibility="" took', (performance.now() - _t0).toFixed(1) + 'ms');
+      if (deferInnerRestore) {
+        this.scheduleInnerShow(startedAt);
+      } else {
+        const innerStartedAt = performance.now();
+        this.setInnerHidden(false);
+        perfLog('setOpen after setInnerHidden(false)', this.tab.id, (performance.now() - innerStartedAt).toFixed(1) + 'ms');
+      }
     }
-    const _t1 = performance.now();
+    const toggleStartedAt = performance.now();
     this.root.classList.toggle('collapsed', !open);
-    console.log('[AI-SET-OPEN] classList.toggle took', (performance.now() - _t1).toFixed(1) + 'ms');
+    perfLog('setOpen after classList.toggle', this.tab.id, (performance.now() - toggleStartedAt).toFixed(1) + 'ms');
+    const widthStartedAt = performance.now();
     this.applySidebarWidth();
+    perfLog('setOpen after applySidebarWidth', this.tab.id, (performance.now() - widthStartedAt).toFixed(1) + 'ms');
     if (this.resizer) this.resizer.style.display = open ? '' : 'none';
     if (!animate) requestAnimationFrame(() => this.root?.classList.remove('no-transition'));
     if (!open) this.scheduleInnerHide(animate);
+    if (open && !wasOpen) {
+      perfLog('setOpen before ensureOpenContent', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
+      this.ensureOpenContent().finally(() => {
+        perfLog('setOpen ensureOpenContent done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
+      });
+    }
     if (notify && wasOpen !== open) this.onLayoutChange();
+    perfLog('setOpen done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
+    if (open && !deferInnerRestore) {
+      requestAnimationFrame(() => {
+        const frameStartedAt = performance.now();
+        const rect = this.inner?.getBoundingClientRect();
+        const scrollHeight = this.messagesEl?.scrollHeight || 0;
+        perfLog('setOpen next RAF layout read', {
+          tab: this.tab.id,
+          elapsed: (performance.now() - startedAt).toFixed(1) + 'ms',
+          readCost: (performance.now() - frameStartedAt).toFixed(1) + 'ms',
+          innerWidth: rect?.width || 0,
+          innerHeight: rect?.height || 0,
+          messageNodes: this.messagesEl?.children.length || 0,
+          scrollHeight,
+        });
+      });
+    }
+  }
+
+  setInnerHidden(hidden) {
+    if (!this.inner) return;
+    this.inner.style.contentVisibility = hidden ? 'hidden' : '';
+    this.inner.style.pointerEvents = hidden ? 'none' : '';
+    this.inner.style.visibility = '';
+    if (hidden) this.inner.setAttribute('aria-hidden', 'true');
+    else this.inner.removeAttribute('aria-hidden');
+  }
+
+  scheduleInnerShow(startedAt) {
+    perfLog('scheduleInnerShow deferred', this.tab.id);
+    const first = requestAnimationFrame(() => {
+      const second = requestAnimationFrame(() => {
+        if (this.destroyed || !this.active || !this.isTerminalActive() || !this.isOpen()) return;
+        const innerStartedAt = performance.now();
+        this.setInnerHidden(false);
+        perfLog('deferred setInnerHidden(false)', {
+          tab: this.tab.id,
+          elapsed: (performance.now() - startedAt).toFixed(1) + 'ms',
+          cost: (performance.now() - innerStartedAt).toFixed(1) + 'ms',
+        });
+        requestAnimationFrame(() => {
+          const frameStartedAt = performance.now();
+          const rect = this.inner?.getBoundingClientRect();
+          const scrollHeight = this.messagesEl?.scrollHeight || 0;
+          perfLog('deferred inner next RAF layout read', {
+            tab: this.tab.id,
+            elapsed: (performance.now() - startedAt).toFixed(1) + 'ms',
+            readCost: (performance.now() - frameStartedAt).toFixed(1) + 'ms',
+            innerWidth: rect?.width || 0,
+            innerHeight: rect?.height || 0,
+            messageNodes: this.messagesEl?.children.length || 0,
+            scrollHeight,
+          });
+        });
+      });
+      this.pendingInnerShowRAFs.push(second);
+    });
+    this.pendingInnerShowRAFs.push(first);
+  }
+
+  cancelPendingInnerShow() {
+    this.pendingInnerShowRAFs.splice(0).forEach(id => cancelAnimationFrame(id));
   }
 
   scheduleInnerHide(animate) {
     if (!this.inner) return;
-    if (!animate) { this.inner.style.contentVisibility = 'hidden'; return; }
+    if (!animate) {
+      this.setInnerHidden(true);
+      return;
+    }
     const onEnd = (e) => {
       if (e.target !== this.root || e.propertyName !== 'width') return;
       this.cancelPendingInnerHide();
-      if (this.root?.classList.contains('collapsed') && this.inner) this.inner.style.contentVisibility = 'hidden';
+      if (this.root?.classList.contains('collapsed') && this.inner) {
+        this.setInnerHidden(true);
+      }
     };
     this.pendingInnerHideListener = onEnd;
     this.root.addEventListener('transitionend', onEnd);
   }
 
   cancelPendingInnerHide() {
-    this.pendingInnerShow = false;
     if (this.pendingInnerHideListener) {
       this.root?.removeEventListener('transitionend', this.pendingInnerHideListener);
       this.pendingInnerHideListener = null;
@@ -265,6 +349,7 @@ class AISidebarInstance {
     if (!this.resizer || !this.root) return;
     let startX = 0;
     let startWidth = 0;
+    let resizing = false;
     const onMouseMove = (e) => {
       const next = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, startWidth + (startX - e.clientX)));
       this.root.style.width = next + 'px';
@@ -275,6 +360,10 @@ class AISidebarInstance {
       document.removeEventListener('mouseup', onMouseUp);
       document.body.style.cursor = '';
       this.root.classList.remove('resizing');
+      if (resizing) {
+        resizing = false;
+        this.onResizeEnd();
+      }
       saveSidebarWidth(this.tab, parseInt(this.root.style.width, 10));
       this.cleanupResizerDrag = null;
       this.onLayoutChange();
@@ -286,6 +375,8 @@ class AISidebarInstance {
       startX = e.clientX;
       startWidth = this.root.getBoundingClientRect().width;
       this.root.classList.add('resizing');
+      resizing = true;
+      this.onResizeStart();
       document.body.style.cursor = 'col-resize';
       document.addEventListener('mousemove', onMouseMove);
       document.addEventListener('mouseup', onMouseUp);
@@ -294,23 +385,50 @@ class AISidebarInstance {
         document.removeEventListener('mouseup', onMouseUp);
         document.body.style.cursor = '';
         this.root?.classList.remove('resizing');
+        if (resizing) {
+          resizing = false;
+          this.onResizeEnd();
+        }
       };
     });
   }
 
   async loadForTarget(targetID) {
+    const startedAt = performance.now();
+    perfLog('loadForTarget start', { tab: this.tab.id, targetID, open: this.isOpen() });
     try {
       this.chatsForTarget = (await listAIChatSessionsForTarget(targetID)) || [];
     } catch (e) {
       console.error('listAIChatSessionsForTarget:', e);
       this.chatsForTarget = [];
     }
+    perfLog('loadForTarget fetched sessions', {
+      tab: this.tab.id,
+      count: this.chatsForTarget.length,
+      elapsed: (performance.now() - startedAt).toFixed(1) + 'ms',
+    });
     if (!this.active || this.currentTargetID !== targetID) return;
+    if (!this.isOpen()) return;
+    await this.ensureOpenContent();
+    perfLog('loadForTarget done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
+  }
+
+  async ensureOpenContent() {
+    const startedAt = performance.now();
+    perfLog('ensureOpenContent start', {
+      tab: this.tab.id,
+      currentTargetID: this.currentTargetID,
+      open: this.isOpen(),
+      chats: this.chatsForTarget.length,
+      currentChatID: this.currentChatID,
+    });
+    if (!this.active || !this.currentTargetID || !this.isOpen() || !aiEnabled) return;
     if (this.chatsForTarget.length > 0) {
-      this.openChat(this.currentChatID || this.chatsForTarget[0].id);
+      await this.openChat(this.currentChatID || this.chatsForTarget[0].id);
     } else {
-      this.showSessionList();
+      await this.showSessionList();
     }
+    perfLog('ensureOpenContent done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
   }
 
   async refreshSessionsForTarget(targetID) {
@@ -318,13 +436,10 @@ class AISidebarInstance {
       const chats = (await listAIChatSessionsForTarget(targetID)) || [];
       if (!this.active || this.destroyed || this.currentTargetID !== targetID) return;
       this.chatsForTarget = chats;
+      if (!this.isOpen()) return;
       if (this.currentChatID && !this.chatsForTarget.some(sess => sess.id === this.currentChatID)) {
         this.leaveChat();
-        if (this.chatsForTarget.length > 0) {
-          await this.openChat(this.chatsForTarget[0].id);
-        } else {
-          this.showSessionList();
-        }
+        await this.ensureOpenContent();
       } else if (this.listEl && this.listEl.style.display !== 'none') {
         this.renderSessionList();
       }
@@ -339,7 +454,7 @@ class AISidebarInstance {
     if (this.chatEl) this.chatEl.style.display = 'none';
     if (this.listEl) this.listEl.style.display = '';
     if (this.backBtn) this.backBtn.style.display = 'none';
-    this.renderSessionList();
+    return this.renderSessionList();
   }
 
   async renderSessionList() {
@@ -465,10 +580,19 @@ class AISidebarInstance {
   }
 
   async openChat(chatID) {
-    if (this.currentChatID && this.currentChatID !== chatID) this.unsubscribeChatEvents();
+    const startedAt = performance.now();
+    const sameChat = this.currentChatID === chatID;
+    perfLog('openChat start', {
+      tab: this.tab.id,
+      chatID,
+      sameChat,
+      hasMessagesEl: !!this.messagesEl,
+      renderedSignature: this.lastRenderedSignature,
+    });
+    if (this.currentChatID && !sameChat) this.unsubscribeChatEvents();
     this.currentChatID = chatID;
     this.currentAssistantBubble = null;
-    this.cardsByToolCallID = {};
+    if (!sameChat) this.cardsByToolCallID = {};
 
     const sess = this.chatsForTarget.find(s => s.id === chatID);
     this.currentAutoExec = !!sess?.auto_exec;
@@ -477,13 +601,15 @@ class AISidebarInstance {
     if (this.backBtn) this.backBtn.style.display = '';
     if (this.chatEl) {
       this.chatEl.style.display = '';
-      this.buildChatViewSkeleton(this.chatEl);
+      if (!sameChat || !this.messagesEl) this.buildChatViewSkeleton(this.chatEl);
     }
 
     if (this.active) this.subscribeChatEvents(chatID);
     this.setSending(false);
-    this.lastRenderedSignature = null;
+    if (!sameChat || !this.messagesEl) this.lastRenderedSignature = null;
+    perfLog('openChat before refresh', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
     await this.refreshCurrentChat(chatID);
+    perfLog('openChat done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
   }
 
   // Re-fetches chatID's messages and re-renders only if they actually
@@ -493,21 +619,37 @@ class AISidebarInstance {
   // expensive layout — see the tab-switch performance investigation.
   async refreshCurrentChat(chatID = this.currentChatID) {
     if (!chatID || !this.chatEl) return;
-    const _t0 = performance.now();
-    console.log('[AI-REFRESH] start chatID:', chatID);
+    const startedAt = performance.now();
+    if (!this.isOpen() && !this.isSending) {
+      perfLog('refreshCurrentChat skip closed', { tab: this.tab.id, chatID });
+      return;
+    }
+    perfLog('refreshCurrentChat start', { tab: this.tab.id, chatID });
     try {
       const messages = (await getAIChatMessages(chatID)) || [];
-      console.log('[AI-REFRESH] fetched', messages.length, 'msgs', (performance.now() - _t0).toFixed(1) + 'ms');
+      perfLog('refreshCurrentChat fetched', {
+        tab: this.tab.id,
+        chatID,
+        messages: messages.length,
+        elapsed: (performance.now() - startedAt).toFixed(1) + 'ms',
+      });
       if (this.destroyed || this.currentChatID !== chatID) return;
       const signature = messages.length + ':' + (messages.at(-1)?.id ?? '');
       if (signature === this.lastRenderedSignature) {
-        console.log('[AI-REFRESH] skip render (signature unchanged)');
+        perfLog('refreshCurrentChat skip unchanged', {
+          tab: this.tab.id,
+          signature,
+          elapsed: (performance.now() - startedAt).toFixed(1) + 'ms',
+        });
         return;
       }
-      console.log('[AI-REFRESH] rendering history...');
       this.lastRenderedSignature = signature;
       this.renderHistory(messages);
-      console.log('[AI-REFRESH] done', (performance.now() - _t0).toFixed(1) + 'ms');
+      perfLog('refreshCurrentChat rendered', {
+        tab: this.tab.id,
+        signature,
+        elapsed: (performance.now() - startedAt).toFixed(1) + 'ms',
+      });
     } catch (e) {
       if (this.destroyed || this.currentChatID !== chatID) return;
       console.error('getAIChatMessages:', e);
@@ -655,9 +797,15 @@ class AISidebarInstance {
 
   scrollToBottom() {
     if (!this.messagesEl) return;
-    const _t0 = performance.now();
+    if (!this.active || !this.isTerminalActive() || !this.isOpen()) return;
+    const startedAt = performance.now();
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
-    console.log('[AI-SCROLL] scrollToBottom took', (performance.now() - _t0).toFixed(1) + 'ms', 'scrollHeight:', this.messagesEl.scrollHeight);
+    perfLog('scrollToBottom', {
+      tab: this.tab.id,
+      cost: (performance.now() - startedAt).toFixed(1) + 'ms',
+      scrollHeight: this.messagesEl.scrollHeight,
+      nodes: this.messagesEl.children.length,
+    });
   }
 
   appendUserBubble(text) {
@@ -774,12 +922,11 @@ class AISidebarInstance {
 
   renderHistory(messages) {
     if (!this.messagesEl) return;
-    const _t0 = performance.now();
-    console.log('[AI-RENDER] start', messages.length, 'messages');
-    this.messagesEl.innerHTML = '';
+    const startedAt = performance.now();
+    perfLog('renderHistory start', { tab: this.tab.id, messages: messages.length });
     this.cardsByToolCallID = {};
     this.currentAssistantBubble = null;
-    console.log('[AI-RENDER] cleared innerHTML', (performance.now() - _t0).toFixed(1) + 'ms');
+    const fragment = document.createDocumentFragment();
 
     const toolResultsByID = {};
     messages.forEach(m => {
@@ -791,27 +938,39 @@ class AISidebarInstance {
         const el = document.createElement('div');
         el.className = 'ai-msg user';
         el.textContent = m.content;
-        this.messagesEl.appendChild(el);
+        fragment.appendChild(el);
       } else if (m.role === 'assistant') {
         if (m.content) {
           const el = document.createElement('div');
           el.className = 'ai-msg assistant';
           el.innerHTML = renderMarkdown(m.content);
-          this.messagesEl.appendChild(el);
+          fragment.appendChild(el);
         }
         if (m.tool_calls) {
           let calls = [];
           try { calls = JSON.parse(m.tool_calls); } catch { calls = []; }
-          calls.forEach(call => this.renderHistoricalToolCall(call, toolResultsByID[call.id]));
+          calls.forEach(call => this.renderHistoricalToolCall(call, toolResultsByID[call.id], fragment));
         }
       }
     });
-    console.log('[AI-RENDER] built all DOM', (performance.now() - _t0).toFixed(1) + 'ms');
+    perfLog('renderHistory built fragment', {
+      tab: this.tab.id,
+      messages: messages.length,
+      fragmentNodes: fragment.childNodes.length,
+      elapsed: (performance.now() - startedAt).toFixed(1) + 'ms',
+    });
+    const replaceStartedAt = performance.now();
+    this.messagesEl.replaceChildren(fragment);
+    perfLog('renderHistory replaceChildren', {
+      tab: this.tab.id,
+      cost: (performance.now() - replaceStartedAt).toFixed(1) + 'ms',
+      nodes: this.messagesEl.children.length,
+    });
     this.scrollToBottom();
-    console.log('[AI-RENDER] after scrollToBottom', (performance.now() - _t0).toFixed(1) + 'ms');
+    perfLog('renderHistory done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
   }
 
-  renderHistoricalToolCall(call, resultMsg) {
+  renderHistoricalToolCall(call, resultMsg, parent = this.messagesEl) {
     if (!this.messagesEl) return;
     let args = {};
     try { args = JSON.parse(call.function?.arguments || '{}'); } catch { args = {}; }
@@ -842,7 +1001,7 @@ class AISidebarInstance {
       card.appendChild(outEl);
     }
 
-    this.messagesEl.appendChild(card);
+    parent.appendChild(card);
     if (call.id) this.cardsByToolCallID[call.id] = card;
   }
 }
