@@ -46,6 +46,11 @@ window.addEventListener('load', async () => {
     setLanguage(settings.language);
   }
 
+  window.go.main.App.GetVersion().then(v => {
+    const el = document.querySelector('.app-version');
+    if (el) el.textContent = v;
+  }).catch(() => {});
+
   initSidebar(onConnectRequest);
   initProfilePicker(onConnectRequest);
   initQuickCommands(settings, () => isTerminalTab(activeTab) ? activeTab.connID : null,
