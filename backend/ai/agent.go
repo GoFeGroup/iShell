@@ -244,6 +244,25 @@ func (ag *Agent) loadSettingsAndClient() (*storage.Settings, *Client, error) {
 	return settings, NewClient(settings.AIBaseURL, settings.AIAPIKey, settings.AIModel), nil
 }
 
+// GenerateChatTitle summarizes and persists the first question of a new chat.
+// Failure is returned to the caller but intentionally does not fail the chat
+// turn itself.
+func (ag *Agent) GenerateChatTitle(ctx context.Context, chatID, question string) error {
+	client, err := ag.clientFromSettings()
+	if err != nil {
+		return err
+	}
+	title, err := client.GenerateChatTitle(ctx, question)
+	if err != nil {
+		return err
+	}
+	if err := ag.store.SetAIChatTitle(chatID, title); err != nil {
+		return err
+	}
+	ag.emit("ai:title:"+chatID, map[string]string{"chat_id": chatID, "title": title})
+	return nil
+}
+
 func (ag *Agent) buildHistory(chatID string) ([]Message, error) {
 	stored, err := ag.store.ListAIChatMessages(chatID)
 	if err != nil {

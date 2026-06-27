@@ -77,6 +77,15 @@ func (s *Store) SetAIChatAutoExec(id string, autoExec bool) error {
 	return err
 }
 
+// SetAIChatTitle updates only the title so an asynchronously generated title
+// cannot overwrite other session fields changed at the same time.
+func (s *Store) SetAIChatTitle(id, title string) error {
+	_, err := s.db.Exec(`
+		UPDATE ai_chat_sessions SET title = ?, updated_at = ? WHERE id = ?`,
+		title, time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
 // DeleteAIChatSession removes a chat session and all of its messages. No
 // FK/cascade is configured in the schema, so both deletes are explicit.
 func (s *Store) DeleteAIChatSession(id string) error {

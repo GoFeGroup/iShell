@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -116,5 +117,41 @@ func TestStreamChatCompletionSkipsMalformedChunk(t *testing.T) {
 	}
 	if got != "ok" {
 		t.Fatalf("got %q, want %q", got, "ok")
+	}
+}
+
+func TestGenerateChatTitle(t *testing.T) {
+	var request chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"content":"### “排查 SSH 连接失败。”\\nignored"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		)))
+	}))
+	defer srv.Close()
+
+	title, err := NewClient(srv.URL, "key", "model").GenerateChatTitle(context.Background(), "为什么 SSH 无法连接？")
+	if err != nil {
+		t.Fatalf("GenerateChatTitle: %v", err)
+	}
+	if title != "排查 SSH 连接失败" {
+		t.Fatalf("title = %q, want %q", title, "排查 SSH 连接失败")
+	}
+	if len(request.Tools) != 0 {
+		t.Fatalf("title request exposed %d tools, want none", len(request.Tools))
+	}
+	if len(request.Messages) != 2 || request.Messages[1].Content != "为什么 SSH 无法连接？" {
+		t.Fatalf("messages = %+v, want system prompt and original question", request.Messages)
+	}
+}
+
+func TestNormalizeChatTitleCapsLength(t *testing.T) {
+	got := normalizeChatTitle(strings.Repeat("界", 100))
+	if len([]rune(got)) != 80 {
+		t.Fatalf("title length = %d runes, want 80", len([]rune(got)))
 	}
 }

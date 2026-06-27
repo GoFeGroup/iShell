@@ -784,6 +784,7 @@ class AISidebarInstance {
 
   subscribeChatEvents(chatID) {
     this.unsubscribeChatEvents();
+    this.addEvent('ai:title:' + chatID, payload => this.handleTitle(payload));
     this.addEvent('ai:delta:' + chatID, payload => this.handleDelta(payload));
     this.addEvent('ai:tool_call:' + chatID, payload => this.handleToolCall(payload));
     this.addEvent('ai:tool_result:' + chatID, payload => this.handleToolResult(payload));
@@ -802,6 +803,11 @@ class AISidebarInstance {
 
   unsubscribeChatEvents() {
     this.unsubscribers.splice(0).forEach(cancel => cancel());
+  }
+
+  handleTitle({ chat_id: chatID, title }) {
+    const sess = this.chatsForTarget.find(item => item.id === chatID);
+    if (sess && title) sess.title = title;
   }
 
   handleDelta({ content }) {

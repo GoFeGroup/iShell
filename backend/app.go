@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -787,6 +788,19 @@ func (a *App) SendAIMessage(chatID, connID, text string) error {
 	}
 	if sess == nil {
 		return fmt.Errorf("chat session %s not found", chatID)
+	}
+	messages, err := a.store.ListAIChatMessages(chatID)
+	if err != nil {
+		return fmt.Errorf("list chat messages: %w", err)
+	}
+	if len(messages) == 0 {
+		go func() {
+			titleCtx, cancel := context.WithTimeout(a.ctx, 30*time.Second)
+			defer cancel()
+			if err := a.aiAgent.GenerateChatTitle(titleCtx, chatID, text); err != nil {
+				log.Printf("ai: generate title for chat %s: %v", chatID, err)
+			}
+		}()
 	}
 	go a.aiAgent.RunTurn(a.ctx, ai.RunOptions{ChatID: chatID, ConnID: connID, UserText: text})
 	return nil

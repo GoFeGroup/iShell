@@ -862,3 +862,44 @@ func TestRunTurnRejectsWhenAIDisabled(t *testing.T) {
 		t.Fatalf("error message = %q, want mention of AI being disabled", got["message"])
 	}
 }
+
+func TestGenerateChatTitlePersistsAndEmits(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"content":"检查磁盘空间"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		)))
+	}))
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "新会话", AutoExec: true})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	rec := newEventRecorder()
+	ag := NewAgent(st, &fakeTerminalIO{}, rec.emit)
+	if err := ag.GenerateChatTitle(context.Background(), sess.ID, "服务器磁盘还有多少空间？"); err != nil {
+		t.Fatalf("GenerateChatTitle: %v", err)
+	}
+
+	updated, err := st.GetAIChatSession(sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if updated.Title != "检查磁盘空间" {
+		t.Fatalf("title = %q, want %q", updated.Title, "检查磁盘空间")
+	}
+	if !updated.AutoExec {
+		t.Fatal("title update overwrote auto-exec setting")
+	}
+	payload := rec.waitFor(t, "ai:title:"+sess.ID, time.Second).(map[string]string)
+	if payload["chat_id"] != sess.ID {
+		t.Fatalf("event chat_id = %q, want %q", payload["chat_id"], sess.ID)
+	}
+	if payload["title"] != "检查磁盘空间" {
+		t.Fatalf("event title = %q", payload["title"])
+	}
+}
