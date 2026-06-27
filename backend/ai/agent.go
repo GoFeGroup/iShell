@@ -248,7 +248,7 @@ func (ag *Agent) loadSettingsAndClient() (*storage.Settings, *Client, error) {
 // Failure is returned to the caller but intentionally does not fail the chat
 // turn itself.
 func (ag *Agent) GenerateChatTitle(ctx context.Context, chatID, question string) error {
-	client, err := ag.clientFromSettings()
+	_, client, err := ag.loadSettingsAndClient()
 	if err != nil {
 		return err
 	}
