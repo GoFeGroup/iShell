@@ -1,5 +1,5 @@
 import '@xterm/xterm/css/xterm.css';
-import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off, getSettings, sendInput, launchNewInstance } from './api.js';
+import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off, getSettings, getVersion, sendInput, launchNewInstance } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { openProfileForm } from './profile-form.js';
 import { initProfilePicker, openProfilePicker } from './profile-picker.js';
@@ -46,7 +46,7 @@ window.addEventListener('load', async () => {
     setLanguage(settings.language);
   }
 
-  window.go.main.App.GetVersion().then(v => {
+  getVersion().then(v => {
     const el = document.querySelector('.app-version');
     if (el) el.textContent = v;
   }).catch(() => {});

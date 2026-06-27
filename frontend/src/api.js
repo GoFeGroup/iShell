@@ -9,6 +9,7 @@ export const getSessions    = ()      => go().GetSessions();
 export const getSession     = (id)    => go().GetSession(id);
 export const saveSession    = (sess)  => go().SaveSession(sess);
 export const deleteSession  = (id)    => go().DeleteSession(id);
+export const getVersion     = ()      => go().GetVersion();
 export const focusWindow    = ()      => go().FocusWindow();
 export const launchNewInstance = ()   => go().LaunchNewInstance();
 

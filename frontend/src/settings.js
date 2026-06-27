@@ -1,4 +1,4 @@
-import { getSettings, saveSettings, getKnownHosts, removeKnownHost, exportConfig, importConfig, listBuiltinToolCalls } from './api.js';
+import { getSettings, saveSettings, getKnownHosts, removeKnownHost, exportConfig, importConfig, listBuiltinToolCalls, getVersion } from './api.js';
 import { showToast } from './toast.js';
 import { shortcutLabelForIndex } from './quick-command.js';
 import { loadProfiles } from './sidebar.js';
@@ -10,7 +10,7 @@ export async function initSettings(initialPage = 'appearance') {
   const settings = await getSettings().catch(() => ({}));
   const kh = await getKnownHosts().catch(() => []);
   const builtinToolCalls = await listBuiltinToolCalls().catch(() => []);
-  const appVersion = await window.go.main.App.GetVersion().catch(() => 'dev');
+  const appVersion = await getVersion().catch(() => 'dev');
   const fontSize = settings.font_size || 16;
   const languagePref = getLanguagePref();
   let quickCommandGroups = normalizeQuickCommandGroups(settings);
