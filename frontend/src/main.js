@@ -578,6 +578,12 @@ function doDisconnect(connID) {
     }
   });
 
+  // Start backend disconnect before any UI work that could throw, so the
+  // connection is never leaked and closingConnIDs is always cleared.
+  disconnect(connID)
+    .catch(e => console.warn('disconnect:', e))
+    .finally(() => closingConnIDs.delete(connID));
+
   // Update tab bar UI before cleanup — guarantees renderTabs() runs even if cleanup throws.
   renderTabs();
   if (wasActive) activateFallbackTab(closedIndex);
@@ -588,10 +594,6 @@ function doDisconnect(connID) {
   // Cleanup after UI update; exceptions here won't leave a ghost tab.
   removedTabs.forEach(destroyTerminalContent);
   destroyTerminal(connID);
-
-  disconnect(connID)
-    .catch(e => console.warn('disconnect:', e))
-    .finally(() => closingConnIDs.delete(connID));
 }
 
 // ── Tab management ────────────────────────────────────────────────────────────
