@@ -386,7 +386,18 @@ export function createTerminal(connID, settings, options = {}) {
   // Sync initial PTY size immediately; ResizeObserver handles subsequent resizes.
   resizeTerm(connID, term.cols, term.rows).catch(() => {});
 
-  const flushInput = makeInputSender(connID);
+  const sendTerminalInput = makeInputSender(connID);
+  const flushInput = (data) => {
+    const inst = instances[connID];
+    if (!inst?.inputEnabled) {
+      if (data === '\r') {
+        console.log('[reconnect] onData Enter while disabled', { connID, hasCallback: !!inst?.reconnectCallback });
+        inst?.reconnectCallback?.();
+      }
+      return;
+    }
+    sendTerminalInput(data);
+  };
   let zmodemActive = false;
   let suppressPasteUntil = 0;
   let composing = false;
@@ -761,6 +772,7 @@ export function createTerminal(connID, settings, options = {}) {
     restoreTimers: [],
     pendingFitRAF: 0,
     needsFitAfterSuspend: false,
+    inputEnabled: true,
     lastFitWidth: 0,
     lastFitHeight: 0,
     disposables: [osc7Disposable, osc1337Disposable, dataDisposable, scrollDisposable],
@@ -800,13 +812,30 @@ export function destroyTerminal(connID) {
   document.removeEventListener('mousemove',       inst.mouseMoveHandler,  true);
   document.removeEventListener('mouseup',         inst.mouseUpHandler,    true);
   inst.resizeObs.disconnect();
-  inst.term.dispose();
+  try { inst.term.dispose(); } catch (e) { /* WebGL addon may throw if context already lost */ }
   delete cwdByConn[connID];
   delete instances[connID];
 }
 
 export function focusTerminal(connID) {
   instances[connID]?.term.focus();
+}
+
+export function setTerminalInputEnabled(connID, enabled) {
+  const inst = instances[connID];
+  if (inst) inst.inputEnabled = !!enabled;
+}
+
+export function setTerminalReconnectCallback(connID, callback) {
+  const inst = instances[connID];
+  if (inst) inst.reconnectCallback = callback || null;
+}
+
+export function writeTerminalLine(connID, text) {
+  const term = instances[connID]?.term;
+  if (!term) return;
+  term.write(`\r\n${text}\r\n`);
+  term.scrollToBottom();
 }
 
 // Returns the last terminal-reported CWD for connID, or null if the shell hasn't reported one.

@@ -1,9 +1,9 @@
 import '@xterm/xterm/css/xterm.css';
-import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off, getSettings, getVersion, sendInput, launchNewInstance } from './api.js';
+import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off, getSession, getSettings, getVersion, sendInput, launchNewInstance } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { openProfileForm } from './profile-form.js';
 import { initProfilePicker, openProfilePicker } from './profile-picker.js';
-import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTerminalViewport, suspendTerminalAutoFit } from './terminal.js';
+import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTerminalViewport, setTerminalInputEnabled, setTerminalReconnectCallback, suspendTerminalAutoFit, writeTerminalLine } from './terminal.js';
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
 import { initQuickCommands, setQuickCommandSettings, toggleQuickCommands, updateQuickCommandUI, triggerQuickCommandShortcut } from './quick-command.js';
@@ -207,10 +207,177 @@ async function afterConnect(connID, sess, existingTab = null) {
   renderTabs();
   switchToTab(tab);
   on('terminal:closed:' + connID, () => {
-    if (tabs.some(t => isTerminalTab(t) && t.connID === connID)) doDisconnect(connID);
+    const closedTab = tabs.find(t => isTerminalTab(t) && t.connID === connID);
+    console.log('[local-reconnect] terminal:closed fired', { connID, closedTabFound: !!closedTab, isLocal: closedTab?.isLocal });
+    if (!closedTab) return;
+    if (closedTab.isLocal) handleLocalConnectionClosed(closedTab, connID);
+    else handleSSHConnectionClosed(closedTab, connID);
   });
   setSessionStatus(sess.id, 'connected');
   showToast(t('toast.connected', { host: sess.host }));
+}
+
+async function handleSSHConnectionClosed(tab, connID) {
+  console.log('[reconnect] terminal:closed fired', { connID, tabType: tab?.type, tabInList: tabs.includes(tab) });
+  if (!tabs.includes(tab) || tab.connID !== connID || tab.type !== 'terminal') {
+    console.log('[reconnect] guard rejected - skipping disconnect handler');
+    return;
+  }
+
+  off('terminal:closed:' + connID);
+  setTerminalInputEnabled(connID, false);
+  setTerminalReconnectCallback(connID, () => {
+    const tab = tabs.find(t => t.connID === connID && t.type === 'terminal-disconnected');
+    console.log('[reconnect] onData Enter callback fired', { connID, tabFound: !!tab, tabType: tab?.type });
+    if (tab) reconnectRemoteTab(tab);
+  });
+  console.log('[reconnect] tab marked disconnected', { connID });
+  const cleanup = disconnect(connID).catch(() => {});
+
+  const removedActiveSFTP = activeTab?.type === 'sftp' && activeTab.connID === connID;
+  tabs = tabs.filter(t => !(t.type === 'sftp' && t.connID === connID));
+  tab.type = 'terminal-disconnected';
+  tab.error = '';
+  tab.pendingMessage = '';
+
+  if (!tabs.some(t => t !== tab && isTerminalTab(t) && t.sessionID === tab.sessionID)) {
+    setSessionStatus(tab.sessionID, 'disconnected');
+  }
+  if (tab.statusEl) tab.statusEl.textContent = t('terminal.disconnectedStatus');
+  writeTerminalLine(connID, t('terminal.pressEnterToReconnect'));
+  renderTabs();
+
+  if (activeTab === tab) {
+    updateConnUI(null);
+    deactivateAISidebar();
+    notifyActiveTerminalChanged();
+    focusTerminal(connID);
+  } else if (removedActiveSFTP) {
+    await switchToTab(tab);
+  } else if (activeTab) {
+    updateConnUI(tabForConnActions(activeTab));
+  }
+  showToast(t('toast.disconnected'));
+  await cleanup;
+}
+
+async function reconnectRemoteTab(tab) {
+  console.log('[reconnect] reconnectRemoteTab called', { tabType: tab?.type, connID: tab?.connID, sessionID: tab?.sessionID });
+  if (!tab || tab.type !== 'terminal-disconnected') {
+    console.log('[reconnect] early return - tab not in disconnected state');
+    return;
+  }
+
+  const oldConnID = tab.connID;
+  tab.type = 'terminal-pending';
+  tab.connID = '';
+  tab.pendingMessage = t('terminal.loadingProfile');
+  renderTabs();
+  setTerminalReconnectCallback(oldConnID, null);
+  destroyTerminal(oldConnID);
+  if (activeTab === tab) renderTerminalState(tab);
+
+  try {
+    console.log('[reconnect] fetching session', tab.sessionID);
+    const sess = await getSession(tab.sessionID);
+    console.log('[reconnect] session fetched', { found: !!sess, host: sess?.host, authType: sess?.auth_type });
+    if (!sess) throw new Error(t('terminal.profileNotFound'));
+    tab.sess = { ...sess };
+    tab.sessionLabel = sess.label || sess.host;
+    tab.host = sess.host;
+    tab.username = sess.username;
+    if (!tabs.includes(tab) || tab.closed || tab.type !== 'terminal-pending') {
+      console.log('[reconnect] tab gone or state changed after getSession - aborting');
+      return;
+    }
+    console.log('[reconnect] calling connectRemoteTab');
+    await connectRemoteTab(tab);
+    console.log('[reconnect] connectRemoteTab resolved');
+  } catch (e) {
+    console.error('[reconnect] reconnect failed', e);
+    if (tabs.includes(tab) && !tab.closed && tab.type === 'terminal-pending') failTerminalTab(tab, e);
+  }
+}
+
+async function handleLocalConnectionClosed(tab, connID) {
+  console.log('[local-reconnect] handleLocalConnectionClosed', { connID, tabType: tab?.type, tabInList: tabs.includes(tab) });
+  if (!tabs.includes(tab) || tab.connID !== connID || tab.type !== 'terminal') {
+    console.log('[local-reconnect] guard rejected');
+    return;
+  }
+
+  off('terminal:closed:' + connID);
+  setTerminalInputEnabled(connID, false);
+  setTerminalReconnectCallback(connID, () => {
+    const t = tabs.find(t => t.connID === connID && t.type === 'terminal-disconnected');
+    console.log('[local-reconnect] onData Enter callback', { connID, tabFound: !!t });
+    if (t) reconnectLocalTab(t);
+  });
+  console.log('[local-reconnect] tab marked disconnected', { connID });
+  const cleanup = disconnect(connID).catch(() => {});
+
+  tab.type = 'terminal-disconnected';
+  tab.error = '';
+  tab.pendingMessage = '';
+
+  if (!tabs.some(t => t !== tab && isTerminalTab(t) && t.sessionID === tab.sessionID)) {
+    setSessionStatus(tab.sessionID, 'disconnected');
+  }
+  if (tab.statusEl) tab.statusEl.textContent = t('terminal.disconnectedStatus');
+  writeTerminalLine(connID, t('terminal.pressEnterToReconnect'));
+  renderTabs();
+
+  if (activeTab === tab) {
+    updateConnUI(null);
+    deactivateAISidebar();
+    notifyActiveTerminalChanged();
+    focusTerminal(connID);
+  } else if (activeTab) {
+    updateConnUI(tabForConnActions(activeTab));
+  }
+  showToast(t('toast.disconnected'));
+  await cleanup;
+}
+
+async function reconnectLocalTab(tab) {
+  console.log('[local-reconnect] reconnectLocalTab called', { tabType: tab?.type, isLocal: tab?.isLocal, connID: tab?.connID });
+  if (!tab || !tab.isLocal ||
+      (tab.type !== 'terminal-disconnected' && tab.type !== 'terminal-failed')) {
+    console.log('[local-reconnect] early return from reconnectLocalTab');
+    return;
+  }
+
+  const oldConnID = tab.connID;
+  tab.type = 'terminal-pending';
+  tab.connID = '';
+  tab.pendingMessage = t('terminal.connectingTo', { host: tab.sessionLabel });
+  renderTabs();
+  setTerminalReconnectCallback(oldConnID, null);
+  try { destroyTerminal(oldConnID); } catch (e) { console.warn('[local-reconnect] destroyTerminal error', e); }
+  if (activeTab === tab) renderTerminalState(tab);
+
+  try {
+    const { cols, rows } = getTerminalSize();
+    console.log('[local-reconnect] calling connectLocal', { cols, rows });
+    const connID = await connectLocal(cols, rows);
+    console.log('[local-reconnect] connectLocal returned', { connID });
+    if (tabs.includes(tab) && !tab.closed && tab.type === 'terminal-pending') {
+      const sess = { id: '__local__', label: tab.sessionLabel, host: tab.host || 'localhost', username: tab.username };
+      console.log('[local-reconnect] calling afterConnect', { connID, sess });
+      await afterConnect(connID, sess, tab);
+      setSessionStatus('__local__', 'connected');
+      console.log('[local-reconnect] reconnect complete');
+    } else {
+      console.log('[local-reconnect] tab gone/changed after connectLocal, aborting');
+      disconnect(connID).catch(() => {});
+    }
+  } catch (e) {
+    console.error('[local-reconnect] reconnect failed', e);
+    if (tabs.includes(tab) && !tab.closed && tab.type === 'terminal-pending') {
+      setSessionStatus('__local__', 'disconnected');
+      failTerminalTab(tab, e);
+    }
+  }
 }
 
 function getTerminalSize() {
@@ -386,17 +553,17 @@ function formatSessionEndpoint(sess) {
 }
 
 async function doDisconnect(connID) {
-  try { await disconnect(connID); } catch {}
   const tab = tabs.find(t => t.connID === connID);
+  off('terminal:closed:' + connID);
+  try { await disconnect(connID); } catch {}
   const closedIndex = tabs.indexOf(tab);
   const wasActive = !!activeTab && activeTab.connID === connID;
   const sessionID = tab?.sessionID;
   tabs = tabs.filter(t => t.connID !== connID);
   // Only mark disconnected when no remaining tabs for this profile
-  if (sessionID && !tabs.some(t => t.sessionID === sessionID)) {
+  if (sessionID && !tabs.some(t => t.sessionID === sessionID && hasTerminalConn(t))) {
     setSessionStatus(sessionID, 'disconnected');
   }
-  off('terminal:closed:' + connID);
   destroyTerminalContent(tab);
   destroyTerminal(connID);
   renderTabs();
@@ -416,11 +583,12 @@ function renderTabs() {
     const isSFTP = tab.type === 'sftp';
     const isFailed = tab.type === 'terminal-failed';
     const isPending = tab.type === 'terminal-pending';
+    const isDisconnected = tab.type === 'terminal-disconnected';
     const el = document.createElement('div');
     el.className = 'tab' + (tab === activeTab ? ' active' : '') + (isFailed ? ' failed' : '');
     el.dataset.tabId = tab.id;
     el.innerHTML = `
-      ${isSettings ? '<span class="tab-icon">⚙</span>' : isSFTP ? '<span class="tab-icon">📁</span>' : `<div class="status-dot ${isFailed ? 'failed' : isPending ? 'connecting' : 'connected'}" style="width:6px;height:6px;"></div>`}
+      ${isSettings ? '<span class="tab-icon">⚙</span>' : isSFTP ? '<span class="tab-icon">📁</span>' : `<div class="status-dot ${isFailed ? 'failed' : isPending ? 'connecting' : isDisconnected ? 'disconnected' : 'connected'}" style="width:6px;height:6px;"></div>`}
       <span>${escHtml(tab.sessionLabel)}</span>
       <span class="tab-num">${idx + 1}</span>
       <button class="tab-close">✕</button>`;
@@ -490,6 +658,19 @@ async function switchToTab(tab) {
     await initSFTP(tab.connID);
     return;
   }
+  if (tab.type === 'terminal-disconnected') {
+    activeTab = tab;
+    ensureTerminalContent(tab);
+    updateActiveTabClass();
+    showPanel('terminal');
+    showTerminalContent(tab, previousTab);
+    updateConnUI(null);
+    if (tab.statusEl) tab.statusEl.textContent = t('terminal.disconnectedStatus');
+    focusTerminal(tab.connID);
+    deactivateAISidebar();
+    notifyActiveTerminalChanged();
+    return;
+  }
   if (tab.type === 'terminal-pending' || tab.type === 'terminal-failed') {
     activeTab = tab;
     ensureTerminalContent(tab);
@@ -509,6 +690,10 @@ async function switchToTab(tab) {
   showTerminalContent(tab, previousTab);
   perfLog('after showTerminalContent', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
   updateConnUI(tab);
+  // A pending/failed connection renders a state card into the terminal
+  // container. Remove that transient UI before mounting the live xterm after
+  // a successful retry or reconnect.
+  tab.terminalContainer?.querySelector('.terminal-state')?.remove();
   createTerminal(tab.connID, settings, { containerId: tab.terminalContainerId, sizeElId: tab.sizeElId });
   perfLog('after createTerminal', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
   const status = tab.statusEl;
@@ -548,6 +733,10 @@ function closeTab(tab) {
     closeTransientTerminalTab(tab);
     return;
   }
+  if (tab.type === 'terminal-disconnected') {
+    closeDisconnectedTerminalTab(tab);
+    return;
+  }
   if (isTerminalTab(tab)) doDisconnect(tab.connID);
 }
 
@@ -579,6 +768,16 @@ function closeTransientTerminalTab(tab) {
     setSessionStatus(tab.sessionID, 'disconnected');
   }
   tabs = tabs.filter(t => t !== tab);
+  destroyTerminalContent(tab);
+  renderTabs();
+  if (wasActive) activateFallbackTab(closedIndex);
+}
+
+function closeDisconnectedTerminalTab(tab) {
+  const closedIndex = tabs.indexOf(tab);
+  const wasActive = tab === activeTab;
+  tabs = tabs.filter(t => t !== tab);
+  destroyTerminal(tab.connID);
   destroyTerminalContent(tab);
   renderTabs();
   if (wasActive) activateFallbackTab(closedIndex);
@@ -771,6 +970,26 @@ function toggleFullscreen() {
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 
 function handleKeydown(e) {
+  if (e.key === 'Enter') {
+    console.log('[reconnect] Enter keydown', { activeTabType: activeTab?.type, isLocal: activeTab?.isLocal, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey, shiftKey: e.shiftKey });
+  }
+  const noMod = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
+  if (e.key === 'Enter' && noMod &&
+      (activeTab?.type === 'terminal-disconnected' || activeTab?.type === 'terminal-failed')) {
+    console.log('[reconnect] triggering reconnect from handleKeydown', { type: activeTab.type });
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    if (activeTab.type === 'terminal-disconnected') {
+      if (activeTab.isLocal) reconnectLocalTab(activeTab);
+      else reconnectRemoteTab(activeTab);
+    } else if (activeTab.isLocal) {
+      reconnectLocalTab(activeTab);
+    } else if (activeTab.sess) {
+      connectRemoteTab(activeTab);
+    }
+    return;
+  }
   if ((isMac ? e.metaKey : e.altKey) && e.key === 'w') {
     e.preventDefault();
     closeTab(activeTab);

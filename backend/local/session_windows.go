@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/UserExistsError/conpty"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -51,6 +52,18 @@ func startSession(ctx context.Context, connID string, cols, rows int) (*session,
 	}
 
 	em := termout.New(ctx, connID)
+
+	// emitClose is called by whichever goroutine first detects the process exit.
+	// On Windows, ConPty reads can block indefinitely after exit without returning
+	// an error, so we also trigger from cpty.Wait to guarantee the event fires.
+	var once sync.Once
+	emitClose := func() {
+		once.Do(func() {
+			em.Close() // flush buffered tail before signalling close
+			wailsRuntime.EventsEmit(ctx, "terminal:closed:"+connID, nil)
+		})
+	}
+
 	go func() {
 		buf := make([]byte, 8192)
 		for {
@@ -62,11 +75,13 @@ func startSession(ctx context.Context, connID string, cols, rows int) (*session,
 				break
 			}
 		}
-		em.Close() // flush any buffered tail before signalling close
-		wailsRuntime.EventsEmit(ctx, "terminal:closed:"+connID, nil)
+		emitClose()
 	}()
 
-	go func() { _, _ = cpty.Wait(ctx) }()
+	go func() {
+		_, _ = cpty.Wait(ctx)
+		emitClose()
+	}()
 
 	return newSession(
 		ctx,
