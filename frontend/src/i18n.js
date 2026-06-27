@@ -4,6 +4,7 @@
 // | 'zh-CN' | 'zh-TW') to localStorage so the next launch can apply the
 // right language before the backend Settings round-trip resolves (mirrors
 // the 'theme' fast-path in index.html).
+import DOMPurify from 'dompurify';
 
 const dict = {
   en: {
@@ -680,7 +681,7 @@ export function t(key, vars) {
 export function applyI18nAttrs(root = document) {
   root.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.getAttribute('data-i18n')); });
   root.querySelectorAll('[data-i18n-html]').forEach(el => {
-    el.innerHTML = t(el.getAttribute('data-i18n-html'), { newProfile: t('app.newProfile') });
+    el.innerHTML = DOMPurify.sanitize(t(el.getAttribute('data-i18n-html'), { newProfile: t('app.newProfile') }));
   });
   root.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = t(el.getAttribute('data-i18n-placeholder')); });
   root.querySelectorAll('[data-i18n-title]').forEach(el => { el.title = t(el.getAttribute('data-i18n-title')); });

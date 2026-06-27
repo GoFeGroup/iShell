@@ -65,7 +65,7 @@ export async function initSFTP(cID) {
   if (firstInit) {
     renderSFTP();
     await loadTransferQueue();
-    await Promise.all([loadLocal(), loadRemote()]);
+    await Promise.all([loadLocal(), loadRemote()]).catch(e => showToast('❌ ' + e));
     state.rendered = true;
   } else {
     restoreSFTPState();
@@ -260,13 +260,11 @@ function renderFiles(listEl, files, pane) {
     // Right-click context menu
     row.addEventListener('contextmenu', e => showCtxMenu(e, f, pane));
 
-    // Drag
-    if (!f.is_dir || true) { // allow dragging dirs too
-      row.setAttribute('draggable', 'true');
-      row.addEventListener('dragstart', e => onRowDragStart(e, pane, row, f));
-      row.addEventListener('dragend', onRowDragEnd);
-      row.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); onRowDragOverRow(e, row); });
-    }
+    // Drag (files and directories)
+    row.setAttribute('draggable', 'true');
+    row.addEventListener('dragstart', e => onRowDragStart(e, pane, row, f));
+    row.addEventListener('dragend', onRowDragEnd);
+    row.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); onRowDragOverRow(e, row); });
 
     listEl.appendChild(row);
   });
@@ -653,7 +651,8 @@ function showCtxMenu(e, file, pane) {
 async function renamePrompt(file, pane) {
   const newName = await promptDialog(t('sftp.renamePrompt', { name: file.name }), file.name);
   if (!newName || newName === file.name) return;
-  const dir = file.path.substring(0, file.path.lastIndexOf('/') + 1) || file.path.substring(0, file.path.lastIndexOf('\\') + 1);
+  const normalizedPath = file.path.replace(/\\/g, '/');
+  const dir = normalizedPath.substring(0, normalizedPath.lastIndexOf('/') + 1);
   const newPath = (pane === 'remote' ? dir : '') + newName;
   if (pane === 'remote') {
     renameRemote(connID, file.path, dir + newName)

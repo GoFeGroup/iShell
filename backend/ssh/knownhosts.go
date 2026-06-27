@@ -7,10 +7,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
+
+var khMu sync.Mutex
 
 // KnownHostEntry represents one entry in known_hosts.
 type KnownHostEntry struct {
@@ -58,6 +61,8 @@ func AddHostKey(khPath, host string, key gossh.PublicKey) error {
 	if khPath == "" {
 		khPath = DefaultKnownHostsPath()
 	}
+	khMu.Lock()
+	defer khMu.Unlock()
 	f, err := os.OpenFile(khPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return err
@@ -108,6 +113,8 @@ func RemoveKnownHost(khPath, hostname string) error {
 	if khPath == "" {
 		khPath = DefaultKnownHostsPath()
 	}
+	khMu.Lock()
+	defer khMu.Unlock()
 	data, err := os.ReadFile(khPath)
 	if err != nil {
 		return err
@@ -121,9 +128,3 @@ func RemoveKnownHost(khPath, hostname string) error {
 	return os.WriteFile(khPath, []byte(strings.Join(kept, "\n")), 0600)
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

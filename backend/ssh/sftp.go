@@ -125,8 +125,10 @@ func UploadFileWithProgress(ctx context.Context, transferID string, client *sftp
 		return fmt.Errorf("open local file: %w", err)
 	}
 
-	info, _ := src.Stat()
-	total := info.Size()
+	var total int64
+	if info, err := src.Stat(); err == nil {
+		total = info.Size()
+	}
 	name := filepath.Base(localPath)
 
 	dst, err := client.Create(remotePath)
@@ -194,8 +196,10 @@ func DownloadFileWithProgress(ctx context.Context, transferID string, client *sf
 		return fmt.Errorf("open remote file: %w", err)
 	}
 
-	info, _ := src.Stat()
-	total := info.Size()
+	var total int64
+	if info, err := src.Stat(); err == nil {
+		total = info.Size()
+	}
 	name := filepath.Base(remotePath)
 
 	localPath := filepath.Join(localDir, name)

@@ -3,6 +3,7 @@ package ssh
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -16,13 +17,14 @@ import (
 
 // Conn holds an active SSH connection and its sub-resources.
 type Conn struct {
-	ID         string
-	SessionID  string
-	client     *gossh.Client
-	jumpClient *gossh.Client
-	term       *TermSession
-	sftpCl     *sftp.Client
-	mu         sync.Mutex
+	ID             string
+	SessionID      string
+	client         *gossh.Client
+	jumpClient     *gossh.Client
+	term           *TermSession
+	sftpCl         *sftp.Client
+	mu             sync.Mutex
+	stopKeepalive  chan struct{}
 }
 
 // Manager manages all active SSH connections.
@@ -214,13 +216,20 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 	}
 
 	// ── Start keepalive ───────────────────────────────────────────────────────
+	var stopKA chan struct{}
 	if sess.Keepalive > 0 {
+		stopKA = make(chan struct{})
 		go func() {
 			ticker := time.NewTicker(time.Duration(sess.Keepalive) * time.Second)
 			defer ticker.Stop()
-			for range ticker.C {
-				_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
-				if err != nil {
+			for {
+				select {
+				case <-ticker.C:
+					_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+					if err != nil {
+						return
+					}
+				case <-stopKA:
 					return
 				}
 			}
@@ -231,16 +240,20 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 	connID := uuid.NewString()
 	term, err := newTermSession(m.ctx, connID, client, opts.Cols, opts.Rows)
 	if err != nil {
+		if stopKA != nil {
+			close(stopKA)
+		}
 		client.Close()
 		return "", fmt.Errorf("open pty: %w", err)
 	}
 
 	conn := &Conn{
-		ID:         connID,
-		SessionID:  sess.ID,
-		client:     client,
-		jumpClient: jumpClient,
-		term:       term,
+		ID:            connID,
+		SessionID:     sess.ID,
+		client:        client,
+		jumpClient:    jumpClient,
+		term:          term,
+		stopKeepalive: stopKA,
 	}
 	m.mu.Lock()
 	m.conns[connID] = conn
@@ -248,7 +261,9 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 
 	// Send initial command if configured
 	if sess.InitCommand != "" {
-		_ = term.Write([]byte(sess.InitCommand + "\n"))
+		if err := term.Write([]byte(sess.InitCommand + "\n")); err != nil {
+			log.Printf("ishell: init command write error for conn %s: %v", connID, err)
+		}
 	}
 
 	return connID, nil
@@ -268,6 +283,10 @@ func (m *Manager) Disconnect(connID string) error {
 	}
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
+	if conn.stopKeepalive != nil {
+		close(conn.stopKeepalive)
+		conn.stopKeepalive = nil
+	}
 	if conn.term != nil {
 		conn.term.Close()
 	}

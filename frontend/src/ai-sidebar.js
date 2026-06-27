@@ -322,6 +322,7 @@ class AISidebarInstance {
   }
 
   scheduleLayoutChange(waitForTransition) {
+    this.cancelPendingLayoutChange();
     const finish = () => {
       this.cancelPendingLayoutChange();
       this.onResizeEnd();
