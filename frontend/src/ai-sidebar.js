@@ -397,21 +397,26 @@ class AISidebarInstance {
     let startX = 0;
     let startWidth = 0;
     let resizing = false;
+    const commitWidth = () => {
+      const width = clampSidebarWidth(parseInt(this.root.style.width, 10) || this.root.getBoundingClientRect().width);
+      this.root.style.width = width + 'px';
+      if (this.inner) this.inner.style.width = width + 'px';
+      saveSidebarWidth(this.tab, width);
+    };
     const onMouseMove = (e) => {
       const next = clampSidebarWidth(startWidth + (startX - e.clientX));
       this.root.style.width = next + 'px';
-      if (this.inner) this.inner.style.width = next + 'px';
     };
     const onMouseUp = () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
       document.body.style.cursor = '';
       this.root.classList.remove('resizing');
+      commitWidth();
       if (resizing) {
         resizing = false;
         this.onResizeEnd();
       }
-      saveSidebarWidth(this.tab, parseInt(this.root.style.width, 10));
       this.cleanupResizerDrag = null;
       this.onLayoutChange();
     };
@@ -433,6 +438,7 @@ class AISidebarInstance {
         document.body.style.cursor = '';
         this.root?.classList.remove('resizing');
         if (resizing) {
+          commitWidth();
           resizing = false;
           this.onResizeEnd();
         }

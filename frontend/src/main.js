@@ -470,7 +470,6 @@ function ensureTerminalContent(tab) {
     closeBtn: content.querySelector('.ai-close'),
   }, {
     getConnID: () => activeTab === tab && isTerminalTab(tab) ? tab.connID : '',
-    onLayoutChange: refitActiveTerminalAfterLayout,
     onResizeStart: () => suspendTerminalAutoFit(true),
     onResizeEnd: () => suspendTerminalAutoFit(false),
   });

@@ -741,6 +741,10 @@ export function createTerminal(connID, settings, options = {}) {
   const resizeObs = new ResizeObserver(() => {
     const inst = instances[connID];
     if (!inst) return;
+    if (autoFitSuspended) {
+      inst.needsFitAfterSuspend = true;
+      return;
+    }
     const rect = visibleTerminalRect(inst);
     if (!rect) return;
     if (rect.width === inst.lastFitWidth && rect.height === inst.lastFitHeight) {
