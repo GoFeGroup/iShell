@@ -56,7 +56,7 @@ window.addEventListener('load', async () => {
   initProfilePicker(onConnectRequest);
   initQuickCommands(settings, () => isTerminalTab(activeTab) ? activeTab.connID : null,
     () => activeTab?.quickCommandBar || null);
-  initAISidebar(settings, () => isTerminalTab(activeTab) ? activeTab : null);
+  initAISidebar(settings, () => isAITerminalTab(activeTab) ? activeTab : null);
 
   // Toolbar buttons
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
@@ -250,7 +250,6 @@ async function handleSSHConnectionClosed(tab, connID) {
 
   if (activeTab === tab) {
     updateConnUI(null);
-    deactivateAISidebar();
     notifyActiveTerminalChanged();
     focusTerminal(connID);
   } else if (removedActiveSFTP) {
@@ -330,7 +329,6 @@ async function handleLocalConnectionClosed(tab, connID) {
 
   if (activeTab === tab) {
     updateConnUI(null);
-    deactivateAISidebar();
     notifyActiveTerminalChanged();
     focusTerminal(connID);
   } else if (activeTab) {
@@ -471,7 +469,7 @@ function ensureTerminalContent(tab) {
     backBtn: content.querySelector('.ai-back'),
     closeBtn: content.querySelector('.ai-close'),
   }, {
-    getConnID: () => activeTab === tab ? tab.connID : '',
+    getConnID: () => activeTab === tab && isTerminalTab(tab) ? tab.connID : '',
     onLayoutChange: refitActiveTerminalAfterLayout,
     onResizeStart: () => suspendTerminalAutoFit(true),
     onResizeEnd: () => suspendTerminalAutoFit(false),
@@ -690,7 +688,7 @@ async function switchToTab(tab) {
     updateConnUI(null);
     if (tab.statusEl) tab.statusEl.textContent = t('terminal.disconnectedStatus');
     focusTerminal(tab.connID);
-    deactivateAISidebar();
+    activateAISidebarForTab(tab);
     notifyActiveTerminalChanged();
     return;
   }
@@ -702,7 +700,7 @@ async function switchToTab(tab) {
     showTerminalContent(tab, previousTab);
     updateConnUI(null);
     renderTerminalState(tab);
-    deactivateAISidebar();
+    activateAISidebarForTab(tab);
     notifyActiveTerminalChanged();
     return;
   }
@@ -825,6 +823,15 @@ function showWelcome() {
 
 function isTerminalTab(tab) {
   return !!tab && tab.type === 'terminal' && !!tab.connID;
+}
+
+function isAITerminalTab(tab) {
+  return !!tab && [
+    'terminal',
+    'terminal-disconnected',
+    'terminal-pending',
+    'terminal-failed',
+  ].includes(tab.type);
 }
 
 function hasTerminalConn(tab) {
@@ -997,7 +1004,8 @@ function handleKeydown(e) {
     console.log('[reconnect] Enter keydown', { activeTabType: activeTab?.type, isLocal: activeTab?.isLocal, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey, shiftKey: e.shiftKey });
   }
   const noMod = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
-  if (e.key === 'Enter' && noMod &&
+  const fromAISidebar = !!e.target?.closest?.('.ai-sidebar');
+  if (e.key === 'Enter' && noMod && !fromAISidebar &&
       (activeTab?.type === 'terminal-disconnected' || activeTab?.type === 'terminal-failed')) {
     console.log('[reconnect] triggering reconnect from handleKeydown', { type: activeTab.type });
     e.preventDefault();

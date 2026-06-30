@@ -17,13 +17,13 @@ function perfLog(label, ...args) {
 }
 
 const MIN_SIDEBAR_WIDTH = 240;
-const MAX_SIDEBAR_WIDTH = 640;
 const DEFAULT_SIDEBAR_WIDTH = 320;
 
 export function initAISidebar(settings, activeTabGetter) {
   getActiveTab = activeTabGetter;
   setAISidebarSettings(settings);
   document.getElementById('btn-toggle-ai')?.addEventListener('click', toggleAISidebar);
+  window.addEventListener('resize', () => activeInstance?.applySidebarWidth());
 }
 
 export function setAISidebarSettings(settings) {
@@ -80,15 +80,25 @@ function updateToolbarButton() {
   if (vdiv) vdiv.style.display = show ? '' : 'none';
 }
 
+function maxSidebarWidth() {
+  return Math.max(1, Math.floor(window.innerWidth * 2 / 3));
+}
+
+function clampSidebarWidth(width) {
+  const max = maxSidebarWidth();
+  const min = Math.min(MIN_SIDEBAR_WIDTH, max);
+  return Math.min(max, Math.max(min, width));
+}
+
 function savedSidebarWidth(tab) {
   const key = tab?.id ? 'ai-sidebar-width-' + tab.id : 'ai-sidebar-width';
   try {
     const perTab = parseInt(localStorage.getItem(key), 10);
-    if (perTab >= MIN_SIDEBAR_WIDTH && perTab <= MAX_SIDEBAR_WIDTH) return perTab;
+    if (perTab >= MIN_SIDEBAR_WIDTH) return clampSidebarWidth(perTab);
     const saved = parseInt(localStorage.getItem('ai-sidebar-width'), 10);
-    if (saved >= MIN_SIDEBAR_WIDTH && saved <= MAX_SIDEBAR_WIDTH) return saved;
+    if (saved >= MIN_SIDEBAR_WIDTH) return clampSidebarWidth(saved);
   } catch { /* ignore */ }
-  return DEFAULT_SIDEBAR_WIDTH;
+  return clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
 }
 
 function saveSidebarWidth(tab, width) {
@@ -388,7 +398,7 @@ class AISidebarInstance {
     let startWidth = 0;
     let resizing = false;
     const onMouseMove = (e) => {
-      const next = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, startWidth + (startX - e.clientX)));
+      const next = clampSidebarWidth(startWidth + (startX - e.clientX));
       this.root.style.width = next + 'px';
       if (this.inner) this.inner.style.width = next + 'px';
     };
