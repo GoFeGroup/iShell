@@ -50,6 +50,9 @@ const dict = {
       profileNotFound: 'Connection profile not found.',
       retry: 'Retry',
       editProfile: 'Edit Profile',
+      splitSideBySide: 'Split Left and Right',
+      splitStacked: 'Split Top and Bottom',
+      closePane: 'Close Split Pane',
     },
     toast: {
       connecting: '🔌 Connecting to {host}…', openingLocal: '🖥 Opening {sub}…',
@@ -262,6 +265,9 @@ const dict = {
       profileNotFound: '未找到连接配置。',
       retry: '重试',
       editProfile: '编辑配置',
+      splitSideBySide: '左右分屏',
+      splitStacked: '上下分屏',
+      closePane: '关闭分屏',
     },
     toast: {
       connecting: '🔌 正在连接 {host}…', openingLocal: '🖥 正在打开 {sub}…',
@@ -474,6 +480,9 @@ const dict = {
       profileNotFound: '找不到連線設定。',
       retry: '重試',
       editProfile: '編輯設定檔',
+      splitSideBySide: '左右分割',
+      splitStacked: '上下分割',
+      closePane: '關閉分割窗格',
     },
     toast: {
       connecting: '🔌 正在連線 {host}…', openingLocal: '🖥 正在開啟 {sub}…',

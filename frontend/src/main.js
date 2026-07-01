@@ -20,17 +20,66 @@ import { t, applyI18nAttrs, setLanguage, getLanguagePref } from './i18n.js';
 applyI18nAttrs();
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let tabs = [];          // terminal/sftp: { type, id, connID, sessionID, sessionLabel, host, username, terminalContent, aiSidebarOpen }; pending/failed terminal: { type, id, sess, error }; settings: { type, id, sessionLabel }
+let tabs = [];          // terminal: { type, id, panes[], activePaneId, splitDirection }; sftp/settings keep their existing flat shape
 let activeTab = null;
 let settings = null;
 let isFullscreen = false;
-const pendingConnects = {}; // sessionID → { sess, req, tab, attemptID } — kept until host key dialog resolves
-const closingConnIDs = new Set();
+const pendingConnects = {}; // attemptID → { sess, req, tab, pane, attemptID } — kept until host key dialog resolves
 let connectAttemptSeq = 0;
 const PERF_DEBUG = true;
 
 function perfLog(label, ...args) {
   if (PERF_DEBUG) console.log('[PERF-TAB]', label, ...args);
+}
+
+function createTerminalPane(sess, state = 'pending') {
+  return {
+    id: 'pane-' + Date.now() + '-' + Math.random().toString(36).slice(2),
+    state,
+    connID: '',
+    sessionID: sess.id,
+    sessionLabel: sess.label || sess.host,
+    host: sess.host,
+    username: sess.username,
+    isLocal: sess.id === '__local__',
+    sess: { ...sess },
+    error: '',
+    pendingMessage: '',
+    attemptID: 0,
+    closed: false,
+  };
+}
+
+function terminalPanes(tab) {
+  return isTerminalTab(tab) ? (tab.panes || []) : [];
+}
+
+function activeTerminalPane(tab = activeTab) {
+  if (!isTerminalTab(tab)) return null;
+  return terminalPanes(tab).find(p => p.id === tab.activePaneId) || terminalPanes(tab)[0] || null;
+}
+
+function activeConnectedPane(tab = activeTab) {
+  const pane = activeTerminalPane(tab);
+  return pane?.state === 'connected' && pane.connID ? pane : null;
+}
+
+function findTerminalPaneByConn(connID) {
+  for (const tab of tabs) {
+    if (!isTerminalTab(tab)) continue;
+    const pane = terminalPanes(tab).find(p => p.connID === connID);
+    if (pane) return { tab, pane };
+  }
+  return null;
+}
+
+function syncSessionStatus(sessionID) {
+  if (!sessionID) return;
+  const panes = tabs.flatMap(tab => isTerminalTab(tab) ? terminalPanes(tab) : [])
+    .filter(p => p.sessionID === sessionID && !p.closed);
+  if (panes.some(p => p.state === 'connected')) setSessionStatus(sessionID, 'connected');
+  else if (panes.some(p => p.state === 'pending')) setSessionStatus(sessionID, 'connecting');
+  else setSessionStatus(sessionID, 'disconnected');
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -54,13 +103,16 @@ window.addEventListener('load', async () => {
 
   initSidebar(onConnectRequest);
   initProfilePicker(onConnectRequest);
-  initQuickCommands(settings, () => isTerminalTab(activeTab) ? activeTab.connID : null,
+  initQuickCommands(settings, () => activeConnectedPane()?.connID || null,
     () => activeTab?.quickCommandBar || null);
   initAISidebar(settings, () => isAITerminalTab(activeTab) ? activeTab : null);
 
   // Toolbar buttons
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
-  document.getElementById('btn-disconnect').addEventListener('click', () => hasTerminalConn(activeTab) && doDisconnect(activeTab.connID));
+  document.getElementById('btn-disconnect').addEventListener('click', () => {
+    const target = tabForConnActions(activeTab);
+    if (target?.connID) doDisconnect(target.connID);
+  });
   document.getElementById('btn-sftp').addEventListener('click', toggleSFTP);
   document.getElementById('btn-quick-command').addEventListener('click', toggleQuickCommands);
   document.getElementById('btn-settings').addEventListener('click', () => openSettingsPanel());
@@ -121,106 +173,132 @@ async function onConnectRequest(sess) {
   }
   const tab = createPendingTerminalTab(sess);
   await switchToTab(tab);
-  await connectRemoteTab(tab);
+  await connectRemotePane(tab, activeTerminalPane(tab));
 }
 
-async function connectRemoteTab(tab, overrides = {}) {
-  const sess = tab.sess;
+async function connectRemotePane(tab, pane, overrides = {}) {
+  if (!tab || !pane || pane.closed) return;
+  const sess = pane.sess;
   ensureTerminalContent(tab);
   showToast(t('toast.connecting', { host: sess.host }));
-  setSessionStatus(sess.id, 'connecting');
+  pane.state = 'pending';
+  pane.error = '';
+  pane.pendingMessage = '';
+  syncSessionStatus(sess.id);
 
   const req = {
     session_id: sess.id,
     password: sess.auth_type === 'password' ? sess.password : '',
     key_path: sess.auth_type === 'key' ? sess.key_path : '',
     passphrase: sess.auth_type === 'key' ? sess.passphrase : '',
-    ...getTerminalSize(),
+    ...getTerminalSize(pane),
     ...overrides,
   };
   const attemptID = ++connectAttemptSeq;
-  tab.attemptID = attemptID;
-  tab.type = 'terminal-pending';
-  tab.error = '';
-  tab.pendingMessage = '';
+  pane.attemptID = attemptID;
   renderTabs();
-  if (activeTab === tab) renderTerminalState(tab);
+  if (activeTab === tab) renderTerminalState(tab, pane);
 
   // Store for potential host-key retry
-  pendingConnects[sess.id] = { sess, req, tab, attemptID };
+  pendingConnects[attemptID] = { sess, req, tab, pane, attemptID };
 
   try {
     const connID = await connect(req);
-    if (tab.closed || tab.attemptID !== attemptID) {
+    if (pane.closed || pane.attemptID !== attemptID || !tabs.includes(tab)) {
       disconnect(connID).catch(() => {});
       return;
     }
-    delete pendingConnects[sess.id];
-    await afterConnect(connID, sess, tab);
+    delete pendingConnects[attemptID];
+    await afterConnect(connID, sess, tab, pane);
   } catch (e) {
-    if (tab.closed || tab.attemptID !== attemptID) return;
+    if (pane.closed || pane.attemptID !== attemptID || !tabs.includes(tab)) return;
     if (isHostKeyPromptError(e)) {
-      tab.pendingMessage = t('terminal.waitingHostKey');
+      pane.pendingMessage = t('terminal.waitingHostKey');
       renderTabs();
-      if (activeTab === tab) renderTerminalState(tab);
+      if (activeTab === tab) renderTerminalState(tab, pane);
       return; // dialog will handle retry/reject
     }
-    failTerminalTab(tab, e);
+    failTerminalPane(tab, pane, e);
   }
 }
 
 async function onLocalConnectRequest(localSess) {
   showToast(t('toast.openingLocal', { sub: localSess.sublabel }));
-  setSessionStatus('__local__', 'connecting');
+  const sess = {
+    id: '__local__',
+    label: localSess.label,
+    host: 'localhost',
+    username: localSess.sublabel,
+  };
+  const tab = createPendingTerminalTab(sess);
+  await switchToTab(tab);
+  await connectLocalPane(tab, activeTerminalPane(tab));
+}
 
-  const { cols, rows } = getTerminalSize();
-
+async function connectLocalPane(tab, pane) {
+  if (!tab || !pane || pane.closed) return;
+  pane.state = 'pending';
+  pane.error = '';
+  pane.pendingMessage = t('terminal.connectingTo', { host: pane.sessionLabel });
+  const attemptID = ++connectAttemptSeq;
+  pane.attemptID = attemptID;
+  syncSessionStatus(pane.sessionID);
+  renderTabs();
+  if (activeTab === tab) renderTerminalState(tab, pane);
+  const { cols, rows } = getTerminalSize(pane);
   try {
     const connID = await connectLocal(cols, rows);
-    await afterConnect(connID, {
-      id: '__local__',
-      label: localSess.label,
-      host: 'localhost',
-      username: localSess.sublabel,
-    });
-    setSessionStatus('__local__', 'connected');
+    if (pane.closed || pane.attemptID !== attemptID || !tabs.includes(tab)) {
+      disconnect(connID).catch(() => {});
+      return;
+    }
+    await afterConnect(connID, pane.sess, tab, pane);
   } catch (e) {
-    setSessionStatus('__local__', 'disconnected');
-    showToast(`❌ ${e}`);
+    if (!pane.closed && pane.attemptID === attemptID && tabs.includes(tab)) {
+      failTerminalPane(tab, pane, e);
+    }
   }
 }
 
-async function afterConnect(connID, sess, existingTab = null) {
-  const tab = existingTab || { id: 'tab-' + Date.now() };
-  Object.assign(tab, {
-    type: 'terminal',
+async function afterConnect(connID, sess, tab, pane) {
+  Object.assign(pane, {
+    state: 'connected',
     connID,
     sessionID: sess.id,
     sessionLabel: sess.label || sess.host,
     host: sess.host,
     username: sess.username,
     isLocal: sess.id === '__local__',
-    sess: undefined,
+    sess: { ...sess },
     error: undefined,
     pendingMessage: undefined,
   });
-  if (!tabs.includes(tab)) tabs.push(tab);
+  tab.sessionID = sess.id;
+  tab.sessionLabel = sess.label || sess.host;
+  tab.host = sess.host;
+  tab.username = sess.username;
   renderTabs();
-  switchToTab(tab);
+  if (activeTab === tab) {
+    ensurePaneElement(tab, pane);
+    mountTerminalPane(tab, pane);
+    setActivePane(tab, pane, { focus: true });
+  } else {
+    switchToTab(tab);
+  }
   on('terminal:closed:' + connID, () => {
-    const closedTab = tabs.find(t => isTerminalTab(t) && t.connID === connID);
-    console.log('[local-reconnect] terminal:closed fired', { connID, closedTabFound: !!closedTab, isLocal: closedTab?.isLocal });
-    if (!closedTab) return;
-    if (closedTab.isLocal) handleLocalConnectionClosed(closedTab, connID);
-    else handleSSHConnectionClosed(closedTab, connID);
+    const found = findTerminalPaneByConn(connID);
+    console.log('[local-reconnect] terminal:closed fired', { connID, paneFound: !!found, isLocal: found?.pane?.isLocal });
+    if (!found) return;
+    if (found.pane.isLocal) handleLocalConnectionClosed(found.tab, found.pane, connID);
+    else handleSSHConnectionClosed(found.tab, found.pane, connID);
   });
-  setSessionStatus(sess.id, 'connected');
+  syncSessionStatus(sess.id);
   showToast(t('toast.connected', { host: sess.host }));
 }
 
-async function handleSSHConnectionClosed(tab, connID) {
-  console.log('[reconnect] terminal:closed fired', { connID, tabType: tab?.type, tabInList: tabs.includes(tab) });
-  if (!tabs.includes(tab) || tab.connID !== connID || tab.type !== 'terminal') {
+async function handleSSHConnectionClosed(tab, pane, connID) {
+  console.log('[reconnect] terminal:closed fired', { connID, paneState: pane?.state, tabInList: tabs.includes(tab) });
+  if (!tabs.includes(tab) || pane?.connID !== connID || pane.state !== 'connected') {
     console.log('[reconnect] guard rejected - skipping disconnect handler');
     return;
   }
@@ -228,28 +306,23 @@ async function handleSSHConnectionClosed(tab, connID) {
   off('terminal:closed:' + connID);
   setTerminalInputEnabled(connID, false);
   setTerminalReconnectCallback(connID, () => {
-    const tab = tabs.find(t => t.connID === connID && t.type === 'terminal-disconnected');
-    console.log('[reconnect] onData Enter callback fired', { connID, tabFound: !!tab, tabType: tab?.type });
-    if (tab) reconnectRemoteTab(tab);
+    const found = findTerminalPaneByConn(connID);
+    if (found?.pane.state === 'disconnected') reconnectRemotePane(found.tab, found.pane);
   });
-  console.log('[reconnect] tab marked disconnected', { connID });
+  console.log('[reconnect] pane marked disconnected', { connID });
   const cleanup = disconnect(connID).catch(() => {});
 
   const removedActiveSFTP = activeTab?.type === 'sftp' && activeTab.connID === connID;
   tabs = tabs.filter(t => !(t.type === 'sftp' && t.connID === connID));
-  tab.type = 'terminal-disconnected';
-  tab.error = '';
-  tab.pendingMessage = '';
-
-  if (!tabs.some(t => t !== tab && isTerminalTab(t) && t.sessionID === tab.sessionID)) {
-    setSessionStatus(tab.sessionID, 'disconnected');
-  }
-  if (tab.statusEl) tab.statusEl.textContent = t('terminal.disconnectedStatus');
+  pane.state = 'disconnected';
+  pane.error = '';
+  pane.pendingMessage = '';
+  syncSessionStatus(pane.sessionID);
   writeTerminalLine(connID, t('terminal.pressEnterToReconnect'));
   renderTabs();
 
-  if (activeTab === tab) {
-    updateConnUI(null);
+  if (activeTab === tab && activeTerminalPane(tab) === pane) {
+    updateActivePaneUI(tab);
     notifyActiveTerminalChanged();
     focusTerminal(connID);
   } else if (removedActiveSFTP) {
@@ -261,47 +334,45 @@ async function handleSSHConnectionClosed(tab, connID) {
   await cleanup;
 }
 
-async function reconnectRemoteTab(tab) {
-  console.log('[reconnect] reconnectRemoteTab called', { tabType: tab?.type, connID: tab?.connID, sessionID: tab?.sessionID });
-  if (!tab || tab.type !== 'terminal-disconnected') {
-    console.log('[reconnect] early return - tab not in disconnected state');
+async function reconnectRemotePane(tab, pane) {
+  console.log('[reconnect] reconnectRemotePane called', { paneState: pane?.state, connID: pane?.connID, sessionID: pane?.sessionID });
+  if (!tab || !pane || pane.state !== 'disconnected') {
+    console.log('[reconnect] early return - pane not in disconnected state');
     return;
   }
 
-  const oldConnID = tab.connID;
-  tab.type = 'terminal-pending';
-  tab.connID = '';
-  tab.pendingMessage = t('terminal.loadingProfile');
+  const oldConnID = pane.connID;
+  pane.state = 'pending';
+  pane.connID = '';
+  pane.pendingMessage = t('terminal.loadingProfile');
   renderTabs();
   setTerminalReconnectCallback(oldConnID, null);
   destroyTerminal(oldConnID);
-  if (activeTab === tab) renderTerminalState(tab);
+  if (activeTab === tab) renderTerminalState(tab, pane);
 
   try {
-    console.log('[reconnect] fetching session', tab.sessionID);
-    const sess = await getSession(tab.sessionID);
+    console.log('[reconnect] fetching session', pane.sessionID);
+    const sess = await getSession(pane.sessionID);
     console.log('[reconnect] session fetched', { found: !!sess, host: sess?.host, authType: sess?.auth_type });
     if (!sess) throw new Error(t('terminal.profileNotFound'));
-    tab.sess = { ...sess };
+    pane.sess = { ...sess };
     tab.sessionLabel = sess.label || sess.host;
     tab.host = sess.host;
     tab.username = sess.username;
-    if (!tabs.includes(tab) || tab.closed || tab.type !== 'terminal-pending') {
-      console.log('[reconnect] tab gone or state changed after getSession - aborting');
+    if (!tabs.includes(tab) || pane.closed || pane.state !== 'pending') {
+      console.log('[reconnect] pane gone or state changed after getSession - aborting');
       return;
     }
-    console.log('[reconnect] calling connectRemoteTab');
-    await connectRemoteTab(tab);
-    console.log('[reconnect] connectRemoteTab resolved');
+    await connectRemotePane(tab, pane);
   } catch (e) {
     console.error('[reconnect] reconnect failed', e);
-    if (tabs.includes(tab) && !tab.closed && tab.type === 'terminal-pending') failTerminalTab(tab, e);
+    if (tabs.includes(tab) && !pane.closed && pane.state === 'pending') failTerminalPane(tab, pane, e);
   }
 }
 
-async function handleLocalConnectionClosed(tab, connID) {
-  console.log('[local-reconnect] handleLocalConnectionClosed', { connID, tabType: tab?.type, tabInList: tabs.includes(tab) });
-  if (!tabs.includes(tab) || tab.connID !== connID || tab.type !== 'terminal') {
+async function handleLocalConnectionClosed(tab, pane, connID) {
+  console.log('[local-reconnect] handleLocalConnectionClosed', { connID, paneState: pane?.state, tabInList: tabs.includes(tab) });
+  if (!tabs.includes(tab) || pane?.connID !== connID || pane.state !== 'connected') {
     console.log('[local-reconnect] guard rejected');
     return;
   }
@@ -309,26 +380,21 @@ async function handleLocalConnectionClosed(tab, connID) {
   off('terminal:closed:' + connID);
   setTerminalInputEnabled(connID, false);
   setTerminalReconnectCallback(connID, () => {
-    const t = tabs.find(t => t.connID === connID && t.type === 'terminal-disconnected');
-    console.log('[local-reconnect] onData Enter callback', { connID, tabFound: !!t });
-    if (t) reconnectLocalTab(t);
+    const found = findTerminalPaneByConn(connID);
+    if (found?.pane.state === 'disconnected') reconnectLocalPane(found.tab, found.pane);
   });
-  console.log('[local-reconnect] tab marked disconnected', { connID });
+  console.log('[local-reconnect] pane marked disconnected', { connID });
   const cleanup = disconnect(connID).catch(() => {});
 
-  tab.type = 'terminal-disconnected';
-  tab.error = '';
-  tab.pendingMessage = '';
-
-  if (!tabs.some(t => t !== tab && isTerminalTab(t) && t.sessionID === tab.sessionID)) {
-    setSessionStatus(tab.sessionID, 'disconnected');
-  }
-  if (tab.statusEl) tab.statusEl.textContent = t('terminal.disconnectedStatus');
+  pane.state = 'disconnected';
+  pane.error = '';
+  pane.pendingMessage = '';
+  syncSessionStatus(pane.sessionID);
   writeTerminalLine(connID, t('terminal.pressEnterToReconnect'));
   renderTabs();
 
-  if (activeTab === tab) {
-    updateConnUI(null);
+  if (activeTab === tab && activeTerminalPane(tab) === pane) {
+    updateActivePaneUI(tab);
     notifyActiveTerminalChanged();
     focusTerminal(connID);
   } else if (activeTab) {
@@ -338,49 +404,22 @@ async function handleLocalConnectionClosed(tab, connID) {
   await cleanup;
 }
 
-async function reconnectLocalTab(tab) {
-  console.log('[local-reconnect] reconnectLocalTab called', { tabType: tab?.type, isLocal: tab?.isLocal, connID: tab?.connID });
-  if (!tab || !tab.isLocal ||
-      (tab.type !== 'terminal-disconnected' && tab.type !== 'terminal-failed')) {
-    console.log('[local-reconnect] early return from reconnectLocalTab');
+async function reconnectLocalPane(tab, pane) {
+  console.log('[local-reconnect] reconnectLocalPane called', { paneState: pane?.state, isLocal: pane?.isLocal, connID: pane?.connID });
+  if (!tab || !pane?.isLocal || (pane.state !== 'disconnected' && pane.state !== 'failed')) {
+    console.log('[local-reconnect] early return from reconnectLocalPane');
     return;
   }
 
-  const oldConnID = tab.connID;
-  tab.type = 'terminal-pending';
-  tab.connID = '';
-  tab.pendingMessage = t('terminal.connectingTo', { host: tab.sessionLabel });
-  renderTabs();
+  const oldConnID = pane.connID;
+  pane.connID = '';
   setTerminalReconnectCallback(oldConnID, null);
   try { destroyTerminal(oldConnID); } catch (e) { console.warn('[local-reconnect] destroyTerminal error', e); }
-  if (activeTab === tab) renderTerminalState(tab);
-
-  try {
-    const { cols, rows } = getTerminalSize();
-    console.log('[local-reconnect] calling connectLocal', { cols, rows });
-    const connID = await connectLocal(cols, rows);
-    console.log('[local-reconnect] connectLocal returned', { connID });
-    if (tabs.includes(tab) && !tab.closed && tab.type === 'terminal-pending') {
-      const sess = { id: '__local__', label: tab.sessionLabel, host: tab.host || 'localhost', username: tab.username };
-      console.log('[local-reconnect] calling afterConnect', { connID, sess });
-      await afterConnect(connID, sess, tab);
-      setSessionStatus('__local__', 'connected');
-      console.log('[local-reconnect] reconnect complete');
-    } else {
-      console.log('[local-reconnect] tab gone/changed after connectLocal, aborting');
-      disconnect(connID).catch(() => {});
-    }
-  } catch (e) {
-    console.error('[local-reconnect] reconnect failed', e);
-    if (tabs.includes(tab) && !tab.closed && tab.type === 'terminal-pending') {
-      setSessionStatus('__local__', 'disconnected');
-      failTerminalTab(tab, e);
-    }
-  }
+  await connectLocalPane(tab, pane);
 }
 
-function getTerminalSize() {
-  const el = activeTab?.terminalContainer || document.getElementById('panel-terminal');
+function getTerminalSize(pane = activeTerminalPane()) {
+  const el = pane?.terminalContainer || pane?.element || document.getElementById('panel-terminal');
   return {
     cols: Math.floor((el?.clientWidth || 800) / 8),
     rows: Math.floor((el?.clientHeight || 400) / 17),
@@ -388,16 +427,18 @@ function getTerminalSize() {
 }
 
 function createPendingTerminalTab(sess) {
+  const pane = createTerminalPane(sess);
   const tab = {
-    type: 'terminal-pending',
+    type: 'terminal',
     id: 'tab-pending-' + Date.now() + '-' + Math.random().toString(36).slice(2),
     sessionID: sess.id,
     sessionLabel: sess.label || sess.host,
     host: sess.host,
     username: sess.username,
-    sess: { ...sess },
-    error: '',
-    pendingMessage: '',
+    panes: [pane],
+    activePaneId: pane.id,
+    splitDirection: null,
+    splitRatio: 0.5,
     aiSidebarOpen: false,
   };
   tabs.push(tab);
@@ -410,14 +451,13 @@ function ensureTerminalContent(tab) {
   const panel = document.getElementById('panel-terminal');
   if (!panel) return;
   const suffix = tab.id.replace(/[^a-zA-Z0-9_-]/g, '-');
-  tab.terminalContainerId = 'terminal-container-' + suffix;
   tab.sizeElId = 'sb-size-' + suffix;
 
   const content = document.createElement('div');
   content.className = 'terminal-tab-content';
   content.innerHTML = `
     <div class="terminal-main">
-      <div class="terminal-container" id="${tab.terminalContainerId}"></div>
+      <div class="terminal-panes"></div>
       <div class="find-bar" style="display:none;">
         <input placeholder="Find…" data-i18n-placeholder="terminal.findPlaceholder" />
         <span class="find-count"></span>
@@ -452,7 +492,7 @@ function ensureTerminalContent(tab) {
     </aside>`;
 
   tab.terminalContent = content;
-  tab.terminalContainer = content.querySelector('.terminal-container');
+  tab.panesEl = content.querySelector('.terminal-panes');
   tab.findBar = content.querySelector('.find-bar');
   tab.findInput = tab.findBar?.querySelector('input');
   tab.quickCommandBar = content.querySelector('.quick-command-bar');
@@ -469,38 +509,259 @@ function ensureTerminalContent(tab) {
     backBtn: content.querySelector('.ai-back'),
     closeBtn: content.querySelector('.ai-close'),
   }, {
-    getConnID: () => activeTab === tab && isTerminalTab(tab) ? tab.connID : '',
+    getConnID: () => activeTab === tab ? (activeConnectedPane(tab)?.connID || '') : '',
     onResizeStart: () => suspendTerminalAutoFit(true),
     onResizeEnd: () => suspendTerminalAutoFit(false),
   });
 
   panel.appendChild(content);
+  terminalPanes(tab).forEach(pane => ensurePaneElement(tab, pane));
+  renderPaneLayout(tab);
 }
 
-function failTerminalTab(tab, err) {
-  if (!tab || tab.closed) return;
-  if (tab.sessionID && pendingConnects[tab.sessionID]?.tab === tab) {
-    delete pendingConnects[tab.sessionID];
+function ensurePaneElement(tab, pane) {
+  if (pane.element) return pane.element;
+  const suffix = pane.id.replace(/[^a-zA-Z0-9_-]/g, '-');
+  pane.terminalContainerId = 'terminal-container-' + suffix;
+
+  const element = document.createElement('section');
+  element.className = 'terminal-pane';
+  element.dataset.paneId = pane.id;
+  element.innerHTML = `
+    <button class="terminal-pane-close" title="${t('terminal.closePane')}" aria-label="${t('terminal.closePane')}">✕</button>
+    <div class="terminal-container" id="${pane.terminalContainerId}"></div>`;
+  pane.element = element;
+  pane.terminalContainer = element.querySelector('.terminal-container');
+  pane.closeButton = element.querySelector('.terminal-pane-close');
+  element.addEventListener('pointerdown', () => setActivePane(tab, pane));
+  pane.closeButton.addEventListener('pointerdown', e => e.stopPropagation());
+  pane.closeButton.addEventListener('click', e => {
+    e.stopPropagation();
+    closeTerminalPane(tab, pane);
+  });
+  return element;
+}
+
+function renderPaneLayout(tab) {
+  if (!tab?.panesEl) return;
+  const panes = terminalPanes(tab);
+  panes.forEach((pane, index) => {
+    const element = ensurePaneElement(tab, pane);
+    element.classList.toggle('active', pane.id === tab.activePaneId);
+    pane.closeButton.style.display = panes.length > 1 ? '' : 'none';
+    if (index === 0 && panes.length > 1) {
+      element.style.flex = `0 0 ${(tab.splitRatio || 0.5) * 100}%`;
+    } else {
+      element.style.flex = '1 1 0';
+    }
+  });
+  tab.panesEl.classList.toggle('split-side-by-side', tab.splitDirection === 'side-by-side');
+  tab.panesEl.classList.toggle('split-stacked', tab.splitDirection === 'stacked');
+  tab.panesEl.classList.toggle('is-split', panes.length > 1);
+  const currentPaneNodes = Array.from(tab.panesEl.children).filter(el => el.classList.contains('terminal-pane'));
+  const hasDivider = Array.from(tab.panesEl.children).some(el => el.classList.contains('terminal-split-divider'));
+  const needsRebuild = currentPaneNodes.length !== panes.length ||
+    currentPaneNodes.some((el, index) => el !== panes[index].element) ||
+    hasDivider !== (panes.length > 1);
+  if (!needsRebuild) return;
+
+  const nodes = [];
+  panes.forEach((pane, index) => {
+    nodes.push(pane.element);
+    if (index === 0 && panes.length > 1) {
+      const divider = document.createElement('div');
+      divider.className = 'terminal-split-divider';
+      divider.setAttribute('role', 'separator');
+      divider.addEventListener('pointerdown', e => beginSplitResize(e, tab));
+      nodes.push(divider);
+    }
+  });
+  tab.panesEl.replaceChildren(...nodes);
+}
+
+function beginSplitResize(e, tab) {
+  if (terminalPanes(tab).length !== 2 || !tab.panesEl) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const divider = e.currentTarget;
+  divider.setPointerCapture?.(e.pointerId);
+  const rect = tab.panesEl.getBoundingClientRect();
+  const isSideBySide = tab.splitDirection === 'side-by-side';
+  suspendTerminalAutoFit(true);
+
+  const move = ev => {
+    const raw = isSideBySide
+      ? (ev.clientX - rect.left) / Math.max(1, rect.width)
+      : (ev.clientY - rect.top) / Math.max(1, rect.height);
+    tab.splitRatio = Math.min(0.85, Math.max(0.15, raw));
+    const first = terminalPanes(tab)[0]?.element;
+    if (first) first.style.flexBasis = `${tab.splitRatio * 100}%`;
+  };
+  const end = () => {
+    document.removeEventListener('pointermove', move, true);
+    document.removeEventListener('pointerup', end, true);
+    document.removeEventListener('pointercancel', end, true);
+    suspendTerminalAutoFit(false);
+    refitTerminalTab(tab);
+  };
+  document.addEventListener('pointermove', move, true);
+  document.addEventListener('pointerup', end, true);
+  document.addEventListener('pointercancel', end, true);
+}
+
+function mountTerminalPane(tab, pane) {
+  ensurePaneElement(tab, pane);
+  if (pane.state === 'pending' || pane.state === 'failed') {
+    renderTerminalState(tab, pane);
+    return;
   }
-  tab.type = 'terminal-failed';
-  tab.error = String(err?.message || err || t('terminal.unknownError'));
-  tab.pendingMessage = '';
-  setSessionStatus(tab.sessionID, 'disconnected');
-  renderTabs();
-  if (activeTab === tab) renderTerminalState(tab);
-  showToast(`❌ ${tab.error}`);
+  if (!pane.connID) return;
+  pane.terminalContainer?.querySelector('.terminal-state')?.remove();
+  createTerminal(pane.connID, settings, {
+    containerId: pane.terminalContainerId,
+    onFocus: () => setActivePane(tab, pane),
+    onSizeChange: (cols, rows) => {
+      pane.lastSize = `${cols}×${rows}`;
+      if (activeTab === tab && activeTerminalPane(tab) === pane && tab.sizeEl) {
+        tab.sizeEl.textContent = pane.lastSize;
+      }
+    },
+  });
+  setTerminalInputEnabled(pane.connID, pane.state === 'connected');
 }
 
-function renderTerminalState(tab) {
+function setActivePane(tab, pane, { focus = false } = {}) {
+  if (!isTerminalTab(tab) || !terminalPanes(tab).includes(pane)) return;
+  tab.activePaneId = pane.id;
+  terminalPanes(tab).forEach(p => p.element?.classList.toggle('active', p === pane));
+  if (activeTab === tab) {
+    updateActivePaneUI(tab);
+    notifyActiveTerminalChanged();
+  }
+  if (focus && pane.connID) focusTerminal(pane.connID);
+}
+
+function updateActivePaneUI(tab) {
+  const pane = activeTerminalPane(tab);
+  if (!pane) {
+    updateConnUI(null);
+    return;
+  }
+  if (tab.statusEl) {
+    tab.statusEl.textContent = pane.state === 'connected' ? t('common.connected')
+      : pane.state === 'pending' ? t('terminal.connectingStatus')
+      : pane.state === 'failed' ? t('common.failed')
+      : t('terminal.disconnectedStatus');
+  }
+  if (tab.sizeEl) tab.sizeEl.textContent = pane.lastSize || '—';
+  updateConnUI(pane.state === 'connected' ? pane : null);
+}
+
+function refitTerminalTab(tab, options = {}) {
+  terminalPanes(tab).forEach(pane => {
+    if (pane.connID) fitTerminal(pane.connID, options);
+  });
+}
+
+async function splitTerminalTab(tab, direction) {
+  if (!isTerminalTab(tab) || terminalPanes(tab).length !== 1 || tab.splitPending) return;
+  const source = activeConnectedPane(tab) || terminalPanes(tab).find(p => p.state === 'connected');
+  if (!source) return;
+  tab.splitPending = true;
+  await switchToTab(tab);
+
+  let sess;
+  try {
+    sess = source.isLocal ? { ...source.sess } : await getSession(source.sessionID);
+    if (!sess) throw new Error(t('terminal.profileNotFound'));
+  } catch (e) {
+    showToast(`❌ ${e}`);
+    tab.splitPending = false;
+    return;
+  }
+  if (!tabs.includes(tab) || source.closed || terminalPanes(tab).length !== 1) {
+    tab.splitPending = false;
+    return;
+  }
+
+  const pane = createTerminalPane(sess);
+  if (source.connID) rememberTerminalViewport(source.connID);
+  tab.panes.push(pane);
+  tab.splitDirection = direction;
+  tab.splitRatio = 0.5;
+  ensurePaneElement(tab, pane);
+  renderPaneLayout(tab);
+  renderTerminalState(tab, pane);
+  refitTerminalTab(tab, { restoreScroll: true, caller: 'split-terminal' });
+  tab.splitPending = false;
+  if (pane.isLocal) await connectLocalPane(tab, pane);
+  else await connectRemotePane(tab, pane);
+}
+
+function closeTerminalPane(tab, pane) {
+  if (!isTerminalTab(tab) || !terminalPanes(tab).includes(pane)) return;
+  if (terminalPanes(tab).length === 1) {
+    closeTab(tab);
+    return;
+  }
+  pane.closed = true;
+  pane.attemptID = -1;
+  Object.keys(pendingConnects).forEach(key => {
+    if (pendingConnects[key]?.pane === pane) delete pendingConnects[key];
+  });
+  const connID = pane.connID;
+  const activeRelatedSFTP = !!connID && activeTab?.type === 'sftp' && activeTab.connID === connID;
+  if (connID) {
+    off('terminal:closed:' + connID);
+    disconnect(connID).catch(e => console.warn('disconnect:', e));
+    destroyTerminal(connID);
+    tabs = tabs.filter(t => !(t.type === 'sftp' && t.connID === connID));
+  }
+  pane.element?.remove();
+  pane.element = null;
+  pane.terminalContainer = null;
+  tab.panes = terminalPanes(tab).filter(p => p !== pane);
+  tab.splitDirection = null;
+  tab.splitRatio = 0.5;
+  const remaining = terminalPanes(tab)[0];
+  if (remaining.connID) rememberTerminalViewport(remaining.connID);
+  tab.activePaneId = remaining.id;
+  renderPaneLayout(tab);
+  renderTabs();
+  syncSessionStatus(pane.sessionID);
+  if (activeRelatedSFTP) {
+    switchToTab(tab);
+  } else {
+    setActivePane(tab, remaining, { focus: activeTab === tab });
+  }
+  refitTerminalTab(tab, { restoreScroll: true, caller: 'close-split-pane' });
+}
+
+function failTerminalPane(tab, pane, err) {
+  if (!tab || !pane || pane.closed) return;
+  Object.keys(pendingConnects).forEach(key => {
+    if (pendingConnects[key]?.pane === pane) delete pendingConnects[key];
+  });
+  pane.state = 'failed';
+  pane.error = String(err?.message || err || t('terminal.unknownError'));
+  pane.pendingMessage = '';
+  syncSessionStatus(pane.sessionID);
+  renderTabs();
+  if (activeTab === tab) renderTerminalState(tab, pane);
+  showToast(`❌ ${pane.error}`);
+}
+
+function renderTerminalState(tab, pane) {
   ensureTerminalContent(tab);
-  const container = tab.terminalContainer;
+  ensurePaneElement(tab, pane);
+  const container = pane.terminalContainer;
   if (!container) return;
   container.innerHTML = '';
-  const isFailed = tab.type === 'terminal-failed';
-  const detail = formatSessionEndpoint(tab.sess || tab);
+  const isFailed = pane.state === 'failed';
+  const detail = formatSessionEndpoint(pane.sess || pane);
   const message = isFailed
-    ? tab.error
-    : (tab.pendingMessage || t('terminal.connectingTo', { host: tab.host || tab.sessionLabel }));
+    ? pane.error
+    : (pane.pendingMessage || t('terminal.connectingTo', { host: pane.host || pane.sessionLabel }));
 
   const state = document.createElement('div');
   state.className = 'terminal-state' + (isFailed ? ' failed' : '');
@@ -508,7 +769,7 @@ function renderTerminalState(tab) {
     <div class="terminal-state-card">
       <div class="terminal-state-icon">${isFailed ? '!' : ''}</div>
       <div class="terminal-state-title">${escHtml(isFailed ? t('terminal.connectionFailedTitle') : t('terminal.connectingTitle'))}</div>
-      <div class="terminal-state-sub">${escHtml(tab.sessionLabel || '')}</div>
+      <div class="terminal-state-sub">${escHtml(pane.sessionLabel || '')}</div>
       <div class="terminal-state-endpoint">${escHtml(detail)}</div>
       <pre class="terminal-state-message">${escHtml(message)}</pre>
       ${isFailed ? `
@@ -520,26 +781,33 @@ function renderTerminalState(tab) {
     </div>`;
   container.appendChild(state);
 
-  const status = tab.statusEl;
-  const size = tab.sizeEl;
-  if (status) status.textContent = isFailed ? t('common.failed') : t('terminal.connectingStatus');
-  if (size) size.textContent = '-';
+  if (activeTab === tab && activeTerminalPane(tab) === pane) updateActivePaneUI(tab);
 
   if (isFailed) {
-    state.querySelector('[data-action="retry"]')?.addEventListener('click', () => connectRemoteTab(tab));
+    state.querySelector('[data-action="retry"]')?.addEventListener('click', () => {
+      if (pane.isLocal) reconnectLocalPane(tab, pane);
+      else connectRemotePane(tab, pane);
+    });
     state.querySelector('[data-action="edit"]')?.addEventListener('click', () => {
-      openProfileForm(tab.sess, (saved) => {
+      if (pane.isLocal) return;
+      openProfileForm(pane.sess, (saved) => {
         loadProfiles();
-        tab.sess = { ...saved };
+        pane.sess = { ...saved };
+        pane.sessionID = saved.id;
+        pane.sessionLabel = saved.label || saved.host;
+        pane.host = saved.host;
+        pane.username = saved.username;
         tab.sessionID = saved.id;
         tab.sessionLabel = saved.label || saved.host;
         tab.host = saved.host;
         tab.username = saved.username;
         renderTabs();
-        if (activeTab === tab) renderTerminalState(tab);
+        if (activeTab === tab) renderTerminalState(tab, pane);
       });
     });
-    state.querySelector('[data-action="close"]')?.addEventListener('click', () => closeTab(tab));
+    const editBtn = state.querySelector('[data-action="edit"]');
+    if (editBtn && pane.isLocal) editBtn.style.display = 'none';
+    state.querySelector('[data-action="close"]')?.addEventListener('click', () => closeTerminalPane(tab, pane));
   }
 }
 
@@ -551,49 +819,23 @@ function formatSessionEndpoint(sess) {
 }
 
 function doDisconnect(connID) {
-  if (!connID || closingConnIDs.has(connID)) return;
-  closingConnIDs.add(connID);
-
-  const removedTabs = tabs.filter(t => t.connID === connID);
-  if (removedTabs.length === 0) {
-    closingConnIDs.delete(connID);
-    return;
-  }
-
-  const wasActive = !!activeTab && activeTab.connID === connID;
-  const primaryClosedTab = wasActive ? activeTab : removedTabs[0];
-  const closedIndex = Math.max(0, tabs.indexOf(primaryClosedTab));
-  const sessionIDs = new Set(removedTabs.map(t => t.sessionID).filter(Boolean));
-
-  tabs = tabs.filter(t => t.connID !== connID);
-  off('terminal:closed:' + connID);
-
-  // Only mark disconnected when no remaining connection tab for this profile.
-  sessionIDs.forEach(sessionID => {
-    if (!tabs.some(t => hasTerminalConn(t) && t.sessionID === sessionID)) {
-      setSessionStatus(sessionID, 'disconnected');
-    }
-  });
-
-  // Start backend disconnect before any UI work that could throw, so the
-  // connection is never leaked and closingConnIDs is always cleared.
-  disconnect(connID)
-    .catch(e => console.warn('disconnect:', e))
-    .finally(() => closingConnIDs.delete(connID));
-
-  // Update tab bar UI before cleanup — guarantees renderTabs() runs even if cleanup throws.
-  renderTabs();
-  if (wasActive) activateFallbackTab(closedIndex);
-  else if (activeTab) updateConnUI(tabForConnActions(activeTab));
-  else showWelcome();
+  if (!connID) return;
+  const found = findTerminalPaneByConn(connID);
+  if (!found) return;
+  if (terminalPanes(found.tab).length > 1) closeTerminalPane(found.tab, found.pane);
+  else closeTab(found.tab);
   showToast(t('toast.disconnected'));
-
-  // Cleanup after UI update; exceptions here won't leave a ghost tab.
-  removedTabs.forEach(destroyTerminalContent);
-  destroyTerminal(connID);
 }
 
 // ── Tab management ────────────────────────────────────────────────────────────
+
+function terminalTabVisualState(tab) {
+  const states = terminalPanes(tab).map(p => p.state);
+  if (states.includes('connected')) return 'connected';
+  if (states.includes('pending')) return 'connecting';
+  if (states.includes('failed')) return 'failed';
+  return 'disconnected';
+}
 
 function renderTabs() {
   const scroll = document.getElementById('tabs-scroll');
@@ -601,14 +843,13 @@ function renderTabs() {
   tabs.forEach((tab, idx) => {
     const isSettings = tab.type === 'settings';
     const isSFTP = tab.type === 'sftp';
-    const isFailed = tab.type === 'terminal-failed';
-    const isPending = tab.type === 'terminal-pending';
-    const isDisconnected = tab.type === 'terminal-disconnected';
+    const terminalState = isTerminalTab(tab) ? terminalTabVisualState(tab) : '';
+    const isFailed = terminalState === 'failed';
     const el = document.createElement('div');
     el.className = 'tab' + (tab === activeTab ? ' active' : '') + (isFailed ? ' failed' : '');
     el.dataset.tabId = tab.id;
     el.innerHTML = `
-      ${isSettings ? '<span class="tab-icon">⚙</span>' : isSFTP ? '<span class="tab-icon">📁</span>' : `<div class="status-dot ${isFailed ? 'failed' : isPending ? 'connecting' : isDisconnected ? 'disconnected' : 'connected'}" style="width:6px;height:6px;"></div>`}
+      ${isSettings ? '<span class="tab-icon">⚙</span>' : isSFTP ? '<span class="tab-icon">📁</span>' : `<div class="status-dot ${terminalState}" style="width:6px;height:6px;"></div>`}
       <span>${escHtml(tab.sessionLabel)}</span>
       <span class="tab-num">${idx + 1}</span>
       <button class="tab-close">✕</button>`;
@@ -616,6 +857,9 @@ function renderTabs() {
       if (e.target.classList.contains('tab-close')) { closeTab(tab); return; }
       switchToTab(tab);
     });
+    if (isTerminalTab(tab)) {
+      el.addEventListener('contextmenu', e => showTerminalTabContextMenu(e, tab));
+    }
     scroll.appendChild(el);
   });
 
@@ -626,6 +870,40 @@ function renderTabs() {
   addBtn.textContent = '+';
   addBtn.addEventListener('click', showWelcome);
   scroll.appendChild(addBtn);
+}
+
+function showTerminalTabContextMenu(e, tab) {
+  e.preventDefault();
+  e.stopPropagation();
+  document.querySelectorAll('.ctx-menu').forEach(menu => menu.remove());
+  const canSplit = terminalPanes(tab).length === 1 && terminalPanes(tab)[0]?.state === 'connected';
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  const items = [
+    { label: t('terminal.splitSideBySide'), direction: 'side-by-side' },
+    { label: t('terminal.splitStacked'), direction: 'stacked' },
+  ];
+  items.forEach(item => {
+    const el = document.createElement('div');
+    el.className = 'ctx-item' + (canSplit ? '' : ' disabled');
+    const icon = document.createElement('span');
+    icon.className = `split-menu-icon ${item.direction}`;
+    icon.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.textContent = item.label;
+    el.append(icon, label);
+    el.addEventListener('click', () => {
+      if (!canSplit) return;
+      menu.remove();
+      splitTerminalTab(tab, item.direction);
+    });
+    menu.appendChild(el);
+  });
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(e.clientX, window.innerWidth - rect.width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(e.clientY, window.innerHeight - rect.height - 4))}px`;
+  setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
 }
 
 // Switching tabs only ever changes which tab is active — the rest of the
@@ -657,7 +935,9 @@ async function switchToTab(tab) {
     targetAIOpen: !!tab.aiSidebarOpen,
     previousTab: previousTab?.id || null,
   });
-  if (hasTerminalConn(activeTab)) rememberTerminalViewport(activeTab.connID);
+  if (isTerminalTab(activeTab)) {
+    terminalPanes(activeTab).forEach(pane => pane.connID && rememberTerminalViewport(pane.connID));
+  }
   if (tab.type === 'settings') {
     activeTab = tab;
     updateActiveTabClass();
@@ -678,47 +958,18 @@ async function switchToTab(tab) {
     await initSFTP(tab.connID);
     return;
   }
-  if (tab.type === 'terminal-disconnected') {
-    activeTab = tab;
-    ensureTerminalContent(tab);
-    updateActiveTabClass();
-    showPanel('terminal');
-    showTerminalContent(tab, previousTab);
-    updateConnUI(null);
-    if (tab.statusEl) tab.statusEl.textContent = t('terminal.disconnectedStatus');
-    focusTerminal(tab.connID);
-    activateAISidebarForTab(tab);
-    notifyActiveTerminalChanged();
-    return;
-  }
-  if (tab.type === 'terminal-pending' || tab.type === 'terminal-failed') {
-    activeTab = tab;
-    ensureTerminalContent(tab);
-    updateActiveTabClass();
-    showPanel('terminal');
-    showTerminalContent(tab, previousTab);
-    updateConnUI(null);
-    renderTerminalState(tab);
-    activateAISidebarForTab(tab);
-    notifyActiveTerminalChanged();
-    return;
-  }
+  if (!isTerminalTab(tab)) return;
   activeTab = tab;
   ensureTerminalContent(tab);
+  renderPaneLayout(tab);
   updateActiveTabClass();
   showPanel('terminal');
   showTerminalContent(tab, previousTab);
   perfLog('after showTerminalContent', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
-  updateConnUI(tab);
-  // A pending/failed connection renders a state card into the terminal
-  // container. Remove that transient UI before mounting the live xterm after
-  // a successful retry or reconnect.
-  tab.terminalContainer?.querySelector('.terminal-state')?.remove();
-  createTerminal(tab.connID, settings, { containerId: tab.terminalContainerId, sizeElId: tab.sizeElId });
+  terminalPanes(tab).forEach(pane => mountTerminalPane(tab, pane));
   perfLog('after createTerminal', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
-  const status = tab.statusEl;
-  if (status) status.textContent = t('common.connected');
-  focusTerminal(tab.connID);
+  const pane = activeTerminalPane(tab);
+  setActivePane(tab, pane, { focus: !!pane?.connID });
   perfLog('after focusTerminal', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
   activateAISidebarForTab(tab);
   perfLog('after activateAISidebarForTab', (performance.now() - switchStartedAt).toFixed(1) + 'ms');
@@ -749,15 +1000,7 @@ function closeTab(tab) {
     closeSFTPTab(tab);
     return;
   }
-  if (tab.type === 'terminal-pending' || tab.type === 'terminal-failed') {
-    closeTransientTerminalTab(tab);
-    return;
-  }
-  if (tab.type === 'terminal-disconnected') {
-    closeDisconnectedTerminalTab(tab);
-    return;
-  }
-  if (isTerminalTab(tab)) doDisconnect(tab.connID);
+  if (isTerminalTab(tab)) closeTerminalTab(tab);
 }
 
 function closeSettingsTab() {
@@ -778,29 +1021,31 @@ function closeSFTPTab(tab) {
   if (wasActive) activateFallbackTab(closedIndex);
 }
 
-function closeTransientTerminalTab(tab) {
-  const closedIndex = tabs.indexOf(tab);
-  const wasActive = tab === activeTab;
-  tab.closed = true;
-  tab.attemptID = -1;
-  if (tab.sessionID && pendingConnects[tab.sessionID]?.tab === tab) {
-    delete pendingConnects[tab.sessionID];
-    setSessionStatus(tab.sessionID, 'disconnected');
-  }
+function closeTerminalTab(tab) {
+  const panes = [...terminalPanes(tab)];
+  const connIDs = new Set(panes.map(p => p.connID).filter(Boolean));
+  const activeRelatedSFTP = activeTab?.type === 'sftp' && connIDs.has(activeTab.connID);
+  const wasActive = tab === activeTab || activeRelatedSFTP;
+  const closedIndex = Math.max(0, tabs.indexOf(wasActive ? activeTab : tab));
+  const sessionIDs = new Set(panes.map(p => p.sessionID).filter(Boolean));
+  panes.forEach(pane => {
+    pane.closed = true;
+    pane.attemptID = -1;
+    Object.keys(pendingConnects).forEach(key => {
+      if (pendingConnects[key]?.pane === pane) delete pendingConnects[key];
+    });
+    if (pane.connID) {
+      off('terminal:closed:' + pane.connID);
+      disconnect(pane.connID).catch(e => console.warn('disconnect:', e));
+      destroyTerminal(pane.connID);
+    }
+  });
   tabs = tabs.filter(t => t !== tab);
+  tabs = tabs.filter(t => !(t.type === 'sftp' && connIDs.has(t.connID)));
   destroyTerminalContent(tab);
   renderTabs();
   if (wasActive) activateFallbackTab(closedIndex);
-}
-
-function closeDisconnectedTerminalTab(tab) {
-  const closedIndex = tabs.indexOf(tab);
-  const wasActive = tab === activeTab;
-  tabs = tabs.filter(t => t !== tab);
-  destroyTerminal(tab.connID);
-  destroyTerminalContent(tab);
-  renderTabs();
-  if (wasActive) activateFallbackTab(closedIndex);
+  sessionIDs.forEach(syncSessionStatus);
 }
 
 function activateFallbackTab(closedIndex) {
@@ -821,23 +1066,20 @@ function showWelcome() {
 }
 
 function isTerminalTab(tab) {
-  return !!tab && tab.type === 'terminal' && !!tab.connID;
+  return !!tab && tab.type === 'terminal' && Array.isArray(tab.panes);
 }
 
 function isAITerminalTab(tab) {
-  return !!tab && [
-    'terminal',
-    'terminal-disconnected',
-    'terminal-pending',
-    'terminal-failed',
-  ].includes(tab.type);
+  return isTerminalTab(tab);
 }
 
 function hasTerminalConn(tab) {
-  return !!tab && (tab.type === 'terminal' || tab.type === 'sftp') && !!tab.connID;
+  if (isTerminalTab(tab)) return !!activeConnectedPane(tab)?.connID;
+  return !!tab && tab.type === 'sftp' && !!tab.connID;
 }
 
 function tabForConnActions(tab) {
+  if (isTerminalTab(tab)) return activeConnectedPane(tab);
   return hasTerminalConn(tab) ? tab : null;
 }
 
@@ -878,7 +1120,12 @@ function destroyTerminalContent(tab) {
   destroyAISidebarForTab(tab);
   tab.terminalContent?.remove();
   tab.terminalContent = null;
-  tab.terminalContainer = null;
+  tab.panesEl = null;
+  terminalPanes(tab).forEach(pane => {
+    pane.element = null;
+    pane.terminalContainer = null;
+    pane.closeButton = null;
+  });
   tab.findBar = null;
   tab.findInput = null;
   tab.quickCommandBar = null;
@@ -891,7 +1138,7 @@ function refitActiveTerminal(options = {}) {
   requestAnimationFrame(() => {
     if (!isTerminalTab(activeTab)) return;
     if (document.getElementById('panel-terminal')?.style.display === 'none') return;
-    fitTerminal(activeTab.connID, { ...options, caller: 'refitActiveTerminal-RAF' });
+    refitTerminalTab(activeTab, { ...options, caller: 'refitActiveTerminal-RAF' });
   });
 }
 
@@ -916,20 +1163,21 @@ function updateConnUI(tab) {
 // ── SFTP toggle ───────────────────────────────────────────────────────────────
 
 async function toggleSFTP() {
-  if (!hasTerminalConn(activeTab)) { showToast(t('toast.connectFirst')); return; }
-  if (activeTab.isLocal) { showToast(t('toast.sftpRemoteOnly')); return; }
-  const connID = activeTab.connID;
+  const target = tabForConnActions(activeTab);
+  if (!target?.connID) { showToast(t('toast.connectFirst')); return; }
+  if (target.isLocal) { showToast(t('toast.sftpRemoteOnly')); return; }
+  const connID = target.connID;
   let tab = tabs.find(t => t.type === 'sftp' && t.connID === connID);
   if (!tab) {
     tab = {
       type: 'sftp',
       id: 'tab-sftp-' + connID,
       connID,
-      sessionID: activeTab.sessionID,
-      sessionLabel: `SFTP: ${activeTab.sessionLabel}`,
-      host: activeTab.host,
-      username: activeTab.username,
-      isLocal: activeTab.isLocal,
+      sessionID: target.sessionID,
+      sessionLabel: `SFTP: ${target.sessionLabel}`,
+      host: target.host,
+      username: target.username,
+      isLocal: target.isLocal,
     };
     tabs.push(tab);
   }
@@ -999,25 +1247,21 @@ function toggleFullscreen() {
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 
 function handleKeydown(e) {
+  const pane = activeTerminalPane();
   if (e.key === 'Enter') {
-    console.log('[reconnect] Enter keydown', { activeTabType: activeTab?.type, isLocal: activeTab?.isLocal, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey, shiftKey: e.shiftKey });
+    console.log('[reconnect] Enter keydown', { activeTabType: activeTab?.type, paneState: pane?.state, isLocal: pane?.isLocal, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey, shiftKey: e.shiftKey });
   }
   const noMod = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
   const fromAISidebar = !!e.target?.closest?.('.ai-sidebar');
   if (e.key === 'Enter' && noMod && !fromAISidebar &&
-      (activeTab?.type === 'terminal-disconnected' || activeTab?.type === 'terminal-failed')) {
-    console.log('[reconnect] triggering reconnect from handleKeydown', { type: activeTab.type });
+      (pane?.state === 'disconnected' || pane?.state === 'failed')) {
+    console.log('[reconnect] triggering reconnect from handleKeydown', { state: pane.state });
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation?.();
-    if (activeTab.type === 'terminal-disconnected') {
-      if (activeTab.isLocal) reconnectLocalTab(activeTab);
-      else reconnectRemoteTab(activeTab);
-    } else if (activeTab.isLocal) {
-      reconnectLocalTab(activeTab);
-    } else if (activeTab.sess) {
-      connectRemoteTab(activeTab);
-    }
+    if (pane.isLocal) reconnectLocalPane(activeTab, pane);
+    else if (pane.state === 'disconnected') reconnectRemotePane(activeTab, pane);
+    else if (pane.sess) connectRemotePane(activeTab, pane);
     return;
   }
   const key = e.key.toLowerCase();
@@ -1075,8 +1319,9 @@ function handleKeydown(e) {
 
 function handleNativeEsc() {
   if (document.getElementById('pp-overlay')) return; // profile picker handles it
-  if (!hasTerminalConn(activeTab)) return;
-  sendInput(activeTab.connID, '\x1b').catch(e => console.error('nativeEsc sendInput:', e));
+  const pane = activeConnectedPane();
+  if (!pane) return;
+  sendInput(pane.connID, '\x1b').catch(e => console.error('nativeEsc sendInput:', e));
 }
 
 // ── Host key dialog ───────────────────────────────────────────────────────────
@@ -1094,7 +1339,7 @@ function showHostKeyDialog(data) {
   document.getElementById('hostkey-reject').onclick = () => {
     close();
     const pending = findPendingConnect(session_id, hostname);
-    if (pending) failTerminalTab(pending.tab, t('terminal.hostKeyRejected'));
+    if (pending) failTerminalPane(pending.tab, pending.pane, t('terminal.hostKeyRejected'));
     showToast(t('toast.connectionRejected'));
   };
 
@@ -1102,28 +1347,27 @@ function showHostKeyDialog(data) {
     close();
     const pending = findPendingConnect(session_id, hostname);
     if (!pending) { showToast(t('toast.noPendingConnection')); return; }
-    delete pendingConnects[pending.sess.id];
-    await connectRemoteTab(pending.tab, { skip_host_key_check: true });
+    delete pendingConnects[pending.attemptID];
+    await connectRemotePane(pending.tab, pending.pane, { skip_host_key_check: true });
   };
 
   document.getElementById('hostkey-always').onclick = async () => {
     close();
     const pending = findPendingConnect(session_id, hostname);
     if (!pending) { showToast(t('toast.noPendingConnection')); return; }
-    delete pendingConnects[pending.sess.id];
+    delete pendingConnects[pending.attemptID];
     try {
       await acceptHostKey(hostname);
     } catch (e) {
       showToast(t('toast.hostKeySaveFailed', { e }));
     }
-    await connectRemoteTab(pending.tab, { skip_host_key_check: true });
+    await connectRemotePane(pending.tab, pending.pane, { skip_host_key_check: true });
   };
 }
 
 function findPendingConnect(sessionID, hostname) {
-  if (sessionID && pendingConnects[sessionID]) return pendingConnects[sessionID];
-
   return Object.values(pendingConnects).find(({ sess }) => {
+    if (sessionID && sess.id !== sessionID) return false;
     const port = sess.port || 22;
     return hostname === `${sess.host}:${port}` || hostname === sess.host;
   });

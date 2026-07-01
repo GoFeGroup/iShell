@@ -234,6 +234,7 @@ function fitVisibleTerminal(connID, inst, { restoreScroll = false, snapshot = nu
   }
   const sizeEl = document.getElementById(inst.sizeElId || 'sb-size');
   if (sizeEl) sizeEl.textContent = `${inst.term.cols}×${inst.term.rows}`;
+  inst.onSizeChange?.(inst.term.cols, inst.term.rows);
   if (restoreScroll) scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot);
   inst.lastFitWidth = rect.width;
   inst.lastFitHeight = rect.height;
@@ -309,6 +310,9 @@ export function createTerminal(connID, settings, options = {}) {
       inst.containerEl = container;
       inst.containerId = containerId;
       inst.sizeElId = sizeElId;
+      inst.onFocus = options.onFocus || null;
+      inst.onSizeChange = options.onSizeChange || null;
+      inst.onSizeChange?.(inst.term.cols, inst.term.rows);
       return inst.term;
     }
     // Font changed: tear down old instance and fall through to rebuild.
@@ -318,6 +322,7 @@ export function createTerminal(connID, settings, options = {}) {
     inst.xtermEl.removeEventListener('compositionend', inst.compositionEndHandler, true);
     inst.xtermEl.removeEventListener('beforeinput', inst.beforeInputHandler, true);
     inst.xtermEl.removeEventListener('paste', inst.pasteHandler, true);
+    inst.xtermEl.removeEventListener('focusin', inst.focusInHandler, true);
     inst.xtermEl.removeEventListener('mousedown', inst.mouseDownHandler, true);
     inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
     document.removeEventListener('mousemove', inst.mouseMoveHandler, true);
@@ -468,6 +473,10 @@ export function createTerminal(connID, settings, options = {}) {
     const inst = instances[connID];
     if (inst) rememberViewport(inst);
   });
+  const focusInHandler = () => {
+    instances[connID]?.onFocus?.();
+  };
+  xtermEl.addEventListener('focusin', focusInHandler, true);
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
@@ -766,9 +775,11 @@ export function createTerminal(connID, settings, options = {}) {
     term, fitAddon, resizeObs, dataHandler,
     connID,
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
-    compositionStartHandler, compositionEndHandler, beforeInputHandler, pasteHandler,
+    compositionStartHandler, compositionEndHandler, beforeInputHandler, pasteHandler, focusInHandler,
     xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize,
     containerEl: container, containerId, sizeElId,
+    onFocus: options.onFocus || null,
+    onSizeChange: options.onSizeChange || null,
     savedViewportY: term.buffer.active.viewportY,
     savedBaseY: term.buffer.active.baseY,
     restoreSnapshot: null,
@@ -781,6 +792,8 @@ export function createTerminal(connID, settings, options = {}) {
     lastFitHeight: 0,
     disposables: [osc7Disposable, osc1337Disposable, dataDisposable, scrollDisposable],
   };
+
+  options.onSizeChange?.(term.cols, term.rows);
 
   return term;
 }
@@ -811,6 +824,7 @@ export function destroyTerminal(connID) {
   inst.xtermEl.removeEventListener('compositionend',   inst.compositionEndHandler,   true);
   inst.xtermEl.removeEventListener('beforeinput',      inst.beforeInputHandler,      true);
   inst.xtermEl.removeEventListener('paste',            inst.pasteHandler,            true);
+  inst.xtermEl.removeEventListener('focusin',           inst.focusInHandler,           true);
   inst.xtermEl.removeEventListener('mousedown',   inst.mouseDownHandler,  true);
   inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
   document.removeEventListener('mousemove',       inst.mouseMoveHandler,  true);
