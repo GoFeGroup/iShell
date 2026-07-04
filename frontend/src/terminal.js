@@ -557,10 +557,15 @@ export function createTerminal(connID, settings, options = {}) {
     const mode = term.modes?.mouseTrackingMode;
     return !!mode && mode !== 'none';
   };
-  const copySelectionToClipboard = ({ defer = false } = {}) => {
+  const copySelectionToClipboard = ({ defer = false, aiAction = null } = {}) => {
     const copy = () => {
       const sel = term.getSelection();
-      if (sel) window.runtime.ClipboardSetText(sel).catch(() => {});
+      if (sel) {
+        window.runtime.ClipboardSetText(sel).catch(() => {});
+        if (aiAction) window.dispatchEvent(new CustomEvent('ishell:terminalSelection', {
+          detail: { connID, text: sel, x: aiAction.x, y: aiAction.y },
+        }));
+      }
     };
     if (defer) {
       requestAnimationFrame(copy);
@@ -693,7 +698,7 @@ export function createTerminal(connID, settings, options = {}) {
     }
     if (isDragging) {
       // Drag selection: keep selection visible and copy it when selection completes.
-      copySelectionToClipboard({ defer: true });
+      copySelectionToClipboard({ defer: true, aiAction: { x: e.clientX, y: e.clientY } });
     } else if (mouseDownPos) {
       // Replay click events to xterm only after mouseup. This keeps click-based
       // cursor positioning while preventing double-tap from entering sticky
@@ -709,7 +714,7 @@ export function createTerminal(connID, settings, options = {}) {
         // Double/triple click: replay to create word/line selection.
         replayMouseEvent(target, mouseDownPos, 'mousedown', 1);
         replayMouseEvent(target, e, 'mouseup', 0, mouseDownPos.detail);
-        copySelectionToClipboard({ defer: true });
+        copySelectionToClipboard({ defer: true, aiAction: { x: e.clientX, y: e.clientY } });
       }
       lastClickInfo = {
         clientX: mouseDownPos.clientX,
@@ -859,6 +864,21 @@ export function writeTerminalLine(connID, text) {
 // Returns the last terminal-reported CWD for connID, or null if the shell hasn't reported one.
 export function getTerminalCWD(connID) {
   return instances[connID]?.cwd ?? cwdByConn[connID] ?? null;
+}
+
+export function getTerminalSelection(connID) {
+  return instances[connID]?.term.getSelection() || '';
+}
+
+export function getTerminalRecentOutput(connID, maxLines = 200) {
+  const buffer = instances[connID]?.term.buffer.active;
+  if (!buffer) return '';
+  const start = Math.max(0, buffer.length - Math.max(1, maxLines));
+  const lines = [];
+  for (let i = start; i < buffer.length; i++) {
+    lines.push(buffer.getLine(i)?.translateToString(true) || '');
+  }
+  return lines.join('\n').replace(/\s+$/, '');
 }
 
 export function fitTerminal(connID, { restoreScroll = false, caller = 'fitTerminal' } = {}) {

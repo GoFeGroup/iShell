@@ -257,6 +257,7 @@ export async function initSettings(initialPage = 'appearance') {
         { group: t('settings.shortcuts.groupNavigation') },
         [t('settings.shortcuts.switchTab'),      `${alt}+1 … ${alt}+9`],
         [t('settings.shortcuts.toggleSidebar'),  isMac ? `${mod}+B` : 'Alt+B'],
+        [t('settings.shortcuts.toggleAI'),       'Alt+Shift+A'],
         [t('settings.shortcuts.toggleFullscreen'), isMac ? '⌘+Enter' : 'Alt+Enter'],
         [t('settings.shortcuts.openSettings'),   `${alt}+,`],
         { group: t('settings.shortcuts.groupProfiles') },

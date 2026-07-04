@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
 	session_id    TEXT    NOT NULL,
 	role          TEXT    NOT NULL,
 	content       TEXT    NOT NULL DEFAULT '',
+	context_json  TEXT    NOT NULL DEFAULT '',
 	tool_calls    TEXT    NOT NULL DEFAULT '',
 	tool_call_id  TEXT    NOT NULL DEFAULT '',
 	created_at    DATETIME NOT NULL
@@ -121,6 +122,7 @@ func (s *Store) runMigrations() error {
 	migrations := []col{
 		{"sessions", "jump_profile_id", "TEXT NOT NULL DEFAULT ''"},
 		{"ai_chat_sessions", "target_id", "TEXT NOT NULL DEFAULT ''"},
+		{"ai_chat_messages", "context_json", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, m := range migrations {
 		rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", m.table))

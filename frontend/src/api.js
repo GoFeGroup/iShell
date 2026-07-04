@@ -61,7 +61,7 @@ export const createAIChatSession = (targetID, title)   => go().CreateAIChatSessi
 export const renameAIChatSession = (id, title)         => go().RenameAIChatSession(id, title);
 export const deleteAIChatSession = (id)                => go().DeleteAIChatSession(id);
 export const getAIChatMessages   = (sessionID)         => go().GetAIChatMessages(sessionID);
-export const sendAIMessage       = (chatID, connID, t) => go().SendAIMessage(chatID, connID, t);
+export const sendAIMessage       = (chatID, connID, t, contexts = []) => go().SendAIMessage(chatID, connID, t, contexts);
 export const approveAIToolCall   = (pendingID)         => go().ApproveAIToolCall(pendingID);
 export const rejectAIToolCall    = (pendingID)         => go().RejectAIToolCall(pendingID);
 export const setAIAutoExec       = (chatID, on)        => go().SetAIAutoExec(chatID, on);

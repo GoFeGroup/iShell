@@ -26,7 +26,7 @@ func TestListAIChatMessagesPreservesInsertionOrder(t *testing.T) {
 
 	const sameTimestamp = "2026-06-22T10:00:00Z"
 	inserted := []AIChatMessage{
-		{ID: "id-5", SessionID: sess.ID, Role: "user", Content: "list files", CreatedAt: sameTimestamp},
+		{ID: "id-5", SessionID: sess.ID, Role: "user", Content: "list files", ContextJSON: `[{"kind":"terminal_selection","label":"selection","content":"ls"}]`, CreatedAt: sameTimestamp},
 		{ID: "id-4", SessionID: sess.ID, Role: "assistant", Content: "", ToolCalls: `[{"id":"call_1","type":"function","function":{"name":"terminal_run","arguments":"{}"}}]`, CreatedAt: sameTimestamp},
 		{ID: "id-3", SessionID: sess.ID, Role: "tool", Content: "file1\nfile2", ToolCallID: "call_1", CreatedAt: sameTimestamp},
 		{ID: "id-2", SessionID: sess.ID, Role: "assistant", Content: "here are your files", CreatedAt: sameTimestamp},
@@ -51,6 +51,9 @@ func TestListAIChatMessagesPreservesInsertionOrder(t *testing.T) {
 			t.Fatalf("message %d out of order: want id=%s role=%s, got id=%s role=%s",
 				i, want.ID, want.Role, got[i].ID, got[i].Role)
 		}
+	}
+	if got[0].ContextJSON != inserted[0].ContextJSON {
+		t.Fatalf("context JSON did not round-trip: got %q", got[0].ContextJSON)
 	}
 
 	// The tool message must directly follow the assistant message that

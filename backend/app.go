@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -771,7 +772,7 @@ func (a *App) GetAIChatMessages(sessionID string) ([]storage.AIChatMessage, erro
 // and returns immediately; the model's reply (and any tool-call activity)
 // arrives via "ai:*:<chatID>" events. connID is whichever terminal tab the
 // frontend currently has active, resolved at send-time — "" if none.
-func (a *App) SendAIMessage(chatID, connID, text string) error {
+func (a *App) SendAIMessage(chatID, connID, text string, contexts []storage.AIMessageContext) error {
 	if a.store == nil || a.aiAgent == nil {
 		return fmt.Errorf("AI is not ready")
 	}
@@ -802,8 +803,38 @@ func (a *App) SendAIMessage(chatID, connID, text string) error {
 			}
 		}()
 	}
-	go a.aiAgent.RunTurn(a.ctx, ai.RunOptions{ChatID: chatID, ConnID: connID, UserText: text})
+	contexts = sanitizeAIContexts(contexts)
+	go a.aiAgent.RunTurn(a.ctx, ai.RunOptions{ChatID: chatID, ConnID: connID, UserText: text, Contexts: contexts})
 	return nil
+}
+
+const maxAIContextBytes = 64 * 1024
+
+func sanitizeAIContexts(contexts []storage.AIMessageContext) []storage.AIMessageContext {
+	if len(contexts) > 8 {
+		contexts = contexts[:8]
+	}
+	result := make([]storage.AIMessageContext, 0, len(contexts))
+	for _, item := range contexts {
+		item.Kind = strings.TrimSpace(item.Kind)
+		item.Label = strings.TrimSpace(item.Label)
+		if item.Kind == "" || item.Content == "" {
+			continue
+		}
+		labelRunes := []rune(item.Label)
+		if len(labelRunes) > 160 {
+			item.Label = string(labelRunes[:160])
+		}
+		if len(item.Content) > maxAIContextBytes {
+			item.Content = item.Content[:maxAIContextBytes]
+			for !utf8.ValidString(item.Content) {
+				item.Content = item.Content[:len(item.Content)-1]
+			}
+			item.Truncated = true
+		}
+		result = append(result, item)
+	}
+	return result
 }
 
 func (a *App) ApproveAIToolCall(pendingID string) error {

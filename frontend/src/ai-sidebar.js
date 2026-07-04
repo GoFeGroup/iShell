@@ -9,8 +9,10 @@ import { renderMarkdown } from './markdown.js';
 
 let getActiveTab = () => null;
 let aiEnabled = false;
+let aiSettings = {};
 let activeInstance = null;
-const PERF_DEBUG = true;
+let selectionAction = null;
+const PERF_DEBUG = false;
 
 function perfLog(label, ...args) {
   if (PERF_DEBUG) console.log('[PERF-AI]', label, ...args);
@@ -24,11 +26,43 @@ export function initAISidebar(settings, activeTabGetter) {
   setAISidebarSettings(settings);
   document.getElementById('btn-toggle-ai')?.addEventListener('click', toggleAISidebar);
   window.addEventListener('resize', () => activeInstance?.applySidebarWidth());
+  window.addEventListener('ishell:terminalSelection', e => showSelectionAction(e.detail));
+}
+
+function showSelectionAction(detail) {
+  selectionAction?.remove();
+  if (!detail?.text || !activeInstance) return;
+  const button = document.createElement('button');
+  button.className = 'ai-selection-action';
+  button.textContent = t('aiSidebar.askAI');
+  button.style.left = Math.min(window.innerWidth - 100, Math.max(8, detail.x + 8)) + 'px';
+  button.style.top = Math.min(window.innerHeight - 40, Math.max(8, detail.y + 8)) + 'px';
+  button.addEventListener('click', async () => {
+    const instance = activeInstance;
+    instance.setOpen(true, { animate: true, notify: true });
+    if (!instance.currentChatID) await instance.handleNewChat();
+    instance.addContext('terminal_selection', t('aiSidebar.selectedTerminalText'), detail.text);
+    instance.focusInput();
+    button.remove();
+    if (selectionAction === button) selectionAction = null;
+  });
+  document.body.appendChild(button);
+  selectionAction = button;
+  const dismiss = e => {
+    if (e.target === button) return;
+    button.remove();
+    if (selectionAction === button) selectionAction = null;
+    document.removeEventListener('pointerdown', dismiss, true);
+  };
+  setTimeout(() => document.addEventListener('pointerdown', dismiss, true), 0);
+  setTimeout(() => dismiss({ target: null }), 8000);
 }
 
 export function setAISidebarSettings(settings) {
+  aiSettings = settings || {};
   aiEnabled = !!settings?.ai_enabled;
   if (!aiEnabled) activeInstance?.setOpen(false, { animate: true, notify: true });
+  activeInstance?.updateHeader();
   updateToolbarButton();
 }
 
@@ -117,8 +151,15 @@ class AISidebarInstance {
     this.listEl = els.listEl;
     this.chatEl = els.chatEl;
     this.backBtn = els.backBtn;
+    this.historyBtn = els.historyBtn;
+    this.newBtn = els.newBtn;
+    this.titleEl = els.titleEl;
+    this.subtitleEl = els.subtitleEl;
     this.closeBtn = els.closeBtn;
     this.getConnID = options.getConnID || (() => '');
+    this.getTerminalMeta = options.getTerminalMeta || (() => ({}));
+    this.getTerminalSelection = options.getTerminalSelection || (() => '');
+    this.getTerminalRecentOutput = options.getTerminalRecentOutput || (() => '');
     this.onLayoutChange = options.onLayoutChange || (() => {});
     this.onResizeStart = options.onResizeStart || (() => {});
     this.onResizeEnd = options.onResizeEnd || (() => {});
@@ -131,6 +172,11 @@ class AISidebarInstance {
     this.currentAssistantBubble = null;
     this.currentAssistantRaw = '';
     this.isSending = false;
+    this.stopRequested = false;
+    this.userNearBottom = true;
+    this.pendingContexts = [];
+    this.lastFailedPrompt = null;
+    this.markdownFrame = 0;
     this.cardsByToolCallID = {};
     this.confirmingDeleteID = null;
     this.unsubscribers = [];
@@ -143,7 +189,10 @@ class AISidebarInstance {
     this.active = false;
 
     this.backBtn?.addEventListener('click', () => this.showSessionList());
+    this.historyBtn?.addEventListener('click', () => this.showSessionList());
+    this.newBtn?.addEventListener('click', () => this.handleNewChat());
     this.closeBtn?.addEventListener('click', () => this.setOpen(false, { animate: true, notify: true }));
+    this.updateHeader();
     this.initResizer();
     this.applySidebarWidth();
     this.setOpen(!!this.tab.aiSidebarOpen, { animate: false, notify: false, deferInnerRestore: true });
@@ -164,6 +213,7 @@ class AISidebarInstance {
       messageNodes: this.messagesEl?.children.length || 0,
     });
     this.active = true;
+    this.updateHeader();
     if (!aiEnabled) {
       this.setOpen(false, { animate: false, notify: false });
       return;
@@ -208,11 +258,13 @@ class AISidebarInstance {
     this.cancelPendingInnerShow();
     this.cleanupResizerDrag?.();
     this.cleanupResizerDrag = null;
+    if (this.markdownFrame) cancelAnimationFrame(this.markdownFrame);
   }
 
   syncTarget() {
     if (!this.active || !this.isTerminalActive() || !aiEnabled) return;
     const newTargetID = this.tab.sessionID || null;
+    this.updateHeader();
     if (newTargetID === this.currentTargetID) return;
     this.currentTargetID = newTargetID;
     this.leaveChat();
@@ -220,7 +272,25 @@ class AISidebarInstance {
   }
 
   toggleByUser() {
-    this.setOpen(this.root.classList.contains('collapsed'), { animate: true, notify: true });
+    const opening = this.root.classList.contains('collapsed');
+    this.setOpen(opening, { animate: true, notify: true });
+    if (opening) requestAnimationFrame(() => this.focusInput());
+  }
+
+  focusInput() {
+    if (this.isOpen()) this.inputEl?.focus();
+  }
+
+  updateHeader() {
+    const meta = this.getTerminalMeta?.() || {};
+    const sess = this.chatsForTarget.find(s => s.id === this.currentChatID);
+    if (this.titleEl) this.titleEl.textContent = sess?.title || t('aiSidebar.title');
+    const parts = [meta.host || meta.label, meta.cwd, meta.model || aiSettings.ai_model].filter(Boolean);
+    if (this.subtitleEl) {
+      this.subtitleEl.textContent = parts.join(' · ');
+      this.subtitleEl.title = parts.join('\n');
+    }
+    if (this.historyBtn) this.historyBtn.style.display = this.currentChatID ? '' : 'none';
   }
 
   isOpen() {
@@ -264,6 +334,7 @@ class AISidebarInstance {
       perfLog('setOpen before ensureOpenContent', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
       this.ensureOpenContent().finally(() => {
         perfLog('setOpen ensureOpenContent done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
+        if (this.isOpen()) this.focusInput();
       });
     }
     if (layoutChanging) this.scheduleLayoutChange(!!animate);
@@ -394,6 +465,10 @@ class AISidebarInstance {
 
   initResizer() {
     if (!this.resizer || !this.root) return;
+    this.resizer.tabIndex = 0;
+    this.resizer.setAttribute('role', 'separator');
+    this.resizer.setAttribute('aria-orientation', 'vertical');
+    this.resizer.setAttribute('aria-label', t('aiSidebar.resize'));
     let startX = 0;
     let startWidth = 0;
     let resizing = false;
@@ -443,6 +518,16 @@ class AISidebarInstance {
           this.onResizeEnd();
         }
       };
+    });
+    this.resizer.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const delta = e.key === 'ArrowLeft' ? 16 : -16;
+      const width = clampSidebarWidth((parseInt(this.root.style.width, 10) || DEFAULT_SIDEBAR_WIDTH) + delta);
+      this.root.style.width = width + 'px';
+      if (this.inner) this.inner.style.width = width + 'px';
+      saveSidebarWidth(this.tab, width);
+      this.onLayoutChange();
     });
   }
 
@@ -507,20 +592,13 @@ class AISidebarInstance {
     if (this.chatEl) this.chatEl.style.display = 'none';
     if (this.listEl) this.listEl.style.display = '';
     if (this.backBtn) this.backBtn.style.display = 'none';
+    this.updateHeader();
     return this.renderSessionList();
   }
 
   async renderSessionList() {
     if (!this.listEl || !this.currentTargetID) return;
     this.listEl.innerHTML = '';
-
-    const newBtn = document.createElement('button');
-    newBtn.className = 'btn btn-primary btn-sm';
-    newBtn.style.width = '100%';
-    newBtn.style.marginBottom = '8px';
-    newBtn.textContent = t('aiSidebar.newChat');
-    newBtn.addEventListener('click', () => this.handleNewChat());
-    this.listEl.appendChild(newBtn);
 
     try {
       this.chatsForTarget = (await listAIChatSessionsForTarget(this.currentTargetID)) || [];
@@ -537,13 +615,39 @@ class AISidebarInstance {
       this.listEl.appendChild(empty);
       return;
     }
-    this.chatsForTarget.forEach(sess => this.listEl.appendChild(this.renderSessionItem(sess)));
+    const results = document.createElement('div');
+    results.className = 'ai-session-results';
+    const renderMatches = (query = '') => {
+      const normalized = query.trim().toLocaleLowerCase();
+      results.replaceChildren(...this.chatsForTarget
+        .filter(sess => !normalized || (sess.title || '').toLocaleLowerCase().includes(normalized))
+        .map(sess => this.renderSessionItem(sess)));
+      if (!results.children.length) {
+        const empty = document.createElement('div');
+        empty.className = 'ai-empty';
+        empty.textContent = t('aiSidebar.noMatchingChats');
+        results.appendChild(empty);
+      }
+    };
+    if (this.chatsForTarget.length > 8) {
+      const search = document.createElement('input');
+      search.className = 'input ai-session-search';
+      search.type = 'search';
+      search.placeholder = t('aiSidebar.searchChats');
+      search.setAttribute('aria-label', t('aiSidebar.searchChats'));
+      search.addEventListener('input', () => renderMatches(search.value));
+      this.listEl.appendChild(search);
+    }
+    this.listEl.appendChild(results);
+    renderMatches();
   }
 
   renderSessionItem(sess) {
     const item = document.createElement('div');
     item.className = 'ai-session-item';
     item.dataset.id = sess.id;
+    item.tabIndex = 0;
+    item.setAttribute('role', 'button');
     const confirming = this.confirmingDeleteID === sess.id;
     item.innerHTML = `
       <div class="ai-session-item-info">
@@ -569,6 +673,12 @@ class AISidebarInstance {
       if (action === 'cancel-delete') { this.confirmingDeleteID = null; this.renderSessionList(); return; }
       if (confirming) return;
       this.openChat(sess.id);
+    });
+    item.addEventListener('keydown', e => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target === item && !confirming) {
+        e.preventDefault();
+        this.openChat(sess.id);
+      }
     });
     return item;
   }
@@ -652,6 +762,7 @@ class AISidebarInstance {
 
     if (this.listEl) this.listEl.style.display = 'none';
     if (this.backBtn) this.backBtn.style.display = '';
+    this.updateHeader();
     if (this.chatEl) {
       this.chatEl.style.display = '';
       if (!sameChat || !this.messagesEl) this.buildChatViewSkeleton(this.chatEl);
@@ -662,6 +773,9 @@ class AISidebarInstance {
     if (!sameChat || !this.messagesEl) this.lastRenderedSignature = null;
     perfLog('openChat before refresh', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
     await this.refreshCurrentChat(chatID);
+    if (this.active && this.currentChatID === chatID) {
+      try { this.setSending(await isAIRunActive(chatID)); } catch { /* keep idle state */ }
+    }
     perfLog('openChat done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
   }
 
@@ -715,6 +829,8 @@ class AISidebarInstance {
     this.currentChatID = null;
     this.currentAssistantBubble = null;
     this.cardsByToolCallID = {};
+    this.pendingContexts = [];
+    this.updateHeader();
   }
 
   buildChatViewSkeleton(chatView) {
@@ -722,27 +838,55 @@ class AISidebarInstance {
 
     const messages = document.createElement('div');
     messages.className = 'ai-chat-messages';
-
-    const autoexecRow = document.createElement('div');
-    autoexecRow.className = 'ai-autoexec-row';
-    const label = document.createElement('span');
-    label.textContent = t('aiSidebar.autoExecLabel');
-    label.title = t('aiSidebar.autoExecDesc');
-    const toggle = document.createElement('div');
-    toggle.className = 'toggle-switch' + (this.currentAutoExec ? ' on' : '');
-    toggle.addEventListener('click', async () => {
-      const next = !toggle.classList.contains('on');
-      toggle.classList.toggle('on', next);
-      this.currentAutoExec = next;
-      try { await setAIAutoExec(this.currentChatID, next); } catch (e) { showToast('❌ ' + e); }
+    messages.addEventListener('scroll', () => {
+      this.userNearBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 72;
+      this.latestBtn?.classList.toggle('visible', !this.userNearBottom);
     });
-    autoexecRow.append(label, toggle);
+
+    const latestBtn = document.createElement('button');
+    latestBtn.className = 'btn btn-secondary btn-sm ai-latest-btn';
+    latestBtn.textContent = t('aiSidebar.backToLatest');
+    latestBtn.addEventListener('click', () => {
+      this.userNearBottom = true;
+      messages.scrollTop = messages.scrollHeight;
+      latestBtn.classList.remove('visible');
+    });
+
+    const composer = document.createElement('div');
+    composer.className = 'ai-composer';
+    const contextRow = document.createElement('div');
+    contextRow.className = 'ai-context-row';
+    const contextChips = document.createElement('div');
+    contextChips.className = 'ai-context-chips';
+    const contextMenu = document.createElement('details');
+    contextMenu.className = 'ai-context-menu';
+    contextMenu.innerHTML = `<summary aria-label="${t('aiSidebar.addContext')}">＋ ${t('aiSidebar.context')}</summary>`;
+    const menuBody = document.createElement('div');
+    menuBody.className = 'ai-context-menu-body';
+    const selectionBtn = document.createElement('button');
+    selectionBtn.type = 'button';
+    selectionBtn.textContent = t('aiSidebar.attachSelection');
+    selectionBtn.addEventListener('click', () => {
+      this.addContext('terminal_selection', t('aiSidebar.selectedTerminalText'), this.getTerminalSelection());
+      contextMenu.open = false;
+    });
+    const outputBtn = document.createElement('button');
+    outputBtn.type = 'button';
+    outputBtn.textContent = t('aiSidebar.attachRecentOutput');
+    outputBtn.addEventListener('click', () => {
+      this.addContext('terminal_output', t('aiSidebar.recentTerminalOutput'), this.getTerminalRecentOutput());
+      contextMenu.open = false;
+    });
+    menuBody.append(selectionBtn, outputBtn);
+    contextMenu.appendChild(menuBody);
+    contextRow.append(contextMenu, contextChips);
 
     const inputRow = document.createElement('div');
     inputRow.className = 'ai-chat-input-row';
     const textarea = document.createElement('textarea');
     textarea.rows = 1;
     textarea.placeholder = t('aiSidebar.inputPlaceholder');
+    textarea.value = sessionStorage.getItem(this.draftKey()) || '';
     let composing = false;
     let compositionJustEndedUntil = 0;
     textarea.addEventListener('compositionstart', () => { composing = true; });
@@ -757,46 +901,169 @@ class AISidebarInstance {
         this.handleSend();
       }
     });
-    const sendBtn = document.createElement('button');
-    sendBtn.className = 'btn btn-primary btn-sm ai-chat-send';
-    sendBtn.textContent = t('aiSidebar.send');
-    sendBtn.addEventListener('click', () => this.handleSend());
-    const stopBtn = document.createElement('button');
-    stopBtn.className = 'btn btn-secondary btn-sm ai-chat-stop';
-    stopBtn.textContent = t('aiSidebar.stop');
-    stopBtn.style.display = 'none';
-    stopBtn.addEventListener('click', async () => {
-      try { await stopAIRun(this.currentChatID); } catch (e) { showToast('❌ ' + e); }
+    textarea.addEventListener('input', () => {
+      this.resizeInput();
+      sessionStorage.setItem(this.draftKey(), textarea.value);
     });
-    inputRow.append(textarea, sendBtn, stopBtn);
+    const actionBtn = document.createElement('button');
+    actionBtn.className = 'btn btn-primary btn-icon ai-chat-action';
+    actionBtn.setAttribute('aria-label', t('aiSidebar.send'));
+    actionBtn.textContent = '↑';
+    actionBtn.addEventListener('click', async () => {
+      if (!this.isSending) return this.handleSend();
+      try {
+        this.stopRequested = true;
+        this.setRunStatus(t('aiSidebar.stopping'));
+        await stopAIRun(this.currentChatID);
+      } catch (e) { showToast('❌ ' + e); }
+    });
+    inputRow.append(textarea, actionBtn);
+
+    const footer = document.createElement('div');
+    footer.className = 'ai-composer-footer';
+    const status = document.createElement('span');
+    status.className = 'ai-run-status';
+    const modeBtn = document.createElement('button');
+    modeBtn.type = 'button';
+    modeBtn.className = 'ai-exec-mode';
+    modeBtn.addEventListener('click', () => this.toggleAutoExec(modeBtn));
+    footer.append(status, modeBtn);
+    composer.append(contextRow, inputRow, footer);
+
     this.messagesEl = messages;
     this.inputEl = textarea;
-    this.sendBtn = sendBtn;
-    this.stopBtn = stopBtn;
+    this.actionBtn = actionBtn;
+    this.statusEl = status;
+    this.modeBtn = modeBtn;
+    this.contextChipsEl = contextChips;
+    this.latestBtn = latestBtn;
+    this.updateExecMode();
+    this.renderPendingContexts();
+    requestAnimationFrame(() => this.resizeInput());
 
-    chatView.append(messages, autoexecRow, inputRow);
+    chatView.append(messages, latestBtn, composer);
+  }
+
+  draftKey() {
+    return 'ai-draft-' + (this.currentChatID || 'new');
+  }
+
+  resizeInput() {
+    if (!this.inputEl) return;
+    this.inputEl.style.height = 'auto';
+    this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 132) + 'px';
+  }
+
+  setRunStatus(text = '') {
+    if (this.statusEl) this.statusEl.textContent = text;
+  }
+
+  addContext(kind, label, content) {
+    content = String(content || '').trim();
+    if (!content) {
+      showToast(t('aiSidebar.noContextAvailable'));
+      return;
+    }
+    const maxBytes = 64 * 1024;
+    let truncated = false;
+    if (new TextEncoder().encode(content).length > maxBytes) {
+      content = content.slice(0, maxBytes);
+      truncated = true;
+    }
+    this.pendingContexts.push({ kind, label, content, truncated });
+    this.renderPendingContexts();
+  }
+
+  renderPendingContexts() {
+    if (!this.contextChipsEl) return;
+    this.contextChipsEl.replaceChildren(...this.pendingContexts.map((item, index) => {
+      const chip = document.createElement('span');
+      chip.className = 'ai-context-chip';
+      chip.title = item.label + (item.truncated ? ' · ' + t('aiSidebar.truncated') : '');
+      const label = document.createElement('span');
+      label.textContent = item.label + (item.truncated ? '…' : '');
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', t('aiSidebar.removeContext', { label: item.label }));
+      remove.addEventListener('click', () => {
+        this.pendingContexts.splice(index, 1);
+        this.renderPendingContexts();
+      });
+      chip.append(label, remove);
+      return chip;
+    }));
+  }
+
+  async toggleAutoExec(button) {
+    if (this.currentAutoExec) {
+      this.currentAutoExec = false;
+      try { await setAIAutoExec(this.currentChatID, false); } catch (e) {
+        this.currentAutoExec = true;
+        showToast('❌ ' + e);
+      }
+      this.updateExecMode();
+      return;
+    }
+    if (button.dataset.confirming !== 'true') {
+      button.dataset.confirming = 'true';
+      button.textContent = t('aiSidebar.confirmAutoExec');
+      this.setRunStatus(t('aiSidebar.autoExecWarning'));
+      setTimeout(() => {
+        if (button.dataset.confirming === 'true') {
+          delete button.dataset.confirming;
+          this.setRunStatus('');
+          this.updateExecMode();
+        }
+      }, 5000);
+      return;
+    }
+    delete button.dataset.confirming;
+    this.currentAutoExec = true;
+    try { await setAIAutoExec(this.currentChatID, true); } catch (e) {
+      this.currentAutoExec = false;
+      showToast('❌ ' + e);
+    }
+    this.setRunStatus('');
+    this.updateExecMode();
+  }
+
+  updateExecMode() {
+    if (!this.modeBtn) return;
+    this.modeBtn.textContent = this.currentAutoExec ? t('aiSidebar.autoExecOn') : t('aiSidebar.askBeforeRun');
+    this.modeBtn.classList.toggle('danger', this.currentAutoExec);
+    this.modeBtn.title = t('aiSidebar.autoExecDesc');
   }
 
   async handleSend() {
     if (!this.inputEl || this.isSending || !this.currentChatID) return;
     const text = this.inputEl.value.trim();
     if (!text) return;
+    const contexts = this.pendingContexts.map(item => ({ ...item }));
+    this.lastFailedPrompt = { text, contexts };
     this.inputEl.value = '';
-    this.appendUserBubble(text);
+    sessionStorage.removeItem(this.draftKey());
+    this.resizeInput();
+    this.pendingContexts = [];
+    this.renderPendingContexts();
+    this.appendUserBubble(text, contexts);
     this.setSending(true);
     try {
-      await sendAIMessage(this.currentChatID, this.getConnID() || '', text);
+      await sendAIMessage(this.currentChatID, this.getConnID() || '', text, contexts);
     } catch (e) {
-      this.appendErrorBubble(String(e));
+      this.appendErrorBubble(String(e), true);
       this.setSending(false);
     }
   }
 
   setSending(sending) {
     this.isSending = sending;
-    if (this.sendBtn) this.sendBtn.style.display = sending ? 'none' : '';
-    if (this.stopBtn) this.stopBtn.style.display = sending ? '' : 'none';
-    if (this.inputEl) this.inputEl.disabled = sending;
+    if (this.actionBtn) {
+      this.actionBtn.textContent = sending ? '■' : '↑';
+      this.actionBtn.classList.toggle('running', sending);
+      this.actionBtn.setAttribute('aria-label', t(sending ? 'aiSidebar.stop' : 'aiSidebar.send'));
+    }
+    this.setRunStatus(sending ? t('aiSidebar.thinking') : '');
   }
 
   subscribeChatEvents(chatID) {
@@ -825,6 +1092,7 @@ class AISidebarInstance {
   handleTitle({ chat_id: chatID, title }) {
     const sess = this.chatsForTarget.find(item => item.id === chatID);
     if (sess && title) sess.title = title;
+    if (chatID === this.currentChatID) this.updateHeader();
   }
 
   handleDelta({ content }) {
@@ -832,10 +1100,12 @@ class AISidebarInstance {
   }
 
   handleToolCall(payload) {
+    this.setRunStatus(t('aiSidebar.awaitingApproval'));
     this.renderPendingToolCard(payload);
   }
 
   handleToolResult(payload) {
+    this.setRunStatus(t('aiSidebar.processingResult'));
     this.applyToolResult(payload);
   }
 
@@ -844,19 +1114,38 @@ class AISidebarInstance {
   }
 
   handleDone() {
+    if (this.markdownFrame) {
+      cancelAnimationFrame(this.markdownFrame);
+      this.markdownFrame = 0;
+    }
+    if (this.currentAssistantBubble) {
+      this.currentAssistantBubble.innerHTML = renderMarkdown(this.currentAssistantRaw);
+      addMessageActions(this.currentAssistantBubble);
+    }
     this.currentAssistantBubble = null;
+    this.stopRequested = false;
+    this.lastFailedPrompt = null;
     this.setSending(false);
   }
 
   handleError({ message }) {
     this.currentAssistantBubble = null;
-    this.appendErrorBubble(t('aiSidebar.chatError', { e: message }));
+    if (this.stopRequested) {
+      this.appendStatusMessage(t('aiSidebar.stopped'));
+      this.stopRequested = false;
+    } else {
+      this.appendErrorBubble(t('aiSidebar.chatError', { e: message }), true);
+    }
     this.setSending(false);
   }
 
-  scrollToBottom() {
+  scrollToBottom(force = false) {
     if (!this.messagesEl) return;
     if (!this.active || !this.isTerminalActive() || !this.isOpen()) return;
+    if (!force && !this.userNearBottom) {
+      this.latestBtn?.classList.add('visible');
+      return;
+    }
     const startedAt = performance.now();
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
     perfLog('scrollToBottom', {
@@ -867,17 +1156,46 @@ class AISidebarInstance {
     });
   }
 
-  appendUserBubble(text) {
+  appendUserBubble(text, contexts = []) {
+    this.messagesEl?.querySelector('.ai-chat-empty')?.remove();
     const el = document.createElement('div');
     el.className = 'ai-msg user';
-    el.textContent = text;
+    el.appendChild(messageContextSummary(contexts));
+    const body = document.createElement('div');
+    body.textContent = text;
+    el.appendChild(body);
+    this.messagesEl?.appendChild(el);
+    this.userNearBottom = true;
+    this.scrollToBottom(true);
+  }
+
+  appendErrorBubble(text, retryable = false) {
+    const el = document.createElement('div');
+    el.className = 'ai-msg error';
+    const body = document.createElement('span');
+    body.textContent = text;
+    el.appendChild(body);
+    if (retryable && this.lastFailedPrompt) {
+      const retry = document.createElement('button');
+      retry.className = 'btn btn-ghost btn-sm';
+      retry.textContent = t('aiSidebar.retry');
+      retry.addEventListener('click', () => {
+        this.inputEl.value = this.lastFailedPrompt.text;
+        this.pendingContexts = this.lastFailedPrompt.contexts.map(item => ({ ...item }));
+        this.renderPendingContexts();
+        this.resizeInput();
+        el.remove();
+        this.handleSend();
+      });
+      el.appendChild(retry);
+    }
     this.messagesEl?.appendChild(el);
     this.scrollToBottom();
   }
 
-  appendErrorBubble(text) {
+  appendStatusMessage(text) {
     const el = document.createElement('div');
-    el.className = 'ai-msg error';
+    el.className = 'ai-run-note';
     el.textContent = text;
     this.messagesEl?.appendChild(el);
     this.scrollToBottom();
@@ -891,14 +1209,22 @@ class AISidebarInstance {
       this.currentAssistantRaw = '';
     }
     this.currentAssistantRaw += content;
-    this.currentAssistantBubble.innerHTML = renderMarkdown(this.currentAssistantRaw);
-    this.scrollToBottom();
+    this.setRunStatus(t('aiSidebar.responding'));
+    if (!this.markdownFrame) {
+      this.markdownFrame = requestAnimationFrame(() => {
+        this.markdownFrame = 0;
+        if (!this.currentAssistantBubble) return;
+        this.currentAssistantBubble.innerHTML = renderMarkdown(this.currentAssistantRaw);
+        this.scrollToBottom();
+      });
+    }
   }
 
   renderPendingToolCard({ pending_id, tool_call_id, command }) {
     this.currentAssistantBubble = null;
     const card = document.createElement('div');
     card.className = 'ai-tool-card pending';
+    card.dataset.startedAt = String(Date.now());
 
     const cmdEl = document.createElement('div');
     cmdEl.className = 'ai-tool-card-command';
@@ -942,10 +1268,14 @@ class AISidebarInstance {
     card.className = 'ai-tool-card done';
     card.querySelector('.ai-tool-card-actions')?.remove();
     card.querySelector('.ai-tool-card-status')?.remove();
-    const outEl = document.createElement('div');
-    outEl.className = 'ai-tool-card-output';
-    outEl.textContent = output || '(no output)';
-    card.appendChild(outEl);
+    const startedAt = Number(card.dataset.startedAt);
+    const status = document.createElement('div');
+    status.className = 'ai-tool-card-status';
+    status.textContent = startedAt
+      ? t('aiSidebar.completedIn', { duration: formatDuration(Date.now() - startedAt) })
+      : t('common.done');
+    card.appendChild(status);
+    appendToolOutput(card, output || t('aiSidebar.noOutput'));
     this.scrollToBottom();
   }
 
@@ -996,7 +1326,12 @@ class AISidebarInstance {
       if (m.role === 'user') {
         const el = document.createElement('div');
         el.className = 'ai-msg user';
-        el.textContent = m.content;
+        let contexts = [];
+        try { contexts = JSON.parse(m.context_json || '[]'); } catch { contexts = []; }
+        el.appendChild(messageContextSummary(contexts));
+        const body = document.createElement('div');
+        body.textContent = m.content;
+        el.appendChild(body);
         fragment.appendChild(el);
       } else if (m.role === 'assistant') {
         if (m.content) {
@@ -1020,6 +1355,8 @@ class AISidebarInstance {
     });
     const replaceStartedAt = performance.now();
     this.messagesEl.replaceChildren(fragment);
+    if (!this.messagesEl.children.length) this.renderEmptyState();
+    this.messagesEl.querySelectorAll('.ai-msg.assistant').forEach(el => addMessageActions(el));
     perfLog('renderHistory replaceChildren', {
       tab: this.tab.id,
       cost: (performance.now() - replaceStartedAt).toFixed(1) + 'ms',
@@ -1054,15 +1391,135 @@ class AISidebarInstance {
       status.textContent = t('aiSidebar.rejected');
       card.appendChild(status);
     } else if (resultMsg) {
-      const outEl = document.createElement('div');
-      outEl.className = 'ai-tool-card-output';
-      outEl.textContent = resultMsg.content || '(no output)';
-      card.appendChild(outEl);
+      const status = document.createElement('div');
+      status.className = 'ai-tool-card-status';
+      status.textContent = t('common.done');
+      card.appendChild(status);
+      appendToolOutput(card, resultMsg.content || t('aiSidebar.noOutput'));
     }
 
     parent.appendChild(card);
     if (call.id) this.cardsByToolCallID[call.id] = card;
   }
+
+  renderEmptyState() {
+    if (!this.messagesEl) return;
+    const empty = document.createElement('div');
+    empty.className = 'ai-chat-empty';
+    const title = document.createElement('strong');
+    title.textContent = t('aiSidebar.emptyTitle');
+    const hint = document.createElement('span');
+    hint.textContent = t('aiSidebar.emptyHint');
+    const prompts = document.createElement('div');
+    prompts.className = 'ai-starter-prompts';
+    [t('aiSidebar.promptExplainError'), t('aiSidebar.promptSummarizeOutput'), t('aiSidebar.promptGenerateCommand')]
+      .forEach(text => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = text;
+        button.addEventListener('click', () => {
+          this.inputEl.value = text;
+          this.resizeInput();
+          this.inputEl.focus();
+        });
+        prompts.appendChild(button);
+      });
+    empty.append(title, hint, prompts);
+    this.messagesEl.appendChild(empty);
+  }
+}
+
+function addMessageActions(container) {
+  const responseText = container.innerText;
+  addCopyButtons(container);
+  if (container.querySelector(':scope > .ai-message-actions')) return;
+  const actions = document.createElement('div');
+  actions.className = 'ai-message-actions';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.textContent = t('aiSidebar.copyResponse');
+  copy.addEventListener('click', () => copyText(copy, responseText));
+  actions.appendChild(copy);
+  container.appendChild(actions);
+}
+
+function addCopyButtons(container) {
+  container.querySelectorAll('pre:not([data-has-header])').forEach(pre => {
+    pre.setAttribute('data-has-header', '1');
+    const code = pre.querySelector('code');
+    const langClass = code?.className?.match(/language-(\S+)/)?.[1] || '';
+    const lang = langClass === 'plaintext' ? '' : langClass;
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'ai-code-block';
+
+    const header = document.createElement('div');
+    header.className = 'ai-code-block-header';
+
+    const langLabel = document.createElement('span');
+    langLabel.textContent = lang;
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'ai-code-copy-btn';
+    copyBtn.textContent = t('aiSidebar.copyCode');
+    copyBtn.addEventListener('click', () => {
+      const text = code ? code.textContent : pre.textContent;
+      copyText(copyBtn, text);
+    });
+
+    header.append(langLabel, copyBtn);
+    pre.replaceWith(wrapper);
+    wrapper.append(header, pre);
+  });
+}
+
+function copyText(button, text) {
+  const original = button.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    button.textContent = t('aiSidebar.copied');
+    setTimeout(() => { button.textContent = original; }, 1500);
+  }).catch(() => showToast(t('aiSidebar.copyFailed')));
+}
+
+function messageContextSummary(contexts = []) {
+  const fragment = document.createDocumentFragment();
+  if (!contexts.length) return fragment;
+  const row = document.createElement('div');
+  row.className = 'ai-message-contexts';
+  contexts.forEach(item => {
+    const chip = document.createElement('span');
+    chip.textContent = item.label || item.kind;
+    chip.title = item.truncated ? t('aiSidebar.truncated') : (item.label || item.kind);
+    row.appendChild(chip);
+  });
+  fragment.appendChild(row);
+  return fragment;
+}
+
+function appendToolOutput(card, output) {
+  const details = document.createElement('details');
+  details.className = 'ai-tool-card-details';
+  const longOutput = output.length > 600 || output.split('\n').length > 12;
+  details.open = !longOutput;
+  const summary = document.createElement('summary');
+  summary.textContent = longOutput ? t('aiSidebar.showOutput') : t('aiSidebar.output');
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'ai-tool-copy';
+  copy.textContent = t('aiSidebar.copyOutput');
+  copy.addEventListener('click', e => {
+    e.preventDefault();
+    copyText(copy, output);
+  });
+  const outEl = document.createElement('div');
+  outEl.className = 'ai-tool-card-output';
+  outEl.textContent = output;
+  details.append(summary, copy, outEl);
+  card.appendChild(details);
+}
+
+function formatDuration(ms) {
+  return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
 }
 
 function escHtml(s) {

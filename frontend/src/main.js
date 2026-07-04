@@ -3,14 +3,14 @@ import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off,
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { openProfileForm } from './profile-form.js';
 import { initProfilePicker, openProfilePicker } from './profile-picker.js';
-import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, rememberTerminalViewport, setTerminalInputEnabled, setTerminalReconnectCallback, suspendTerminalAutoFit, writeTerminalLine } from './terminal.js';
+import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, getTerminalCWD, getTerminalRecentOutput, getTerminalSelection, rememberTerminalViewport, setTerminalInputEnabled, setTerminalReconnectCallback, suspendTerminalAutoFit, writeTerminalLine } from './terminal.js';
 import { initSFTP } from './sftp.js';
 import { initSettings } from './settings.js';
 import { initQuickCommands, setQuickCommandSettings, toggleQuickCommands, updateQuickCommandUI, triggerQuickCommandShortcut } from './quick-command.js';
 import {
   initAISidebar, setAISidebarSettings, notifyActiveTerminalChanged,
   createAISidebarForTab, activateAISidebarForTab, deactivateAISidebar, destroyAISidebarForTab,
-  suspendAISidebarLayout,
+  suspendAISidebarLayout, toggleAISidebar,
 } from './ai-sidebar.js';
 import { showToast } from './toast.js';
 import { t, applyI18nAttrs, setLanguage, getLanguagePref } from './i18n.js';
@@ -482,9 +482,14 @@ function ensureTerminalContent(tab) {
     <aside class="ai-sidebar collapsed">
       <div class="ai-sidebar-inner">
         <div class="ai-sidebar-header">
-          <button class="btn btn-ghost btn-icon ai-back" title="${t('aiSidebar.back')}" style="display:none;">←</button>
-          <div class="ai-sidebar-title">${t('aiSidebar.title')}</div>
-          <button class="btn btn-ghost btn-icon ai-close" title="${t('common.close')}">✕</button>
+          <button class="btn btn-ghost btn-icon ai-back" title="${t('aiSidebar.back')}" aria-label="${t('aiSidebar.back')}" style="display:none;">←</button>
+          <div class="ai-sidebar-heading">
+            <div class="ai-sidebar-title">${t('aiSidebar.title')}</div>
+            <div class="ai-sidebar-subtitle"></div>
+          </div>
+          <button class="btn btn-ghost btn-icon ai-history" title="${t('aiSidebar.history')}" aria-label="${t('aiSidebar.history')}">☰</button>
+          <button class="btn btn-ghost btn-icon ai-new" title="${t('aiSidebar.newChat')}" aria-label="${t('aiSidebar.newChat')}">＋</button>
+          <button class="btn btn-ghost btn-icon ai-close" title="${t('common.close')}" aria-label="${t('common.close')}">×</button>
         </div>
         <div class="ai-session-list" style="display:none;"></div>
         <div class="ai-chat-view" style="display:none;"></div>
@@ -507,9 +512,31 @@ function ensureTerminalContent(tab) {
     listEl: content.querySelector('.ai-session-list'),
     chatEl: content.querySelector('.ai-chat-view'),
     backBtn: content.querySelector('.ai-back'),
+    historyBtn: content.querySelector('.ai-history'),
+    newBtn: content.querySelector('.ai-new'),
+    titleEl: content.querySelector('.ai-sidebar-title'),
+    subtitleEl: content.querySelector('.ai-sidebar-subtitle'),
     closeBtn: content.querySelector('.ai-close'),
   }, {
     getConnID: () => activeTab === tab ? (activeConnectedPane(tab)?.connID || '') : '',
+    getTerminalMeta: () => {
+      const pane = activeTerminalPane(tab);
+      const connID = pane?.connID || '';
+      return {
+        label: pane?.sessionLabel || tab.sessionLabel || t('aiSidebar.terminalContext'),
+        host: pane?.isLocal ? t('aiSidebar.localTerminal') : (pane?.host || tab.host || ''),
+        cwd: connID ? (getTerminalCWD(connID) || '') : '',
+        model: settings?.ai_model || '',
+      };
+    },
+    getTerminalSelection: () => {
+      const connID = activeConnectedPane(tab)?.connID || '';
+      return connID ? getTerminalSelection(connID) : '';
+    },
+    getTerminalRecentOutput: () => {
+      const connID = activeConnectedPane(tab)?.connID || '';
+      return connID ? getTerminalRecentOutput(connID) : '';
+    },
     onResizeStart: () => suspendTerminalAutoFit(true),
     onResizeEnd: () => suspendTerminalAutoFit(false),
   });
@@ -1247,6 +1274,12 @@ function toggleFullscreen() {
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 
 function handleKeydown(e) {
+  if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'a') {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleAISidebar();
+    return;
+  }
   const pane = activeTerminalPane();
   if (e.key === 'Enter') {
     console.log('[reconnect] Enter keydown', { activeTabType: activeTab?.type, paneState: pane?.state, isLocal: pane?.isLocal, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey, shiftKey: e.shiftKey });

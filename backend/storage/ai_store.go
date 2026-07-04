@@ -105,7 +105,7 @@ func (s *Store) ListAIChatMessages(sessionID string) ([]AIChatMessage, error) {
 	// exact insertion order, which the OpenAI-style API requires (a "tool"
 	// message must directly follow the assistant message that called it).
 	rows, err := s.db.Query(`
-		SELECT id, session_id, role, content, tool_calls, tool_call_id, created_at
+		SELECT id, session_id, role, content, context_json, tool_calls, tool_call_id, created_at
 		FROM ai_chat_messages WHERE session_id = ? ORDER BY rowid`, sessionID)
 	if err != nil {
 		return nil, err
@@ -115,7 +115,7 @@ func (s *Store) ListAIChatMessages(sessionID string) ([]AIChatMessage, error) {
 	var messages []AIChatMessage
 	for rows.Next() {
 		var msg AIChatMessage
-		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content,
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.ContextJSON,
 			&msg.ToolCalls, &msg.ToolCallID, &msg.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -134,9 +134,9 @@ func (s *Store) AppendAIChatMessage(msg AIChatMessage) (*AIChatMessage, error) {
 		msg.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO ai_chat_messages (id, session_id, role, content, tool_calls, tool_call_id, created_at)
-		VALUES (?,?,?,?,?,?,?)`,
-		msg.ID, msg.SessionID, msg.Role, msg.Content, msg.ToolCalls, msg.ToolCallID, msg.CreatedAt)
+		INSERT INTO ai_chat_messages (id, session_id, role, content, context_json, tool_calls, tool_call_id, created_at)
+		VALUES (?,?,?,?,?,?,?,?)`,
+		msg.ID, msg.SessionID, msg.Role, msg.Content, msg.ContextJSON, msg.ToolCalls, msg.ToolCallID, msg.CreatedAt)
 	return &msg, err
 }
 

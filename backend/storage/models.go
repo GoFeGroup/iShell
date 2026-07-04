@@ -89,13 +89,22 @@ type AIChatSession struct {
 // AIChatMessage is one message in an AIChatSession's history. Messages are
 // immutable once appended (no UpdatedAt).
 type AIChatMessage struct {
-	ID         string `json:"id" yaml:"id"`
-	SessionID  string `json:"session_id" yaml:"session_id"`
-	Role       string `json:"role" yaml:"role"` // "user" | "assistant" | "tool"
-	Content    string `json:"content" yaml:"content"`
-	ToolCalls  string `json:"tool_calls,omitempty" yaml:"tool_calls,omitempty"`     // JSON array, assistant role only
-	ToolCallID string `json:"tool_call_id,omitempty" yaml:"tool_call_id,omitempty"` // set when role="tool"
-	CreatedAt  string `json:"created_at" yaml:"created_at"`
+	ID          string `json:"id" yaml:"id"`
+	SessionID   string `json:"session_id" yaml:"session_id"`
+	Role        string `json:"role" yaml:"role"` // "user" | "assistant" | "tool"
+	Content     string `json:"content" yaml:"content"`
+	ContextJSON string `json:"context_json,omitempty" yaml:"context_json,omitempty"`
+	ToolCalls   string `json:"tool_calls,omitempty" yaml:"tool_calls,omitempty"`     // JSON array, assistant role only
+	ToolCallID  string `json:"tool_call_id,omitempty" yaml:"tool_call_id,omitempty"` // set when role="tool"
+	CreatedAt   string `json:"created_at" yaml:"created_at"`
+}
+
+// AIMessageContext is user-selected terminal context attached to one prompt.
+type AIMessageContext struct {
+	Kind      string `json:"kind"`
+	Label     string `json:"label"`
+	Content   string `json:"content"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 type QuickCommand struct {
