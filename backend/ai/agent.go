@@ -45,6 +45,7 @@ type RunOptions struct {
 	ConnID   string // currently active terminal tab, resolved by the frontend; "" if none
 	UserText string
 	Contexts []storage.AIMessageContext
+	Resume   bool // continue persisted history without appending another user message
 }
 
 // PendingApproval is a terminal_run call awaiting the user's Run/Reject
@@ -116,17 +117,24 @@ func (ag *Agent) RunTurn(ctx context.Context, opts RunOptions) {
 	}
 	customTools := settings.CustomToolCalls
 
-	contextJSON := ""
-	if len(opts.Contexts) > 0 {
-		if raw, marshalErr := json.Marshal(opts.Contexts); marshalErr == nil {
-			contextJSON = string(raw)
+	if opts.Resume {
+		if err := ag.ValidateResumeTurn(opts.ChatID); err != nil {
+			ag.emitError(opts.ChatID, err)
+			return
 		}
-	}
-	if _, err := ag.store.AppendAIChatMessage(storage.AIChatMessage{
-		SessionID: opts.ChatID, Role: "user", Content: opts.UserText, ContextJSON: contextJSON,
-	}); err != nil {
-		ag.emitError(opts.ChatID, err)
-		return
+	} else {
+		contextJSON := ""
+		if len(opts.Contexts) > 0 {
+			if raw, marshalErr := json.Marshal(opts.Contexts); marshalErr == nil {
+				contextJSON = string(raw)
+			}
+		}
+		if _, err := ag.store.AppendAIChatMessage(storage.AIChatMessage{
+			SessionID: opts.ChatID, Role: "user", Content: opts.UserText, ContextJSON: contextJSON,
+		}); err != nil {
+			ag.emitError(opts.ChatID, err)
+			return
+		}
 	}
 
 	guard := newToolLoopGuard()
@@ -233,6 +241,55 @@ func (ag *Agent) IsRunning(chatID string) bool {
 	defer ag.mu.Unlock()
 	_, ok := ag.running[chatID]
 	return ok
+}
+
+// ValidateResumeTurn ensures a failed generation can continue from the
+// persisted history without creating a duplicate user message. A user or
+// tool message is a valid completion boundary; an assistant tool call without
+// its result is rejected because providers require a matching tool message.
+func (ag *Agent) ValidateResumeTurn(chatID string) error {
+	messages, err := ag.store.ListAIChatMessages(chatID)
+	if err != nil {
+		return fmt.Errorf("list chat messages: %w", err)
+	}
+	if len(messages) == 0 {
+		return fmt.Errorf("chat has no message to retry")
+	}
+	lastRole := messages[len(messages)-1].Role
+	if lastRole == "user" {
+		return nil
+	}
+	if lastRole != "tool" {
+		return fmt.Errorf("chat cannot be retried after a %s message", lastRole)
+	}
+
+	assistantIndex := len(messages) - 1
+	for assistantIndex >= 0 && messages[assistantIndex].Role == "tool" {
+		assistantIndex--
+	}
+	if assistantIndex < 0 || messages[assistantIndex].Role != "assistant" || messages[assistantIndex].ToolCalls == "" {
+		return fmt.Errorf("chat has tool results without a matching assistant tool call")
+	}
+	var calls []ToolCall
+	if err := json.Unmarshal([]byte(messages[assistantIndex].ToolCalls), &calls); err != nil || len(calls) == 0 {
+		return fmt.Errorf("chat has invalid assistant tool calls")
+	}
+	results := make(map[string]bool, len(messages)-assistantIndex-1)
+	for _, message := range messages[assistantIndex+1:] {
+		if message.Role != "tool" || message.ToolCallID == "" || results[message.ToolCallID] {
+			return fmt.Errorf("chat has invalid tool results")
+		}
+		results[message.ToolCallID] = true
+	}
+	for _, call := range calls {
+		if call.ID == "" || !results[call.ID] {
+			return fmt.Errorf("chat is missing a result for tool call %s", call.ID)
+		}
+	}
+	if len(results) != len(calls) {
+		return fmt.Errorf("chat has unmatched tool results")
+	}
+	return nil
 }
 
 // ── internals ────────────────────────────────────────────────────────────────

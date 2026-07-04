@@ -808,6 +808,37 @@ func (a *App) SendAIMessage(chatID, connID, text string, contexts []storage.AIMe
 	return nil
 }
 
+// RetryAIMessage resumes a failed generation from its persisted history. It
+// deliberately does not append another user message, so retrying a provider
+// or network failure cannot duplicate the prompt in subsequent model input.
+func (a *App) RetryAIMessage(chatID, connID string) error {
+	if a.store == nil || a.aiAgent == nil {
+		return fmt.Errorf("AI is not ready")
+	}
+	settings, err := a.store.LoadSettings()
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+	if !settings.AIEnabled {
+		return fmt.Errorf("AI is not enabled in settings")
+	}
+	sess, err := a.store.GetAIChatSession(chatID)
+	if err != nil {
+		return err
+	}
+	if sess == nil {
+		return fmt.Errorf("chat session %s not found", chatID)
+	}
+	if a.aiAgent.IsRunning(chatID) {
+		return fmt.Errorf("a generation is already running for this chat")
+	}
+	if err := a.aiAgent.ValidateResumeTurn(chatID); err != nil {
+		return err
+	}
+	go a.aiAgent.RunTurn(a.ctx, ai.RunOptions{ChatID: chatID, ConnID: connID, Resume: true})
+	return nil
+}
+
 const maxAIContextBytes = 64 * 1024
 
 func sanitizeAIContexts(contexts []storage.AIMessageContext) []storage.AIMessageContext {

@@ -1,17 +1,21 @@
 import {
   listAIChatSessionsForTarget, createAIChatSession, renameAIChatSession, deleteAIChatSession,
-  getAIChatMessages, sendAIMessage, approveAIToolCall, rejectAIToolCall, setAIAutoExec,
+  getAIChatMessages, sendAIMessage, retryAIMessage, approveAIToolCall, rejectAIToolCall, setAIAutoExec,
   stopAIRun, isAIRunActive, on, off,
 } from './api.js';
 import { t } from './i18n.js';
 import { showToast } from './toast.js';
 import { renderMarkdown } from './markdown.js';
+import { confirmDialog } from './confirm-dialog.js';
 
 let getActiveTab = () => null;
 let aiEnabled = false;
 let aiSettings = {};
 let activeInstance = null;
 let selectionAction = null;
+let selectionDismiss = null;
+let selectionListenerTimer = 0;
+let selectionExpiryTimer = 0;
 const PERF_DEBUG = false;
 
 function perfLog(label, ...args) {
@@ -29,9 +33,20 @@ export function initAISidebar(settings, activeTabGetter) {
   window.addEventListener('ishell:terminalSelection', e => showSelectionAction(e.detail));
 }
 
-function showSelectionAction(detail) {
+function dismissSelectionAction() {
   selectionAction?.remove();
-  if (!detail?.text || !activeInstance) return;
+  selectionAction = null;
+  if (selectionDismiss) document.removeEventListener('pointerdown', selectionDismiss, true);
+  selectionDismiss = null;
+  if (selectionListenerTimer) clearTimeout(selectionListenerTimer);
+  if (selectionExpiryTimer) clearTimeout(selectionExpiryTimer);
+  selectionListenerTimer = 0;
+  selectionExpiryTimer = 0;
+}
+
+function showSelectionAction(detail) {
+  dismissSelectionAction();
+  if (!aiEnabled || !detail?.text || !activeInstance) return;
   const button = document.createElement('button');
   button.className = 'ai-selection-action';
   button.textContent = t('aiSidebar.askAI');
@@ -41,27 +56,34 @@ function showSelectionAction(detail) {
     const instance = activeInstance;
     instance.setOpen(true, { animate: true, notify: true });
     if (!instance.currentChatID) await instance.handleNewChat();
+    if (!instance.currentChatID) {
+      dismissSelectionAction();
+      return;
+    }
     instance.addContext('terminal_selection', t('aiSidebar.selectedTerminalText'), detail.text);
     instance.focusInput();
-    button.remove();
-    if (selectionAction === button) selectionAction = null;
+    dismissSelectionAction();
   });
   document.body.appendChild(button);
   selectionAction = button;
-  const dismiss = e => {
+  selectionDismiss = e => {
     if (e.target === button) return;
-    button.remove();
-    if (selectionAction === button) selectionAction = null;
-    document.removeEventListener('pointerdown', dismiss, true);
+    dismissSelectionAction();
   };
-  setTimeout(() => document.addEventListener('pointerdown', dismiss, true), 0);
-  setTimeout(() => dismiss({ target: null }), 8000);
+  selectionListenerTimer = setTimeout(() => {
+    selectionListenerTimer = 0;
+    if (selectionAction === button) document.addEventListener('pointerdown', selectionDismiss, true);
+  }, 0);
+  selectionExpiryTimer = setTimeout(dismissSelectionAction, 8000);
 }
 
 export function setAISidebarSettings(settings) {
   aiSettings = settings || {};
   aiEnabled = !!settings?.ai_enabled;
-  if (!aiEnabled) activeInstance?.setOpen(false, { animate: true, notify: true });
+  if (!aiEnabled) {
+    dismissSelectionAction();
+    activeInstance?.setOpen(false, { animate: true, notify: true });
+  }
   activeInstance?.updateHeader();
   updateToolbarButton();
 }
@@ -176,6 +198,7 @@ class AISidebarInstance {
     this.userNearBottom = true;
     this.pendingContexts = [];
     this.lastFailedPrompt = null;
+    this.isConfirmingSend = false;
     this.markdownFrame = 0;
     this.cardsByToolCallID = {};
     this.confirmingDeleteID = null;
@@ -925,7 +948,19 @@ class AISidebarInstance {
     status.className = 'ai-run-status';
     const modeBtn = document.createElement('button');
     modeBtn.type = 'button';
-    modeBtn.className = 'ai-exec-mode';
+    modeBtn.className = 'ai-exec-toggle';
+    modeBtn.setAttribute('role', 'switch');
+    const modeLabel = document.createElement('span');
+    modeLabel.className = 'ai-exec-toggle-label';
+    modeLabel.textContent = t('aiSidebar.autoExecLabel');
+    const modeHelp = document.createElement('span');
+    modeHelp.className = 'ai-exec-toggle-help';
+    modeHelp.textContent = '?';
+    modeHelp.setAttribute('aria-hidden', 'true');
+    const modeTrack = document.createElement('span');
+    modeTrack.className = 'ai-exec-toggle-track';
+    modeTrack.setAttribute('aria-hidden', 'true');
+    modeBtn.append(modeLabel, modeHelp, modeTrack);
     modeBtn.addEventListener('click', () => this.toggleAutoExec(modeBtn));
     footer.append(status, modeBtn);
     composer.append(contextRow, inputRow, footer);
@@ -996,50 +1031,62 @@ class AISidebarInstance {
   }
 
   async toggleAutoExec(button) {
-    if (this.currentAutoExec) {
-      this.currentAutoExec = false;
-      try { await setAIAutoExec(this.currentChatID, false); } catch (e) {
-        this.currentAutoExec = true;
-        showToast('❌ ' + e);
-      }
-      this.updateExecMode();
-      return;
+    const next = !this.currentAutoExec;
+    if (next) {
+      const confirmed = await confirmDialog(t('aiSidebar.autoExecWarning'), {
+        okLabel: t('aiSidebar.enableAutoExec'),
+        cancelLabel: t('common.cancel'),
+        danger: true,
+      });
+      if (!confirmed) return;
     }
-    if (button.dataset.confirming !== 'true') {
-      button.dataset.confirming = 'true';
-      button.textContent = t('aiSidebar.confirmAutoExec');
-      this.setRunStatus(t('aiSidebar.autoExecWarning'));
-      setTimeout(() => {
-        if (button.dataset.confirming === 'true') {
-          delete button.dataset.confirming;
-          this.setRunStatus('');
-          this.updateExecMode();
-        }
-      }, 5000);
-      return;
-    }
-    delete button.dataset.confirming;
-    this.currentAutoExec = true;
-    try { await setAIAutoExec(this.currentChatID, true); } catch (e) {
-      this.currentAutoExec = false;
+
+    button.disabled = true;
+    try {
+      await setAIAutoExec(this.currentChatID, next);
+      this.currentAutoExec = next;
+    } catch (e) {
       showToast('❌ ' + e);
+    } finally {
+      button.disabled = false;
+      this.updateExecMode();
     }
-    this.setRunStatus('');
-    this.updateExecMode();
   }
 
   updateExecMode() {
     if (!this.modeBtn) return;
-    this.modeBtn.textContent = this.currentAutoExec ? t('aiSidebar.autoExecOn') : t('aiSidebar.askBeforeRun');
-    this.modeBtn.classList.toggle('danger', this.currentAutoExec);
-    this.modeBtn.title = t('aiSidebar.autoExecDesc');
+    const state = this.currentAutoExec ? t('aiSidebar.autoExecOn') : t('aiSidebar.askBeforeRun');
+    this.modeBtn.classList.toggle('on', this.currentAutoExec);
+    this.modeBtn.setAttribute('aria-checked', String(this.currentAutoExec));
+    this.modeBtn.setAttribute('aria-label', t('aiSidebar.autoExecLabel') + ': ' + state);
+    this.modeBtn.title = t('aiSidebar.autoExecDesc') +
+      (this.currentAutoExec ? '\n' + t('aiSidebar.autoExecWarning') : '');
+  }
+
+  async confirmContextAutoExec(contexts) {
+    if (!this.currentAutoExec || !contexts.length) return true;
+    if (this.isConfirmingSend) return false;
+    this.isConfirmingSend = true;
+    try {
+      return await confirmDialog(t('aiSidebar.contextAutoExecWarning'), {
+        okLabel: t('aiSidebar.sendAnyway'),
+        cancelLabel: t('common.cancel'),
+        danger: true,
+      });
+    } finally {
+      this.isConfirmingSend = false;
+    }
   }
 
   async handleSend() {
-    if (!this.inputEl || this.isSending || !this.currentChatID) return;
+    if (!this.inputEl || this.isSending || this.isConfirmingSend || !this.currentChatID) return;
+    const chatID = this.currentChatID;
     const text = this.inputEl.value.trim();
     if (!text) return;
     const contexts = this.pendingContexts.map(item => ({ ...item }));
+    if (!await this.confirmContextAutoExec(contexts) || this.currentChatID !== chatID) return;
+
+    this.messagesEl?.querySelectorAll('.ai-msg.error.retryable').forEach(el => el.remove());
     this.lastFailedPrompt = { text, contexts };
     this.inputEl.value = '';
     sessionStorage.removeItem(this.draftKey());
@@ -1047,13 +1094,36 @@ class AISidebarInstance {
     this.pendingContexts = [];
     this.renderPendingContexts();
     this.appendUserBubble(text, contexts);
+    await this.sendUnpersistedPrompt(chatID, text, contexts);
+  }
+
+  async sendUnpersistedPrompt(chatID, text, contexts) {
     this.setSending(true);
     try {
-      await sendAIMessage(this.currentChatID, this.getConnID() || '', text, contexts);
+      await sendAIMessage(chatID, this.getConnID() || '', text, contexts);
     } catch (e) {
-      this.appendErrorBubble(String(e), true);
+      this.appendErrorBubble(String(e), () => this.retryUnpersistedPrompt(chatID, text, contexts));
       this.setSending(false);
     }
+  }
+
+  async retryUnpersistedPrompt(chatID, text, contexts) {
+    if (this.currentChatID !== chatID || !await this.confirmContextAutoExec(contexts)) return false;
+    await this.sendUnpersistedPrompt(chatID, text, contexts);
+    return true;
+  }
+
+  async retryPersistedTurn(contexts) {
+    const chatID = this.currentChatID;
+    if (!chatID || !await this.confirmContextAutoExec(contexts)) return false;
+    this.setSending(true);
+    try {
+      await retryAIMessage(chatID, this.getConnID() || '');
+    } catch (e) {
+      this.appendErrorBubble(String(e), () => this.retryPersistedTurn(contexts));
+      this.setSending(false);
+    }
+    return true;
   }
 
   setSending(sending) {
@@ -1134,7 +1204,8 @@ class AISidebarInstance {
       this.appendStatusMessage(t('aiSidebar.stopped'));
       this.stopRequested = false;
     } else {
-      this.appendErrorBubble(t('aiSidebar.chatError', { e: message }), true);
+      const contexts = this.lastFailedPrompt?.contexts || [];
+      this.appendErrorBubble(t('aiSidebar.chatError', { e: message }), () => this.retryPersistedTurn(contexts));
     }
     this.setSending(false);
   }
@@ -1169,23 +1240,21 @@ class AISidebarInstance {
     this.scrollToBottom(true);
   }
 
-  appendErrorBubble(text, retryable = false) {
+  appendErrorBubble(text, onRetry = null) {
     const el = document.createElement('div');
-    el.className = 'ai-msg error';
+    el.className = 'ai-msg error' + (onRetry ? ' retryable' : '');
     const body = document.createElement('span');
     body.textContent = text;
     el.appendChild(body);
-    if (retryable && this.lastFailedPrompt) {
+    if (onRetry) {
       const retry = document.createElement('button');
       retry.className = 'btn btn-ghost btn-sm';
       retry.textContent = t('aiSidebar.retry');
-      retry.addEventListener('click', () => {
-        this.inputEl.value = this.lastFailedPrompt.text;
-        this.pendingContexts = this.lastFailedPrompt.contexts.map(item => ({ ...item }));
-        this.renderPendingContexts();
-        this.resizeInput();
-        el.remove();
-        this.handleSend();
+      retry.addEventListener('click', async () => {
+        retry.disabled = true;
+        const handled = await onRetry();
+        if (handled) el.remove();
+        else retry.disabled = false;
       });
       el.appendChild(retry);
     }

@@ -246,6 +246,162 @@ func TestRunTurnPlainReplyNoTools(t *testing.T) {
 	}
 }
 
+func TestRunTurnResumeDoesNotDuplicateUserMessage(t *testing.T) {
+	var requestMu sync.Mutex
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestMu.Lock()
+		requests++
+		requestNumber := requests
+		requestMu.Unlock()
+		if requestNumber == 1 {
+			http.Error(w, "temporary provider failure", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"content":"Recovered"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		)))
+	}))
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Retry"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	rec := newEventRecorder()
+	ag := NewAgent(st, &fakeTerminalIO{}, rec.emit)
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, UserText: "try once"})
+
+	messages, err := st.ListAIChatMessages(sess.ID)
+	if err != nil {
+		t.Fatalf("list messages after failure: %v", err)
+	}
+	if len(messages) != 1 || messages[0].Role != "user" {
+		t.Fatalf("messages after failure = %#v, want one user message", messages)
+	}
+
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, Resume: true})
+	rec.waitFor(t, "ai:done:"+sess.ID, 2*time.Second)
+
+	messages, err = st.ListAIChatMessages(sess.ID)
+	if err != nil {
+		t.Fatalf("list messages after retry: %v", err)
+	}
+	userMessages := 0
+	for _, message := range messages {
+		if message.Role == "user" {
+			userMessages++
+		}
+	}
+	if userMessages != 1 {
+		t.Fatalf("user message count after retry = %d, want 1", userMessages)
+	}
+	if got := messages[len(messages)-1]; got.Role != "assistant" || got.Content != "Recovered" {
+		t.Fatalf("last message after retry = %#v", got)
+	}
+	if err := ag.ValidateResumeTurn(sess.ID); err == nil {
+		t.Fatal("completed assistant response must not be retryable")
+	}
+}
+
+func TestRunTurnResumeAfterToolResult(t *testing.T) {
+	var requestMu sync.Mutex
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hasToolResult := requestHasToolResult(r)
+		requestMu.Lock()
+		requests++
+		requestNumber := requests
+		requestMu.Unlock()
+		if !hasToolResult {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte(sseBody(
+				`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_read","type":"function","function":{"name":"terminal_read","arguments":"{}"}}]},"finish_reason":null}]}`,
+				`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			)))
+			return
+		}
+		if requestNumber == 2 {
+			http.Error(w, "temporary follow-up failure", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sseBody(
+			`{"choices":[{"delta":{"content":"Recovered after tool"},"finish_reason":null}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		)))
+	}))
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Tool retry"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	rec := newEventRecorder()
+	ag := NewAgent(st, &fakeTerminalIO{}, rec.emit)
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, ConnID: "conn-1", UserText: "read output"})
+
+	messages, err := st.ListAIChatMessages(sess.ID)
+	if err != nil {
+		t.Fatalf("list messages after failure: %v", err)
+	}
+	if got := messages[len(messages)-1].Role; got != "tool" {
+		t.Fatalf("last role after follow-up failure = %q, want tool", got)
+	}
+
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, ConnID: "conn-1", Resume: true})
+	rec.waitFor(t, "ai:done:"+sess.ID, 2*time.Second)
+
+	messages, err = st.ListAIChatMessages(sess.ID)
+	if err != nil {
+		t.Fatalf("list messages after retry: %v", err)
+	}
+	roleCounts := map[string]int{}
+	for _, message := range messages {
+		roleCounts[message.Role]++
+	}
+	if roleCounts["user"] != 1 || roleCounts["tool"] != 1 || roleCounts["assistant"] != 2 {
+		t.Fatalf("unexpected message roles after retry: %#v", roleCounts)
+	}
+	if got := messages[len(messages)-1].Content; got != "Recovered after tool" {
+		t.Fatalf("final assistant content = %q", got)
+	}
+}
+
+func TestValidateResumeTurnRejectsPartialToolResults(t *testing.T) {
+	st := newTestStore(t)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Partial tools"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	messages := []storage.AIChatMessage{
+		{SessionID: sess.ID, Role: "user", Content: "inspect both"},
+		{SessionID: sess.ID, Role: "assistant", ToolCalls: `[
+			{"id":"call_1","type":"function","function":{"name":"terminal_read","arguments":"{}"}},
+			{"id":"call_2","type":"function","function":{"name":"terminal_read","arguments":"{}"}}
+		]`},
+		{SessionID: sess.ID, Role: "tool", ToolCallID: "call_1", Content: "first result"},
+	}
+	for _, message := range messages {
+		if _, err := st.AppendAIChatMessage(message); err != nil {
+			t.Fatalf("append message: %v", err)
+		}
+	}
+
+	ag := NewAgent(st, &fakeTerminalIO{}, func(string, any) {})
+	if err := ag.ValidateResumeTurn(sess.ID); err == nil {
+		t.Fatal("partial tool results must not be retryable")
+	}
+}
+
 func TestRunTurnToolCallRequiresApproval(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
