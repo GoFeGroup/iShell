@@ -1003,13 +1003,13 @@ const SEARCH_DECORATIONS = {
 
 // direction: 'next' | 'prev'. onResults, if provided, is registered once per
 // instance to receive { resultIndex, resultCount } from the search addon.
-export function findInTerminal(connID, term, { direction = 'next', incremental = false, onResults } = {}) {
+export function findInTerminal(connID, term, { direction = 'next', incremental = false, caseSensitive = false, wholeWord = false, onResults } = {}) {
   const inst = instances[connID];
   if (!inst?.searchAddon || !term) return;
   if (onResults && !inst.searchResultsDisposable) {
     inst.searchResultsDisposable = inst.searchAddon.onDidChangeResults(onResults);
   }
-  const opts = { incremental, decorations: SEARCH_DECORATIONS };
+  const opts = { incremental, caseSensitive, wholeWord, decorations: SEARCH_DECORATIONS };
   if (direction === 'prev') inst.searchAddon.findPrevious(term, opts);
   else inst.searchAddon.findNext(term, opts);
 }

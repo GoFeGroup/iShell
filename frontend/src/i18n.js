@@ -36,7 +36,7 @@ const dict = {
       reject: '✕ Reject', trustOnce: 'Trust Once', alwaysTrust: 'Always Trust',
     },
     terminal: {
-      findPlaceholder: 'Find…',
+      findPlaceholder: 'Find…', findMatchCase: 'Match case', findWholeWord: 'Match whole word',
       connectingTitle: 'Connecting',
       connectingStatus: 'Connecting',
       connectingTo: 'Connecting to {host}…',
@@ -290,7 +290,7 @@ const dict = {
       reject: '✕ 拒绝', trustOnce: '仅信任一次', alwaysTrust: '始终信任',
     },
     terminal: {
-      findPlaceholder: '查找…',
+      findPlaceholder: '查找…', findMatchCase: '区分大小写', findWholeWord: '全字匹配',
       connectingTitle: '正在连接',
       connectingStatus: '正在连接',
       connectingTo: '正在连接 {host}…',
@@ -542,7 +542,7 @@ const dict = {
       reject: '✕ 拒絕', trustOnce: '僅信任一次', alwaysTrust: '永遠信任',
     },
     terminal: {
-      findPlaceholder: '尋找…',
+      findPlaceholder: '尋找…', findMatchCase: '區分大小寫', findWholeWord: '全字匹配',
       connectingTitle: '正在連線',
       connectingStatus: '正在連線',
       connectingTo: '正在連線 {host}…',

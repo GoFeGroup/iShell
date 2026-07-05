@@ -469,6 +469,8 @@ function ensureTerminalContent(tab) {
       <div class="terminal-panes"></div>
       <div class="find-bar" style="display:none;">
         <input placeholder="Find…" data-i18n-placeholder="terminal.findPlaceholder" />
+        <button class="btn btn-ghost btn-icon find-case" title="Match case" data-i18n-title="terminal.findMatchCase">Aa</button>
+        <button class="btn btn-ghost btn-icon find-word" title="Match whole word" data-i18n-title="terminal.findWholeWord">[ab]</button>
         <span class="find-count"></span>
         <button class="btn btn-ghost btn-icon find-prev">▲</button>
         <button class="btn btn-ghost btn-icon find-next">▼</button>
@@ -1311,13 +1313,20 @@ function wireFindBar(tab) {
   const input = tab.findInput;
   if (!bar || !input) return;
   const countEl = bar.querySelector('.find-count');
+  const caseBtn = bar.querySelector('.find-case');
+  const wordBtn = bar.querySelector('.find-word');
   const updateCount = ({ resultIndex, resultCount }) => {
     if (countEl) countEl.textContent = resultCount ? `${resultIndex + 1}/${resultCount}` : '0/0';
   };
   const search = (opts) => {
     const connID = activeConnectedPane(tab)?.connID;
     if (!connID || !input.value) { if (countEl) countEl.textContent = ''; return; }
-    findInTerminal(connID, input.value, { onResults: updateCount, ...opts });
+    findInTerminal(connID, input.value, {
+      onResults: updateCount,
+      caseSensitive: caseBtn?.classList.contains('active') || false,
+      wholeWord: wordBtn?.classList.contains('active') || false,
+      ...opts,
+    });
   };
   input.addEventListener('input', () => search({ direction: 'next', incremental: true }));
   input.addEventListener('keydown', (e) => {
@@ -1326,6 +1335,8 @@ function wireFindBar(tab) {
   });
   bar.querySelector('.find-prev')?.addEventListener('click', () => search({ direction: 'prev', incremental: false }));
   bar.querySelector('.find-next')?.addEventListener('click', () => search({ direction: 'next', incremental: false }));
+  caseBtn?.addEventListener('click', () => { caseBtn.classList.toggle('active'); search({ direction: 'next', incremental: false }); });
+  wordBtn?.addEventListener('click', () => { wordBtn.classList.toggle('active'); search({ direction: 'next', incremental: false }); });
 }
 
 // ── AI command bar ───────────────────────────────────────────────────────────
