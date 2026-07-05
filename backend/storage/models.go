@@ -64,6 +64,7 @@ type Settings struct {
 	CursorStyle         string              `json:"cursor_style" yaml:"cursor_style"`
 	CursorBlink         bool                `json:"cursor_blink" yaml:"cursor_blink"`
 	CopyOnSelect        bool                `json:"copy_on_select" yaml:"copy_on_select"`
+	RightClickAction    string              `json:"right_click_action" yaml:"right_click_action"` // "menu" | "paste"
 	BellStyle           string              `json:"bell_style" yaml:"bell_style"`
 	Ligatures           bool                `json:"ligatures" yaml:"ligatures"`
 	DefaultAuth         string              `json:"default_auth" yaml:"default_auth"`
@@ -174,6 +175,7 @@ func DefaultSettings() Settings {
 		CursorStyle:         "block",
 		CursorBlink:         true,
 		CopyOnSelect:        false,
+		RightClickAction:    "menu",
 		BellStyle:           "visual",
 		Ligatures:           true,
 		DefaultAuth:         "key",

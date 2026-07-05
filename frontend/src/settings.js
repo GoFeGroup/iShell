@@ -152,6 +152,15 @@ export async function initSettings(initialPage = 'appearance') {
           <div><div class="settings-row-label">${t('settings.terminal.ligatures')}</div><div class="settings-row-desc">${t('settings.terminal.ligaturesDesc')}</div></div>
           <div class="settings-row-control"><div class="toggle-switch ${settings.ligatures!==false?'on':''}" id="st-ligatures"></div></div>
         </div>
+        <div class="settings-row">
+          <div class="settings-row-label">${t('settings.terminal.rightClick')}</div>
+          <div class="settings-row-control">
+            <select class="input" id="st-rightclick" style="width:auto;">
+              <option value="menu" ${(settings.right_click_action||'menu')==='menu'?'selected':''}>${t('settings.terminal.rightClickMenu')}</option>
+              <option value="paste" ${settings.right_click_action==='paste'?'selected':''}>${t('settings.terminal.rightClickPaste')}</option>
+            </select>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -395,6 +404,10 @@ export async function initSettings(initialPage = 'appearance') {
     persist();
   });
   bindToggle('st-ligatures', on => { current.ligatures = on; persist(); });
+  document.getElementById('st-rightclick')?.addEventListener('change', e => {
+    current.right_click_action = e.target.value;
+    persist();
+  });
   bindToggle('st-strict', on => { current.strict_host_key = on; persist(); });
   document.getElementById('st-khpath')?.addEventListener('input', e => {
     current.known_hosts_path = e.target.value || '';

@@ -749,6 +749,10 @@ export function createTerminal(connID, settings, options = {}) {
     e.stopPropagation();
     e.stopImmediatePropagation?.();
     term.focus();
+    if (instances[connID]?.rightClickAction === 'paste') {
+      window.runtime.ClipboardGetText().then(pasteIntoTerminal).catch(() => {});
+      return;
+    }
     showTerminalContextMenu(e, connID, term, pasteIntoTerminal);
   };
   xtermEl.addEventListener('contextmenu', contextMenuHandler);
@@ -786,6 +790,7 @@ export function createTerminal(connID, settings, options = {}) {
   instances[connID] = {
     term, fitAddon, searchAddon, searchResultsDisposable: null, resizeObs, dataHandler,
     ligaturesEnabled: false, ligaturesAddon: null,
+    rightClickAction: settings?.right_click_action || 'menu',
     connID,
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
     compositionStartHandler, compositionEndHandler, beforeInputHandler, pasteHandler, focusInHandler,
@@ -1025,10 +1030,12 @@ export function applyLiveSettings(settings) {
   const cursorBlink = settings?.cursor_blink !== false;
   const scrollback = settings?.scrollback || 10000;
   const bellStyle = settings?.bell_style || 'visual';
+  const rightClickAction = settings?.right_click_action || 'menu';
   const ligaturesEnabled = !!settings?.ligatures;
   Object.entries(instances).forEach(([connID, inst]) => {
     inst.aiEnabled = aiEnabled;
     inst.bellStyle = bellStyle;
+    inst.rightClickAction = rightClickAction;
     inst.term.options.theme = theme;
     inst.term.options.cursorStyle = cursorStyle;
     inst.term.options.cursorBlink = cursorBlink;

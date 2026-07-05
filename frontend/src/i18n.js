@@ -128,6 +128,7 @@ const dict = {
         colorScheme_solarizedDark: 'Solarized Dark', colorScheme_oneDark: 'One Dark',
         bellStyle: 'Bell style', bellVisual: 'Visual flash', bellSound: 'Sound', bellNone: 'None',
         ligatures: 'Font ligatures', ligaturesDesc: 'Render sequences like => or != as joined glyphs when the font supports it. May reduce rendering performance on large scrollback.',
+        rightClick: 'Right click', rightClickMenu: 'Show context menu', rightClickPaste: 'Paste directly',
       },
       ssh: {
         hostKeyVerification: 'Host Key Verification', strictHostKey: 'Strict host key checking',
@@ -382,6 +383,7 @@ const dict = {
         colorScheme_solarizedDark: 'Solarized Dark', colorScheme_oneDark: 'One Dark',
         bellStyle: '响铃方式', bellVisual: '视觉闪烁', bellSound: '声音', bellNone: '无',
         ligatures: '字体连字', ligaturesDesc: '当字体支持时，将 => 或 != 等字符序列渲染为连字符号。可能会降低大量回滚内容的渲染性能。',
+        rightClick: '鼠标右键', rightClickMenu: '显示右键菜单', rightClickPaste: '直接粘贴',
       },
       ssh: {
         hostKeyVerification: '主机密钥验证', strictHostKey: '严格主机密钥检查',
@@ -634,6 +636,7 @@ const dict = {
         colorScheme_solarizedDark: 'Solarized Dark', colorScheme_oneDark: 'One Dark',
         bellStyle: '響鈴方式', bellVisual: '視覺閃爍', bellSound: '聲音', bellNone: '無',
         ligatures: '字型連字', ligaturesDesc: '當字型支援時，將 => 或 != 等字元序列渲染為連字符號。可能會降低大量回捲內容的渲染效能。',
+        rightClick: '滑鼠右鍵', rightClickMenu: '顯示右鍵選單', rightClickPaste: '直接貼上',
       },
       ssh: {
         hostKeyVerification: '主機金鑰驗證', strictHostKey: '嚴格主機金鑰檢查',
