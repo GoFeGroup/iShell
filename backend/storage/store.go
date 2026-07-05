@@ -305,12 +305,6 @@ func (s *Store) LoadSettings() (*Settings, error) {
 		if _, ok := fields["ai_model"]; !ok {
 			st.AIModel = def.AIModel
 		}
-		if _, ok := fields["ai_web_search_engine"]; !ok {
-			st.AIWebSearchEngine = def.AIWebSearchEngine
-		}
-		if _, ok := fields["ai_web_search_endpoint"]; !ok {
-			st.AIWebSearchEndpoint = def.AIWebSearchEndpoint
-		}
 	}
 	if st.QuickCommands == nil {
 		st.QuickCommands = []QuickCommand{}
@@ -323,12 +317,6 @@ func (s *Store) LoadSettings() (*Settings, error) {
 	}
 	if st.Language == "" {
 		st.Language = "auto"
-	}
-	if st.AIWebSearchEngine == "" {
-		st.AIWebSearchEngine = "duckduckgo"
-	}
-	if st.AIWebSearchEndpoint == "" {
-		st.AIWebSearchEndpoint = DefaultWebSearchEndpoint(st.AIWebSearchEngine)
 	}
 	return &st, nil
 }

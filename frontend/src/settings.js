@@ -27,14 +27,6 @@ export async function initSettings(initialPage = 'appearance') {
   // object and immediately persists it — there is no separate Save/Discard
   // step, so what's on screen always matches what's stored.
   const current = { ...settings, language: languagePref };
-  const webSearchEngines = [
-    { value: 'duckduckgo', label: 'DuckDuckGo' },
-    { value: 'searxng', label: 'SearXNG' },
-    { value: 'brave', label: 'Brave Search' },
-    { value: 'serpapi', label: 'SerpAPI Google' },
-    { value: 'bing', label: 'Bing Web Search' },
-    { value: 'custom', label: t('settings.ai.webSearchCustom') },
-  ];
 
   const isMac = navigator.platform.startsWith('Mac');
   const mod = isMac ? '⌘' : 'Ctrl';
@@ -204,25 +196,6 @@ export async function initSettings(initialPage = 'appearance') {
         <div class="settings-row">
           <div class="settings-row-label">${t('settings.ai.model')}</div>
           <div class="settings-row-control"><input class="input" id="st-ai-model" value="${esc(settings.ai_model||'')}" placeholder="${t('settings.ai.modelPlaceholder')}" style="width:240px;" /></div>
-        </div>
-      </div>
-      <div class="settings-section">
-        <div class="settings-section-title">${t('settings.ai.webSearch')}</div>
-        <div class="settings-row">
-          <div><div class="settings-row-label">${t('settings.ai.webSearchEngine')}</div><div class="settings-row-desc">${t('settings.ai.webSearchDesc')}</div></div>
-          <div class="settings-row-control">
-            <select class="input" id="st-ai-websearch-engine" style="width:240px;">
-              ${webSearchEngines.map(e=>`<option value="${e.value}" ${(settings.ai_web_search_engine||'duckduckgo')===e.value?'selected':''}>${e.label}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-        <div class="settings-row">
-          <div class="settings-row-label">${t('settings.ai.webSearchEndpoint')}</div>
-          <div class="settings-row-control"><input class="input" id="st-ai-websearch-endpoint" value="${esc(settings.ai_web_search_endpoint||defaultWebSearchEndpoint(settings.ai_web_search_engine||'duckduckgo'))}" placeholder="${t('settings.ai.webSearchEndpointPlaceholder')}" style="width:320px;" /></div>
-        </div>
-        <div class="settings-row">
-          <div class="settings-row-label">${t('settings.ai.webSearchAPIKey')}</div>
-          <div class="settings-row-control"><input class="input" id="st-ai-websearch-key" type="password" autocomplete="off" value="${esc(settings.ai_web_search_api_key||'')}" placeholder="${t('settings.ai.webSearchAPIKeyPlaceholder')}" style="width:240px;" /></div>
         </div>
       </div>
     </div>
@@ -424,20 +397,6 @@ export async function initSettings(initialPage = 'appearance') {
   document.getElementById('st-ai-model')?.addEventListener('input', e => {
     current.ai_model = e.target.value; persistDebounced();
   });
-  document.getElementById('st-ai-websearch-engine')?.addEventListener('change', e => {
-    current.ai_web_search_engine = e.target.value;
-    current.ai_web_search_endpoint = defaultWebSearchEndpoint(current.ai_web_search_engine);
-    const endpointEl = document.getElementById('st-ai-websearch-endpoint');
-    if (endpointEl) endpointEl.value = current.ai_web_search_endpoint;
-    persist();
-  });
-  document.getElementById('st-ai-websearch-endpoint')?.addEventListener('input', e => {
-    current.ai_web_search_endpoint = e.target.value; persistDebounced();
-  });
-  document.getElementById('st-ai-websearch-key')?.addEventListener('input', e => {
-    current.ai_web_search_api_key = e.target.value; persistDebounced();
-  });
-
   function bindToggle(id, onChange) {
     const el = document.getElementById(id);
     if (!el) return;
@@ -832,16 +791,6 @@ function escText(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 function makeID() { return 'qc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
 function makeGroupID() { return 'grp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
 function makeToolID() { return 'tc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
-function defaultWebSearchEndpoint(engine) {
-  switch (engine) {
-    case 'searxng': return 'https://searx.be/search';
-    case 'brave': return 'https://api.search.brave.com/res/v1/web/search';
-    case 'serpapi': return 'https://serpapi.com/search.json';
-    case 'bing': return 'https://api.bing.microsoft.com/v7.0/search';
-    case 'custom': return 'https://example.com/search?q={query}';
-    default: return 'https://api.duckduckgo.com/';
-  }
-}
 function firstCommandLine(s) {
   const real = (s || '').split(/\r?\n/).find(line => line.trim())?.trim() || '';
   if (!real) return t('settings.quickCommands.commandFallback');

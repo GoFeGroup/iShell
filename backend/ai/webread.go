@@ -189,10 +189,14 @@ func readableWebResponse(resp *http.Response, body []byte) (webReadResult, error
 		mediaType = normalizedMediaType(http.DetectContentType(body))
 	}
 
+	resultContentType := contentType
+	if resultContentType == "" {
+		resultContentType = mediaType
+	}
 	result := webReadResult{
 		URL:         resp.Request.URL.String(),
 		Status:      resp.Status,
-		ContentType: firstNonEmpty(contentType, mediaType),
+		ContentType: resultContentType,
 	}
 
 	switch {

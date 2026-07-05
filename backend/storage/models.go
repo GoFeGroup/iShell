@@ -79,25 +79,7 @@ type Settings struct {
 	AIAPIKey            string              `json:"ai_api_key" yaml:"ai_api_key"`
 	AIBaseURL           string              `json:"ai_base_url" yaml:"ai_base_url"`
 	AIModel             string              `json:"ai_model" yaml:"ai_model"`
-	AIWebSearchEngine   string              `json:"ai_web_search_engine" yaml:"ai_web_search_engine"`
-	AIWebSearchEndpoint string              `json:"ai_web_search_endpoint" yaml:"ai_web_search_endpoint"`
-	AIWebSearchAPIKey   string              `json:"ai_web_search_api_key" yaml:"ai_web_search_api_key"`
 	CustomToolCalls     []CustomToolCall    `json:"custom_tool_calls" yaml:"custom_tool_calls"`
-}
-
-func DefaultWebSearchEndpoint(engine string) string {
-	switch engine {
-	case "searxng":
-		return "https://searx.be/search"
-	case "brave":
-		return "https://api.search.brave.com/res/v1/web/search"
-	case "serpapi":
-		return "https://serpapi.com/search.json"
-	case "bing":
-		return "https://api.bing.microsoft.com/v7.0/search"
-	default:
-		return "https://api.duckduckgo.com/"
-	}
 }
 
 // AIChatSession is a single AI chat conversation, managed from the AI
@@ -188,8 +170,6 @@ func DefaultSettings() Settings {
 		AIEnabled:           false,
 		AIBaseURL:           "https://api.openai.com/v1",
 		AIModel:             "gpt-4o-mini",
-		AIWebSearchEngine:   "duckduckgo",
-		AIWebSearchEndpoint: DefaultWebSearchEndpoint("duckduckgo"),
 		CustomToolCalls:     []CustomToolCall{},
 	}
 }

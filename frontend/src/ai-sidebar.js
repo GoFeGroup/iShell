@@ -1464,8 +1464,7 @@ class AISidebarInstance {
     let args = {};
     try { args = JSON.parse(call.function?.arguments || '{}'); } catch { args = {}; }
     let command;
-    if (call.function?.name === 'websearch') command = args.query || '';
-    else if (call.function?.name === 'open_url') command = args.url || '';
+    if (call.function?.name === 'open_url') command = args.url || '';
     else if (call.function?.name === 'terminal_run') command = args.command || '';
     else command = Object.values(args).map(String).join(' ');
     const rejected = resultMsg?.content === 'User declined to run this command.';
@@ -1628,7 +1627,6 @@ function formatRelativeTime(iso) {
 
 function toolLabel(tool, command) {
   if (tool === 'terminal_read') return t('aiSidebar.readAction');
-  if (tool === 'websearch') return t('aiSidebar.webSearchAction', { q: command || '' });
   if (tool === 'open_url') return t('aiSidebar.openURLAction', { url: command || '' });
   return '$ ' + command;
 }

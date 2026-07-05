@@ -149,7 +149,6 @@ Do not commit local databases, private keys, passwords, or known-host data.
 
 - Configure the AI sidebar in Settings: enable it, then set an OpenAI-compatible base URL, API key, and model.
 - When a terminal tab is active, the model can call `terminal_run` (sends a command, pauses for human approval unless auto-exec is on for that chat) and `terminal_read` (reads recent output without sending input).
-- The `websearch` tool runs automatically without approval since it only performs outbound read-only HTTP requests; pick the engine and endpoint/key in Settings (defaults to DuckDuckGo, which needs no key).
 - Chat history is stored locally per terminal target and is never included in YAML config export/import.
 
 ## Keyboard Shortcuts

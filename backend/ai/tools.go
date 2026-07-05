@@ -55,24 +55,8 @@ func AgentTools() []Tool {
 		{
 			Type: "function",
 			Function: ToolFunction{
-				Name: "websearch",
-				Description: "Search the web for current or external information and return a concise " +
-					"summary with result titles and links. Use this when the user's question needs up-to-date facts.",
-				Parameters: json.RawMessage(`{
-					"type": "object",
-					"properties": {
-						"query": {"type": "string", "description": "The web search query."}
-					},
-					"required": ["query"]
-				}`),
-			},
-		},
-		{
-			Type: "function",
-			Function: ToolFunction{
-				Name: "open_url",
-				Description: "Open a known URL or domain name and return readable page content. Use this when " +
-					"you already have a specific page to inspect; use websearch when you need to discover pages.",
+				Name:        "open_url",
+				Description: "Open a known URL or domain name and return readable page content.",
 				Parameters: json.RawMessage(`{
 					"type": "object",
 					"properties": {
