@@ -3,6 +3,7 @@ package ssh
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/pkg/sftp"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	gossh "golang.org/x/crypto/ssh"
+	sshagent "golang.org/x/crypto/ssh/agent"
 	"ishell/backend/storage"
 )
 
@@ -25,6 +27,10 @@ type Conn struct {
 	sftpCl         *sftp.Client
 	mu             sync.Mutex
 	stopKeepalive  chan struct{}
+	forwardsMu     sync.Mutex
+	forwards       map[string]*forwardHandle
+	sshAgent       sshagent.Agent
+	agentCloser    io.Closer
 }
 
 // Manager manages all active SSH connections.
@@ -32,14 +38,16 @@ type Manager struct {
 	mu          sync.RWMutex
 	conns       map[string]*Conn
 	ctx         context.Context
+	store       *storage.Store
 	pendingMu   sync.Mutex
 	pendingKeys map[string]gossh.PublicKey // hostname:port → key awaiting acceptance
 }
 
-func NewManager(ctx context.Context) *Manager {
+func NewManager(ctx context.Context, store *storage.Store) *Manager {
 	return &Manager{
 		ctx:         ctx,
 		conns:       make(map[string]*Conn),
+		store:       store,
 		pendingKeys: make(map[string]gossh.PublicKey),
 	}
 }
@@ -87,7 +95,7 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 	if keyPath == "" {
 		keyPath = sess.KeyPath
 	}
-	if keyPath == "" && pw == "" {
+	if keyPath == "" && pw == "" && authType != storage.AuthAgent {
 		keyPath = DefaultPrivateKeyPath
 	}
 	passphrase := opts.Passphrase
@@ -102,6 +110,27 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 			}
 			authMethods = append(authMethods, gossh.PublicKeys(signer))
 		}
+	}
+
+	var sshAgentObj sshagent.Agent
+	var agentCloser io.Closer
+	if authType == storage.AuthAgent {
+		var err error
+		sshAgentObj, agentCloser, err = DialAgent()
+		if err != nil {
+			return "", fmt.Errorf("ssh agent auth: %w", err)
+		}
+		authMethods = append(authMethods, gossh.PublicKeysCallback(sshAgentObj.Signers))
+	}
+	// Closed automatically on any failure below; ownership passes to Conn
+	// (closed on Disconnect) once the connection is fully established.
+	agentConnected := false
+	if agentCloser != nil {
+		defer func() {
+			if !agentConnected {
+				agentCloser.Close()
+			}
+		}()
 	}
 
 	if len(authMethods) == 0 {
@@ -236,9 +265,21 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 		}()
 	}
 
+	// ── Agent forwarding ──────────────────────────────────────────────────────
+	// Cross-platform: ForwardToAgent just serves the Agent protocol over any
+	// channel the remote side opens, so this works with both a real
+	// SSH_AUTH_SOCK-backed agent and Windows' Pageant.
+	forwardAgent := sess.ForwardAgent && sshAgentObj != nil
+	if forwardAgent {
+		if err := sshagent.ForwardToAgent(client, sshAgentObj); err != nil {
+			log.Printf("ishell: agent forwarding setup failed: %v", err)
+			forwardAgent = false
+		}
+	}
+
 	// ── Open PTY session ──────────────────────────────────────────────────────
 	connID := uuid.NewString()
-	term, err := newTermSession(m.ctx, connID, client, opts.Cols, opts.Rows)
+	term, err := newTermSession(m.ctx, connID, client, opts.Cols, opts.Rows, forwardAgent)
 	if err != nil {
 		if stopKA != nil {
 			close(stopKA)
@@ -246,6 +287,7 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 		client.Close()
 		return "", fmt.Errorf("open pty: %w", err)
 	}
+	agentConnected = true
 
 	conn := &Conn{
 		ID:            connID,
@@ -253,6 +295,8 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 		client:        client,
 		jumpClient:    jumpClient,
 		term:          term,
+		sshAgent:      sshAgentObj,
+		agentCloser:   agentCloser,
 		stopKeepalive: stopKA,
 	}
 	m.mu.Lock()
@@ -263,6 +307,20 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 	if sess.InitCommand != "" {
 		if err := term.Write([]byte(sess.InitCommand + "\n")); err != nil {
 			log.Printf("ishell: init command write error for conn %s: %v", connID, err)
+		}
+	}
+
+	// Auto-start any persisted port-forward rules for this session. Failures
+	// are logged, not fatal — the terminal connection itself already succeeded.
+	if m.store != nil {
+		if rules, err := m.store.ListPortForwardsForSession(sess.ID); err == nil {
+			for _, rule := range rules {
+				if rule.AutoStart && rule.Enabled {
+					if _, err := m.StartForward(connID, rule); err != nil {
+						log.Printf("ishell: autostart forward %s for conn %s: %v", rule.ID, connID, err)
+					}
+				}
+			}
 		}
 	}
 
@@ -281,6 +339,7 @@ func (m *Manager) Disconnect(connID string) error {
 	if !ok {
 		return fmt.Errorf("connection %s not found", connID)
 	}
+	m.stopAllForwards(conn)
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
 	if conn.stopKeepalive != nil {
@@ -292,6 +351,9 @@ func (m *Manager) Disconnect(connID string) error {
 	}
 	if conn.sftpCl != nil {
 		conn.sftpCl.Close()
+	}
+	if conn.agentCloser != nil {
+		conn.agentCloser.Close()
 	}
 	err := conn.client.Close()
 	if conn.jumpClient != nil {

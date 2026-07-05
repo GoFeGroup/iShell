@@ -122,10 +122,35 @@ export async function initSettings(initialPage = 'appearance') {
         </div>
       </div>
       <div class="settings-section">
+        <div class="settings-section-title">${t('settings.terminal.colorScheme')}</div>
+        <div class="settings-row">
+          <div class="settings-row-label">${t('settings.terminal.colorScheme')}</div>
+          <div class="settings-row-control">
+            <select class="input" id="st-colorscheme" style="width:auto;">
+              ${['catppuccin','dracula','solarizedDark','oneDark'].map(c=>`<option value="${c}" ${(settings.color_scheme||'catppuccin')===c?'selected':''}>${t('settings.terminal.colorScheme_'+c)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
         <div class="settings-section-title">${t('settings.terminal.behavior')}</div>
         <div class="settings-row">
           <div class="settings-row-label">${t('settings.terminal.scrollbackLines')}</div>
           <div class="settings-row-control"><input class="input" id="st-scrollback" type="number" value="${settings.scrollback||10000}" style="width:100px;" /></div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">${t('settings.terminal.bellStyle')}</div>
+          <div class="settings-row-control">
+            <select class="input" id="st-bell" style="width:auto;">
+              <option value="visual" ${(settings.bell_style||'visual')==='visual'?'selected':''}>${t('settings.terminal.bellVisual')}</option>
+              <option value="sound" ${settings.bell_style==='sound'?'selected':''}>${t('settings.terminal.bellSound')}</option>
+              <option value="none" ${settings.bell_style==='none'?'selected':''}>${t('settings.terminal.bellNone')}</option>
+            </select>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div><div class="settings-row-label">${t('settings.terminal.ligatures')}</div><div class="settings-row-desc">${t('settings.terminal.ligaturesDesc')}</div></div>
+          <div class="settings-row-control"><div class="toggle-switch ${settings.ligatures!==false?'on':''}" id="st-ligatures"></div></div>
         </div>
       </div>
     </div>
@@ -357,10 +382,19 @@ export async function initSettings(initialPage = 'appearance') {
     persist();
   });
   bindToggle('st-blink', on => { current.cursor_blink = on; persist(); });
+  document.getElementById('st-colorscheme')?.addEventListener('change', e => {
+    current.color_scheme = e.target.value;
+    persist();
+  });
   document.getElementById('st-scrollback')?.addEventListener('change', e => {
     current.scrollback = parseInt(e.target.value) || current.scrollback;
     persist();
   });
+  document.getElementById('st-bell')?.addEventListener('change', e => {
+    current.bell_style = e.target.value;
+    persist();
+  });
+  bindToggle('st-ligatures', on => { current.ligatures = on; persist(); });
   bindToggle('st-strict', on => { current.strict_host_key = on; persist(); });
   document.getElementById('st-khpath')?.addEventListener('input', e => {
     current.known_hosts_path = e.target.value || '';

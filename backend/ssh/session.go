@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	gossh "golang.org/x/crypto/ssh"
+	sshagent "golang.org/x/crypto/ssh/agent"
 
 	"ishell/backend/termout"
 )
@@ -23,10 +25,16 @@ type TermSession struct {
 
 // newTermSession opens a PTY shell on the given SSH client and starts
 // streaming stdout/stderr back to the frontend via Wails events.
-func newTermSession(ctx context.Context, connID string, client *gossh.Client, cols, rows int) (*TermSession, error) {
+func newTermSession(ctx context.Context, connID string, client *gossh.Client, cols, rows int, forwardAgent bool) (*TermSession, error) {
 	sess, err := client.NewSession()
 	if err != nil {
 		return nil, fmt.Errorf("open session: %w", err)
+	}
+
+	if forwardAgent {
+		if err := sshagent.RequestAgentForwarding(sess); err != nil {
+			log.Printf("ishell: agent forwarding request denied: %v", err)
+		}
 	}
 
 	modes := gossh.TerminalModes{

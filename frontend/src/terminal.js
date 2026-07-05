@@ -1,10 +1,12 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { sendInput, resizeTerm, on, off } from './api.js';
 import { findQuickCommandByShortcut } from './quick-command.js';
 import { createZmodemSentry } from './zmodem.js';
+import { t } from './i18n.js';
 
 const isMac = navigator.platform.startsWith('Mac');
 const instances = {};  // connID → { term, fitAddon, resizeObs, dataHandler, xtermEl }
@@ -260,6 +262,7 @@ function isGlobalAppShortcut(e) {
     key === 'b' ||
     key === 'f' ||
     key === 'o' ||
+    key === 'k' ||
     key === ',' ||
     (e.key >= '1' && e.key <= '9');
 }
@@ -350,13 +353,18 @@ export function createTerminal(connID, settings, options = {}) {
     cursorBlink: settings?.cursor_blink !== false,
     cursorStyle: settings?.cursor_style || 'block',
     scrollback: settings?.scrollback || 10000,
-    theme: buildTheme(),
+    theme: buildTheme(settings?.color_scheme),
     allowTransparency: false,
     convertEol: true,
+    // Required by @xterm/addon-search's match-highlight decorations, which
+    // call the still-proposed Terminal.registerDecoration API.
+    allowProposedApi: true,
   });
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+  const searchAddon = new SearchAddon();
+  term.loadAddon(searchAddon);
   term.loadAddon(new WebLinksAddon((event, uri) => {
     if (!(isMac ? event.metaKey : event.altKey)) return;
     window.runtime.BrowserOpenURL(uri);
@@ -473,6 +481,7 @@ export function createTerminal(connID, settings, options = {}) {
     const inst = instances[connID];
     if (inst) rememberViewport(inst);
   });
+  const bellDisposable = term.onBell(() => handleBell(connID));
   const focusInHandler = () => {
     instances[connID]?.onFocus?.();
   };
@@ -740,9 +749,7 @@ export function createTerminal(connID, settings, options = {}) {
     e.stopPropagation();
     e.stopImmediatePropagation?.();
     term.focus();
-    window.runtime.ClipboardGetText()
-      .then(pasteIntoTerminal)
-      .catch(() => {});
+    showTerminalContextMenu(e, connID, term, pasteIntoTerminal);
   };
   xtermEl.addEventListener('contextmenu', contextMenuHandler);
 
@@ -777,11 +784,13 @@ export function createTerminal(connID, settings, options = {}) {
   resizeObs.observe(container);
 
   instances[connID] = {
-    term, fitAddon, resizeObs, dataHandler,
+    term, fitAddon, searchAddon, searchResultsDisposable: null, resizeObs, dataHandler,
+    ligaturesEnabled: false, ligaturesAddon: null,
     connID,
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
     compositionStartHandler, compositionEndHandler, beforeInputHandler, pasteHandler, focusInHandler,
     xtermEl, fontFamily: resolvedFont, fontSize: resolvedSize,
+    aiEnabled: !!settings?.ai_enabled,
     containerEl: container, containerId, sizeElId,
     onFocus: options.onFocus || null,
     onSizeChange: options.onSizeChange || null,
@@ -795,12 +804,66 @@ export function createTerminal(connID, settings, options = {}) {
     inputEnabled: true,
     lastFitWidth: 0,
     lastFitHeight: 0,
-    disposables: [osc7Disposable, osc1337Disposable, dataDisposable, scrollDisposable],
+    bellStyle: settings?.bell_style || 'visual',
+    disposables: [osc7Disposable, osc1337Disposable, dataDisposable, scrollDisposable, bellDisposable],
   };
+
+  setTerminalLigatures(connID, !!settings?.ligatures);
 
   options.onSizeChange?.(term.cols, term.rows);
 
   return term;
+}
+
+// Lazily loads/unloads the ligatures addon. Dynamic import keeps the
+// (nontrivial) font-shaping code out of the main bundle when the setting is
+// off. The addon uses the browser's Local Font Access API when available and
+// falls back to a static common-ligature list otherwise (see
+// @xterm/addon-ligatures) — no bundled font file is required.
+function setTerminalLigatures(connID, enabled) {
+  const inst = instances[connID];
+  if (!inst || enabled === inst.ligaturesEnabled) return;
+  inst.ligaturesEnabled = enabled;
+  if (enabled) {
+    import('@xterm/addon-ligatures').then(({ LigaturesAddon }) => {
+      const current = instances[connID];
+      if (!current || current.term !== inst.term || !current.ligaturesEnabled || current.ligaturesAddon) return;
+      current.ligaturesAddon = new LigaturesAddon();
+      current.term.loadAddon(current.ligaturesAddon);
+      current.term.refresh(0, current.term.rows - 1);
+    }).catch(() => {});
+  } else if (inst.ligaturesAddon) {
+    inst.ligaturesAddon.dispose();
+    inst.ligaturesAddon = null;
+  }
+}
+
+let beepAudioCtx = null;
+function playBeep() {
+  try {
+    beepAudioCtx = beepAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = beepAudioCtx;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.15);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+  } catch { /* audio unavailable */ }
+}
+
+function handleBell(connID) {
+  const inst = instances[connID];
+  if (!inst) return;
+  if (inst.bellStyle === 'sound') {
+    playBeep();
+  } else if (inst.bellStyle !== 'none') {
+    inst.xtermEl.classList.add('bell-flash');
+    setTimeout(() => inst.xtermEl?.classList.remove('bell-flash'), 150);
+  }
 }
 
 export function scrollTerminalToBottom(connID) {
@@ -870,8 +933,8 @@ export function getTerminalSelection(connID) {
   return instances[connID]?.term.getSelection() || '';
 }
 
-export function getTerminalRecentOutput(connID, maxLines = 200) {
-  const buffer = instances[connID]?.term.buffer.active;
+function recentOutputFromTerm(term, maxLines = 200) {
+  const buffer = term?.buffer.active;
   if (!buffer) return '';
   const start = Math.max(0, buffer.length - Math.max(1, maxLines));
   const lines = [];
@@ -879,6 +942,99 @@ export function getTerminalRecentOutput(connID, maxLines = 200) {
     lines.push(buffer.getLine(i)?.translateToString(true) || '');
   }
   return lines.join('\n').replace(/\s+$/, '');
+}
+
+export function getTerminalRecentOutput(connID, maxLines = 200) {
+  return recentOutputFromTerm(instances[connID]?.term, maxLines);
+}
+
+function showTerminalContextMenu(e, connID, term, pasteIntoTerminal) {
+  document.querySelectorAll('.ctx-menu').forEach(m => m.remove());
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = `left:${e.pageX}px;top:${e.pageY}px;`;
+
+  const sel = term.getSelection();
+  const hasSelection = !!sel;
+  const text = hasSelection ? sel : recentOutputFromTerm(term);
+  const sourceKind = hasSelection ? 'terminal_selection' : 'terminal_output';
+
+  const items = [
+    { label: t('terminal.ctxPaste'), action: () => {
+      window.runtime.ClipboardGetText().then(pasteIntoTerminal).catch(() => {});
+    } },
+  ];
+
+  if (instances[connID]?.aiEnabled) {
+    items.push(null);
+    items.push({ label: t('terminal.ctxAskAI'), action: () => dispatchTerminalAIAction(connID, 'ask', text, sourceKind) });
+    items.push({ label: hasSelection ? t('terminal.ctxExplain') : t('terminal.ctxExplainOutput'), action: () => dispatchTerminalAIAction(connID, 'explain', text, sourceKind) });
+    items.push({ label: hasSelection ? t('terminal.ctxFix') : t('terminal.ctxFixOutput'), action: () => dispatchTerminalAIAction(connID, 'fix', text, sourceKind) });
+  }
+
+  items.forEach(item => {
+    if (!item) { const d = document.createElement('div'); d.className = 'ctx-divider'; menu.appendChild(d); return; }
+    const el = document.createElement('div');
+    el.className = 'ctx-item';
+    el.textContent = item.label;
+    el.addEventListener('click', () => { menu.remove(); item.action(); });
+    menu.appendChild(el);
+  });
+
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+}
+
+function dispatchTerminalAIAction(connID, kind, text, sourceKind) {
+  if (!text) return;
+  window.dispatchEvent(new CustomEvent('ishell:terminalAIAction', {
+    detail: { connID, kind, text, sourceKind },
+  }));
+}
+
+const SEARCH_DECORATIONS = {
+  matchBackground: '#4d3800',
+  matchBorder: '#8a6d00',
+  matchOverviewRuler: '#8a6d00',
+  activeMatchBackground: '#c77d00',
+  activeMatchBorder: '#ffb020',
+  activeMatchColorOverviewRuler: '#ffb020',
+};
+
+// direction: 'next' | 'prev'. onResults, if provided, is registered once per
+// instance to receive { resultIndex, resultCount } from the search addon.
+export function findInTerminal(connID, term, { direction = 'next', incremental = false, onResults } = {}) {
+  const inst = instances[connID];
+  if (!inst?.searchAddon || !term) return;
+  if (onResults && !inst.searchResultsDisposable) {
+    inst.searchResultsDisposable = inst.searchAddon.onDidChangeResults(onResults);
+  }
+  const opts = { incremental, decorations: SEARCH_DECORATIONS };
+  if (direction === 'prev') inst.searchAddon.findPrevious(term, opts);
+  else inst.searchAddon.findNext(term, opts);
+}
+
+export function clearTerminalSearch(connID) {
+  instances[connID]?.searchAddon?.clearDecorations();
+}
+
+export function applyLiveSettings(settings) {
+  const aiEnabled = !!settings?.ai_enabled;
+  const theme = buildTheme(settings?.color_scheme);
+  const cursorStyle = settings?.cursor_style || 'block';
+  const cursorBlink = settings?.cursor_blink !== false;
+  const scrollback = settings?.scrollback || 10000;
+  const bellStyle = settings?.bell_style || 'visual';
+  const ligaturesEnabled = !!settings?.ligatures;
+  Object.entries(instances).forEach(([connID, inst]) => {
+    inst.aiEnabled = aiEnabled;
+    inst.bellStyle = bellStyle;
+    inst.term.options.theme = theme;
+    inst.term.options.cursorStyle = cursorStyle;
+    inst.term.options.cursorBlink = cursorBlink;
+    inst.term.options.scrollback = scrollback;
+    setTerminalLigatures(connID, ligaturesEnabled);
+  });
 }
 
 export function fitTerminal(connID, { restoreScroll = false, caller = 'fitTerminal' } = {}) {
@@ -915,8 +1071,8 @@ function parseCurrentDir(data) {
   }
 }
 
-function buildTheme() {
-  return {
+const COLOR_SCHEMES = {
+  catppuccin: {
     background:    '#15151F',
     foreground:    '#FFFFFF',
     cursor:        '#F5E0DC',
@@ -929,5 +1085,51 @@ function buildTheme() {
     magenta:       '#BF3FBD', brightMagenta: '#E07DE0',
     cyan:          '#00C5C7', brightCyan:    '#5FFDFF',
     white:         '#C7C7C7', brightWhite:   '#FEFFFF',
-  };
+  },
+  dracula: {
+    background:    '#282A36',
+    foreground:    '#F8F8F2',
+    cursor:        '#F8F8F0',
+    selectionBackground: 'rgba(68,71,90,0.6)',
+    black:         '#21222C', brightBlack:   '#6272A4',
+    red:           '#FF5555', brightRed:     '#FF6E6E',
+    green:         '#50FA7B', brightGreen:   '#69FF94',
+    yellow:        '#F1FA8C', brightYellow:  '#FFFFA5',
+    blue:          '#BD93F9', brightBlue:    '#D6ACFF',
+    magenta:       '#FF79C6', brightMagenta: '#FF92DF',
+    cyan:          '#8BE9FD', brightCyan:    '#A4FFFF',
+    white:         '#F8F8F2', brightWhite:   '#FFFFFF',
+  },
+  solarizedDark: {
+    background:    '#002B36',
+    foreground:    '#839496',
+    cursor:        '#93A1A1',
+    selectionBackground: 'rgba(7,54,66,0.8)',
+    black:         '#073642', brightBlack:   '#586E75',
+    red:           '#DC322F', brightRed:     '#CB4B16',
+    green:         '#859900', brightGreen:   '#586E75',
+    yellow:        '#B58900', brightYellow:  '#657B83',
+    blue:          '#268BD2', brightBlue:    '#839496',
+    magenta:       '#D33682', brightMagenta: '#6C71C4',
+    cyan:          '#2AA198', brightCyan:    '#93A1A1',
+    white:         '#EEE8D5', brightWhite:   '#FDF6E3',
+  },
+  oneDark: {
+    background:    '#282C34',
+    foreground:    '#ABB2BF',
+    cursor:        '#528BFF',
+    selectionBackground: 'rgba(62,68,81,0.8)',
+    black:         '#282C34', brightBlack:   '#5C6370',
+    red:           '#E06C75', brightRed:     '#E06C75',
+    green:         '#98C379', brightGreen:   '#98C379',
+    yellow:        '#E5C07B', brightYellow:  '#E5C07B',
+    blue:          '#61AFEF', brightBlue:    '#61AFEF',
+    magenta:       '#C678DD', brightMagenta: '#C678DD',
+    cyan:          '#56B6C2', brightCyan:    '#56B6C2',
+    white:         '#ABB2BF', brightWhite:   '#FFFFFF',
+  },
+};
+
+function buildTheme(schemeName) {
+  return COLOR_SCHEMES[schemeName] || COLOR_SCHEMES.catppuccin;
 }

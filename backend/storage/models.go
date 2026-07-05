@@ -25,8 +25,33 @@ type Session struct {
 	JumpHost      string   `json:"jump_host,omitempty" yaml:"jump_host,omitempty"`
 	JumpProfileID string   `json:"jump_profile_id,omitempty" yaml:"jump_profile_id,omitempty"`
 	InitCommand   string   `json:"init_command,omitempty" yaml:"init_command,omitempty"`
+	ForwardAgent  bool     `json:"forward_agent,omitempty" yaml:"forward_agent,omitempty"`
 	CreatedAt     string   `json:"created_at" yaml:"created_at"`
 	UpdatedAt     string   `json:"updated_at" yaml:"updated_at"`
+}
+
+type ForwardType string
+
+const (
+	ForwardLocal   ForwardType = "local"
+	ForwardRemote  ForwardType = "remote"
+	ForwardDynamic ForwardType = "dynamic"
+)
+
+// PortForward is a persisted SSH tunnel rule scoped to a Session. Local/remote
+// forwards use TargetHost/TargetPort; dynamic (SOCKS5) forwards ignore them.
+type PortForward struct {
+	ID         string      `json:"id" yaml:"id"`
+	SessionID  string      `json:"session_id" yaml:"session_id"`
+	Type       ForwardType `json:"type" yaml:"type"`
+	BindAddr   string      `json:"bind_addr" yaml:"bind_addr"`
+	BindPort   int         `json:"bind_port" yaml:"bind_port"`
+	TargetHost string      `json:"target_host,omitempty" yaml:"target_host,omitempty"`
+	TargetPort int         `json:"target_port,omitempty" yaml:"target_port,omitempty"`
+	AutoStart  bool        `json:"auto_start" yaml:"auto_start"`
+	Enabled    bool        `json:"enabled" yaml:"enabled"`
+	CreatedAt  string      `json:"created_at" yaml:"created_at"`
+	UpdatedAt  string      `json:"updated_at" yaml:"updated_at"`
 }
 
 type Settings struct {

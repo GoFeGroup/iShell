@@ -44,12 +44,21 @@ export const listBuiltinToolCalls = () => go().ListBuiltinToolCalls();
 
 export const getKnownHosts  = ()      => go().GetKnownHosts();
 export const acceptHostKey  = (h)     => go().AcceptHostKey(h);
+export const checkAgentAvailable = () => go().CheckAgentAvailable();
 export const removeKnownHost= (h)     => go().RemoveKnownHost(h);
 export const validateKey    = (p, pp) => go().ValidateKey(p, pp);
 export const openKeyDialog  = ()      => go().OpenKeyFileDialog();
 
 export const exportConfig   = ()      => go().ExportConfig();
 export const importConfig   = ()      => go().ImportConfig();
+
+export const listPortForwardsForSession = (sessionID)      => go().ListPortForwardsForSession(sessionID);
+export const savePortForward            = (pf)             => go().SavePortForward(pf);
+export const deletePortForward          = (id)             => go().DeletePortForward(id);
+export const startPortForward           = (connID, id)     => go().StartPortForward(connID, id);
+export const startAdHocForward          = (connID, pf)     => go().StartAdHocForward(connID, pf);
+export const stopPortForward            = (connID, id)     => go().StopPortForward(connID, id);
+export const listActiveForwards         = (connID)         => go().ListActiveForwards(connID);
 
 export const sendInputBytes     = (id, b64)        => go().SendInputBytes(id, b64);
 export const openFilesForZmodem = ()               => go().OpenFilesForZmodem();
@@ -68,6 +77,7 @@ export const rejectAIToolCall    = (pendingID)         => go().RejectAIToolCall(
 export const setAIAutoExec       = (chatID, on)        => go().SetAIAutoExec(chatID, on);
 export const stopAIRun           = (chatID)            => go().StopAIRun(chatID);
 export const isAIRunActive       = (chatID)            => go().IsAIRunActive(chatID);
+export const generateCommandSuggestion = (connID, prompt) => go().GenerateCommandSuggestion(connID, prompt);
 
 export const on  = (event, cb) => window.runtime.EventsOn(event, cb);
 export const off = (event)     => window.runtime.EventsOff(event);

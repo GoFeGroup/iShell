@@ -31,6 +31,30 @@ export function initAISidebar(settings, activeTabGetter) {
   document.getElementById('btn-toggle-ai')?.addEventListener('click', toggleAISidebar);
   window.addEventListener('resize', () => activeInstance?.applySidebarWidth());
   window.addEventListener('ishell:terminalSelection', e => showSelectionAction(e.detail));
+  window.addEventListener('ishell:terminalAIAction', e => runQuickAIAction(e.detail));
+}
+
+async function runQuickAIAction({ kind, text, sourceKind } = {}) {
+  if (!aiEnabled || !text || !activeInstance) return;
+  const instance = activeInstance;
+  dismissSelectionAction();
+  instance.setOpen(true, { animate: true, notify: true });
+  if (!instance.currentChatID) await instance.handleNewChat();
+  if (!instance.currentChatID) return;
+
+  const label = sourceKind === 'terminal_selection' ? t('aiSidebar.selectedTerminalText') : t('aiSidebar.recentTerminalOutput');
+
+  if (kind === 'ask') {
+    instance.addContext(sourceKind, label, text);
+    instance.focusInput();
+    return;
+  }
+
+  const prompt = kind === 'fix' ? t('aiSidebar.fixPrompt') : t('aiSidebar.explainPrompt');
+  const contexts = [{ kind: sourceKind, label, content: text }];
+  if (!await instance.confirmContextAutoExec(contexts)) return;
+  instance.appendUserBubble(prompt, contexts);
+  await instance.sendUnpersistedPrompt(instance.currentChatID, prompt, contexts);
 }
 
 function dismissSelectionAction() {

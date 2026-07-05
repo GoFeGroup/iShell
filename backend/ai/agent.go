@@ -327,6 +327,24 @@ func (ag *Agent) GenerateChatTitle(ctx context.Context, chatID, question string)
 	return nil
 }
 
+// GenerateCommandSuggestion returns a single suggested shell command for a
+// natural-language prompt. It is a one-shot completion — no tools, no
+// persistence, no chat history — used by the inline command bar. connID is
+// optional; when set, recent terminal output is attached as context.
+func (ag *Agent) GenerateCommandSuggestion(ctx context.Context, connID, prompt string) (string, error) {
+	_, client, err := ag.loadSettingsAndClient()
+	if err != nil {
+		return "", err
+	}
+	var termContext string
+	if connID != "" {
+		if out, err := ag.captureOutput(connID, 0); err == nil {
+			termContext = out
+		}
+	}
+	return client.GenerateCommandSuggestion(ctx, prompt, termContext)
+}
+
 func (ag *Agent) buildHistory(chatID string) ([]Message, error) {
 	stored, err := ag.store.ListAIChatMessages(chatID)
 	if err != nil {

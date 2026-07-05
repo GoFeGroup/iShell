@@ -1,10 +1,11 @@
 import '@xterm/xterm/css/xterm.css';
-import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off, getSession, getSettings, getVersion, sendInput, launchNewInstance } from './api.js';
+import { acceptHostKey, connect, connectLocal, disconnect, focusWindow, on, off, getSession, getSettings, getVersion, sendInput, launchNewInstance, generateCommandSuggestion } from './api.js';
 import { initSidebar, loadProfiles, setSessionStatus, LOCAL_SESSION } from './sidebar.js';
 import { openProfileForm } from './profile-form.js';
 import { initProfilePicker, openProfilePicker } from './profile-picker.js';
-import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, getTerminalCWD, getTerminalRecentOutput, getTerminalSelection, rememberTerminalViewport, setTerminalInputEnabled, setTerminalReconnectCallback, suspendTerminalAutoFit, writeTerminalLine } from './terminal.js';
+import { createTerminal, destroyTerminal, focusTerminal, fitTerminal, getTerminalCWD, getTerminalRecentOutput, getTerminalSelection, rememberTerminalViewport, setTerminalInputEnabled, setTerminalReconnectCallback, suspendTerminalAutoFit, writeTerminalLine, applyLiveSettings, findInTerminal, clearTerminalSearch } from './terminal.js';
 import { initSFTP } from './sftp.js';
+import { openPortForwardPanel } from './port-forward-panel.js';
 import { initSettings } from './settings.js';
 import { initQuickCommands, setQuickCommandSettings, toggleQuickCommands, updateQuickCommandUI, triggerQuickCommandShortcut } from './quick-command.js';
 import {
@@ -114,10 +115,16 @@ window.addEventListener('load', async () => {
     if (target?.connID) doDisconnect(target.connID);
   });
   document.getElementById('btn-sftp').addEventListener('click', toggleSFTP);
+  document.getElementById('btn-port-forward').addEventListener('click', () => {
+    const target = tabForConnActions(activeTab);
+    if (!target?.connID) { showToast(t('toast.connectFirst')); return; }
+    openPortForwardPanel(target.connID, target.sessionID);
+  });
   document.getElementById('btn-quick-command').addEventListener('click', toggleQuickCommands);
   document.getElementById('btn-settings').addEventListener('click', () => openSettingsPanel());
   document.getElementById('btn-new-instance').addEventListener('click', openNewInstance);
   document.getElementById('btn-search-term').addEventListener('click', toggleFind);
+  document.getElementById('btn-ai-cmdbar').addEventListener('click', toggleCmdBar);
   document.getElementById('btn-fullscreen').addEventListener('click', toggleFullscreen);
 
   // Update shortcut hints based on platform
@@ -142,6 +149,8 @@ window.addEventListener('load', async () => {
     settings = e.detail?.settings || settings;
     setQuickCommandSettings(settings);
     setAISidebarSettings(settings);
+    applyLiveSettings(settings);
+    updateConnUI(tabForConnActions(activeTab));
     refitActiveTerminal();
   });
   window.addEventListener('ishell:nativeEsc', handleNativeEsc);
@@ -465,6 +474,17 @@ function ensureTerminalContent(tab) {
         <button class="btn btn-ghost btn-icon find-next">▼</button>
         <button class="btn btn-ghost btn-icon find-close">✕</button>
       </div>
+      <div class="ai-cmdbar" style="display:none;">
+        <span class="ai-cmdbar-icon">✨</span>
+        <input placeholder="Describe a command…" data-i18n-placeholder="terminal.cmdBarPlaceholder" />
+        <div class="ai-cmdbar-suggestion" style="display:none;">
+          <code class="ai-cmdbar-suggestion-text"></code>
+          <button class="btn btn-ghost btn-icon btn-sm ai-cmdbar-regenerate" title="Regenerate" data-i18n-title="terminal.cmdBarRegenerate">↻</button>
+          <button class="btn btn-secondary btn-sm ai-cmdbar-insert" data-i18n="terminal.cmdBarInsert">Insert</button>
+          <button class="btn btn-primary btn-sm ai-cmdbar-run" data-i18n="terminal.cmdBarRun">Insert &amp; Run</button>
+        </div>
+        <button class="btn btn-ghost btn-icon ai-cmdbar-close">✕</button>
+      </div>
       <div class="quick-command-bar" style="display:none;"></div>
       <div class="terminal-statusbar">
         <div class="statusbar-left">
@@ -504,6 +524,11 @@ function ensureTerminalContent(tab) {
   tab.statusEl = content.querySelector('.terminal-status');
   tab.sizeEl = content.querySelector('.terminal-size');
   tab.findBar?.querySelector('.find-close')?.addEventListener('click', () => setFindBar(false));
+  wireFindBar(tab);
+
+  tab.cmdBar = content.querySelector('.ai-cmdbar');
+  tab.cmdBarInput = tab.cmdBar?.querySelector('input');
+  wireCmdBar(tab);
 
   createAISidebarForTab(tab, {
     root: content.querySelector('.ai-sidebar'),
@@ -1155,6 +1180,8 @@ function destroyTerminalContent(tab) {
   });
   tab.findBar = null;
   tab.findInput = null;
+  tab.cmdBar = null;
+  tab.cmdBarInput = null;
   tab.quickCommandBar = null;
   tab.statusEl = null;
   tab.sizeEl = null;
@@ -1178,10 +1205,14 @@ function updateConnUI(tab) {
   const hasConn = !!tab;
   const actions = document.getElementById('topbar-actions');
   const sftpBtn = document.getElementById('btn-sftp');
+  const pfBtn = document.getElementById('btn-port-forward');
+  const cmdBarBtn = document.getElementById('btn-ai-cmdbar');
   const disconnectBtn = document.getElementById('btn-disconnect');
   const disconnectVdiv = document.getElementById('disconnect-vdiv');
   actions.style.display = hasConn ? '' : 'none';
   if (sftpBtn) sftpBtn.style.display = hasConn && !tab?.isLocal ? '' : 'none';
+  if (pfBtn) pfBtn.style.display = hasConn && !tab?.isLocal ? '' : 'none';
+  if (cmdBarBtn) cmdBarBtn.style.display = hasConn && settings?.ai_enabled ? '' : 'none';
   if (disconnectBtn) disconnectBtn.style.display = hasConn ? '' : 'none';
   if (disconnectVdiv) disconnectVdiv.style.display = hasConn ? '' : 'none';
   updateQuickCommandUI();
@@ -1232,10 +1263,27 @@ async function openSettingsPanel(page) {
 function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
   const collapsed = !document.documentElement.classList.contains('sidebar-collapsed');
+  // Suspend ResizeObserver-driven fits for the duration of the width
+  // transition so the terminal doesn't refit on every animation frame;
+  // suspendTerminalAutoFit(false) below does exactly one fit once it ends.
+  suspendTerminalAutoFit(true);
   sidebar.classList.toggle('collapsed', collapsed);
   document.documentElement.classList.toggle('sidebar-collapsed', collapsed);
   localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
-  refitActiveTerminalAfterLayout();
+
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    sidebar.removeEventListener('transitionend', onTransitionEnd);
+    suspendTerminalAutoFit(false);
+  };
+  const onTransitionEnd = (e) => {
+    if (e.target !== sidebar || e.propertyName !== 'width') return;
+    finish();
+  };
+  sidebar.addEventListener('transitionend', onTransitionEnd);
+  setTimeout(finish, 320); // fallback in case transitionend doesn't fire
 }
 
 // ── Find bar ─────────────────────────────────────────────────────────────────
@@ -1247,7 +1295,112 @@ function toggleFind() {
 function setFindBar(show) {
   if (!activeTab?.findBar) return;
   activeTab.findBar.style.display = show ? '' : 'none';
-  if (show) activeTab.findInput?.focus();
+  if (show) {
+    activeTab.findInput?.focus();
+  } else {
+    const connID = activeConnectedPane(activeTab)?.connID;
+    if (connID) clearTerminalSearch(connID);
+    const countEl = activeTab.findBar.querySelector('.find-count');
+    if (countEl) countEl.textContent = '';
+  }
+  refitActiveTerminal();
+}
+
+function wireFindBar(tab) {
+  const bar = tab.findBar;
+  const input = tab.findInput;
+  if (!bar || !input) return;
+  const countEl = bar.querySelector('.find-count');
+  const updateCount = ({ resultIndex, resultCount }) => {
+    if (countEl) countEl.textContent = resultCount ? `${resultIndex + 1}/${resultCount}` : '0/0';
+  };
+  const search = (opts) => {
+    const connID = activeConnectedPane(tab)?.connID;
+    if (!connID || !input.value) { if (countEl) countEl.textContent = ''; return; }
+    findInTerminal(connID, input.value, { onResults: updateCount, ...opts });
+  };
+  input.addEventListener('input', () => search({ direction: 'next', incremental: true }));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); search({ direction: e.shiftKey ? 'prev' : 'next', incremental: false }); }
+    if (e.key === 'Escape') { e.preventDefault(); setFindBar(false); }
+  });
+  bar.querySelector('.find-prev')?.addEventListener('click', () => search({ direction: 'prev', incremental: false }));
+  bar.querySelector('.find-next')?.addEventListener('click', () => search({ direction: 'next', incremental: false }));
+}
+
+// ── AI command bar ───────────────────────────────────────────────────────────
+
+function wireCmdBar(tab) {
+  const bar = tab.cmdBar;
+  const input = tab.cmdBarInput;
+  if (!bar || !input) return;
+  const suggestionRow = bar.querySelector('.ai-cmdbar-suggestion');
+  const suggestionText = bar.querySelector('.ai-cmdbar-suggestion-text');
+  const insertBtn = bar.querySelector('.ai-cmdbar-insert');
+  const runBtn = bar.querySelector('.ai-cmdbar-run');
+  const regenBtn = bar.querySelector('.ai-cmdbar-regenerate');
+  const closeBtn = bar.querySelector('.ai-cmdbar-close');
+
+  let lastSuggestion = '';
+  let generating = false;
+
+  const generate = async () => {
+    const prompt = input.value.trim();
+    if (!prompt || generating) return;
+    const connID = activeConnectedPane(tab)?.connID || '';
+    generating = true;
+    lastSuggestion = '';
+    suggestionRow.style.display = '';
+    suggestionText.textContent = '…';
+    insertBtn.disabled = true;
+    runBtn.disabled = true;
+    try {
+      const cmd = await generateCommandSuggestion(connID, prompt);
+      lastSuggestion = cmd || '';
+      suggestionText.textContent = lastSuggestion || t('common.failed');
+    } catch (e) {
+      suggestionText.textContent = '❌ ' + e;
+    } finally {
+      generating = false;
+      insertBtn.disabled = !lastSuggestion;
+      runBtn.disabled = !lastSuggestion;
+    }
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); generate(); }
+    if (e.key === 'Escape') { e.preventDefault(); setCmdBar(false); }
+  });
+  regenBtn?.addEventListener('click', generate);
+  insertBtn?.addEventListener('click', () => {
+    const connID = activeConnectedPane(tab)?.connID;
+    if (!lastSuggestion || !connID) return;
+    sendInput(connID, lastSuggestion).catch(() => {});
+    setCmdBar(false);
+  });
+  runBtn?.addEventListener('click', () => {
+    const connID = activeConnectedPane(tab)?.connID;
+    if (!lastSuggestion || !connID) return;
+    sendInput(connID, lastSuggestion + '\r').catch(() => {});
+    setCmdBar(false);
+  });
+  closeBtn?.addEventListener('click', () => setCmdBar(false));
+}
+
+function toggleCmdBar() {
+  if (!activeTab?.cmdBar || !settings?.ai_enabled) return;
+  setCmdBar(activeTab.cmdBar.style.display === 'none');
+}
+function setCmdBar(show) {
+  if (!activeTab?.cmdBar) return;
+  activeTab.cmdBar.style.display = show ? '' : 'none';
+  if (show) {
+    activeTab.cmdBarInput?.focus();
+  } else {
+    if (activeTab.cmdBarInput) activeTab.cmdBarInput.value = '';
+    const suggestionRow = activeTab.cmdBar.querySelector('.ai-cmdbar-suggestion');
+    if (suggestionRow) suggestionRow.style.display = 'none';
+  }
   refitActiveTerminal();
 }
 
@@ -1339,6 +1492,14 @@ function handleKeydown(e) {
     if (panelTerm && panelTerm.style.display !== 'none') {
       e.preventDefault();
       toggleFind();
+    }
+    return;
+  }
+  if (appMod && key === 'k') {
+    const panelTerm = document.getElementById('panel-terminal');
+    if (panelTerm && panelTerm.style.display !== 'none' && settings?.ai_enabled) {
+      e.preventDefault();
+      toggleCmdBar();
     }
     return;
   }

@@ -72,7 +72,7 @@ func (a *App) Startup(ctx context.Context) {
 		// Continue without persistence rather than crash
 	}
 	a.store = store
-	a.sshMgr = ssh.NewManager(ctx)
+	a.sshMgr = ssh.NewManager(ctx, store)
 	a.localMgr = local.NewManager(ctx)
 	a.aiAgent = ai.NewAgent(a.store, a, func(event string, payload any) {
 		wailsRuntime.EventsEmit(a.ctx, event, payload)
@@ -287,6 +287,69 @@ func (a *App) AcceptHostKey(hostname string) error {
 		khPath = settings.KnownHostsPath
 	}
 	return a.sshMgr.AcceptAndStoreHostKey(hostname, khPath)
+}
+
+// CheckAgentAvailable reports whether a running SSH agent (ssh-agent via
+// SSH_AUTH_SOCK, or Pageant on Windows) can currently be reached, so the
+// profile form can show a live status instead of static text.
+func (a *App) CheckAgentAvailable() bool {
+	_, closer, err := ssh.DialAgent()
+	if closer != nil {
+		closer.Close()
+	}
+	return err == nil
+}
+
+// ── Port forwarding ──────────────────────────────────────────────────────────
+
+func (a *App) ListPortForwardsForSession(sessionID string) ([]storage.PortForward, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store not ready")
+	}
+	return a.store.ListPortForwardsForSession(sessionID)
+}
+
+func (a *App) SavePortForward(pf storage.PortForward) (*storage.PortForward, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store not ready")
+	}
+	return a.store.SavePortForward(pf)
+}
+
+func (a *App) DeletePortForward(id string) error {
+	if a.store == nil {
+		return fmt.Errorf("store not ready")
+	}
+	return a.store.DeletePortForward(id)
+}
+
+// StartPortForward starts a previously saved rule against a live connection.
+func (a *App) StartPortForward(connID, forwardID string) (string, error) {
+	if a.store == nil {
+		return "", fmt.Errorf("store not ready")
+	}
+	rule, err := a.store.GetPortForward(forwardID)
+	if err != nil {
+		return "", err
+	}
+	if rule == nil {
+		return "", fmt.Errorf("port forward %s not found", forwardID)
+	}
+	return a.sshMgr.StartForward(connID, *rule)
+}
+
+// StartAdHocForward starts a tunnel that is never persisted to storage.
+func (a *App) StartAdHocForward(connID string, pf storage.PortForward) (string, error) {
+	pf.SessionID = ""
+	return a.sshMgr.StartForward(connID, pf)
+}
+
+func (a *App) StopPortForward(connID, forwardID string) error {
+	return a.sshMgr.StopForward(connID, forwardID)
+}
+
+func (a *App) ListActiveForwards(connID string) ([]ssh.ForwardStatus, error) {
+	return a.sshMgr.ListForwards(connID), nil
 }
 
 // ── SFTP ─────────────────────────────────────────────────────────────────────
@@ -837,6 +900,19 @@ func (a *App) RetryAIMessage(chatID, connID string) error {
 	}
 	go a.aiAgent.RunTurn(a.ctx, ai.RunOptions{ChatID: chatID, ConnID: connID, Resume: true})
 	return nil
+}
+
+// GenerateCommandSuggestion returns a single suggested shell command for a
+// natural-language prompt, used by the inline command bar. Unlike
+// SendAIMessage this is synchronous (one short completion, no tools, nothing
+// persisted) so the frontend can simply await the result.
+func (a *App) GenerateCommandSuggestion(connID, prompt string) (string, error) {
+	if a.store == nil || a.aiAgent == nil {
+		return "", fmt.Errorf("AI is not ready")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 20*time.Second)
+	defer cancel()
+	return a.aiAgent.GenerateCommandSuggestion(ctx, connID, prompt)
 }
 
 const maxAIContextBytes = 64 * 1024

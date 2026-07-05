@@ -59,6 +59,21 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
 	created_at    DATETIME NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session ON ai_chat_messages(session_id);
+
+CREATE TABLE IF NOT EXISTS port_forwards (
+	id           TEXT PRIMARY KEY,
+	session_id   TEXT    NOT NULL DEFAULT '',
+	type         TEXT    NOT NULL DEFAULT 'local',
+	bind_addr    TEXT    NOT NULL DEFAULT '127.0.0.1',
+	bind_port    INTEGER NOT NULL DEFAULT 0,
+	target_host  TEXT    NOT NULL DEFAULT '',
+	target_port  INTEGER NOT NULL DEFAULT 0,
+	auto_start   INTEGER NOT NULL DEFAULT 0,
+	enabled      INTEGER NOT NULL DEFAULT 1,
+	created_at   DATETIME NOT NULL,
+	updated_at   DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_port_forwards_session ON port_forwards(session_id);
 `
 
 type Store struct {
@@ -121,6 +136,7 @@ func (s *Store) runMigrations() error {
 	type col struct{ table, name, def string }
 	migrations := []col{
 		{"sessions", "jump_profile_id", "TEXT NOT NULL DEFAULT ''"},
+		{"sessions", "forward_agent", "INTEGER NOT NULL DEFAULT 0"},
 		{"ai_chat_sessions", "target_id", "TEXT NOT NULL DEFAULT ''"},
 		{"ai_chat_messages", "context_json", "TEXT NOT NULL DEFAULT ''"},
 	}
@@ -159,7 +175,7 @@ func (s *Store) ListSessions() ([]Session, error) {
 	rows, err := s.db.Query(`
 		SELECT id, label, host, port, username, auth_type,
 		       password, key_path, passphrase, group_name,
-		       keepalive, timeout, encoding, jump_host, jump_profile_id, init_command,
+		       keepalive, timeout, encoding, jump_host, jump_profile_id, init_command, forward_agent,
 		       created_at, updated_at
 		FROM sessions ORDER BY group_name, label, host`)
 	if err != nil {
@@ -175,7 +191,7 @@ func (s *Store) ListSessions() ([]Session, error) {
 			&sess.Username, &sess.AuthType,
 			&sess.Password, &sess.KeyPath, &sess.Passphrase, &sess.Group,
 			&sess.Keepalive, &sess.Timeout, &sess.Encoding,
-			&sess.JumpHost, &sess.JumpProfileID, &sess.InitCommand,
+			&sess.JumpHost, &sess.JumpProfileID, &sess.InitCommand, &sess.ForwardAgent,
 			&sess.CreatedAt, &sess.UpdatedAt,
 		)
 		if err != nil {
@@ -191,14 +207,14 @@ func (s *Store) GetSession(id string) (*Session, error) {
 	err := s.db.QueryRow(`
 		SELECT id, label, host, port, username, auth_type,
 		       password, key_path, passphrase, group_name,
-		       keepalive, timeout, encoding, jump_host, jump_profile_id, init_command,
+		       keepalive, timeout, encoding, jump_host, jump_profile_id, init_command, forward_agent,
 		       created_at, updated_at
 		FROM sessions WHERE id = ?`, id).Scan(
 		&sess.ID, &sess.Label, &sess.Host, &sess.Port,
 		&sess.Username, &sess.AuthType,
 		&sess.Password, &sess.KeyPath, &sess.Passphrase, &sess.Group,
 		&sess.Keepalive, &sess.Timeout, &sess.Encoding,
-		&sess.JumpHost, &sess.JumpProfileID, &sess.InitCommand,
+		&sess.JumpHost, &sess.JumpProfileID, &sess.InitCommand, &sess.ForwardAgent,
 		&sess.CreatedAt, &sess.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -234,8 +250,8 @@ func (s *Store) SaveSession(sess Session) (*Session, error) {
 		INSERT INTO sessions
 			(id, label, host, port, username, auth_type, password, key_path,
 			 passphrase, group_name, keepalive, timeout, encoding,
-			 jump_host, jump_profile_id, init_command, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			 jump_host, jump_profile_id, init_command, forward_agent, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			label=excluded.label, host=excluded.host, port=excluded.port,
 			username=excluded.username, auth_type=excluded.auth_type,
@@ -244,11 +260,12 @@ func (s *Store) SaveSession(sess Session) (*Session, error) {
 			keepalive=excluded.keepalive, timeout=excluded.timeout,
 			encoding=excluded.encoding, jump_host=excluded.jump_host,
 			jump_profile_id=excluded.jump_profile_id,
-			init_command=excluded.init_command, updated_at=excluded.updated_at`,
+			init_command=excluded.init_command, forward_agent=excluded.forward_agent,
+			updated_at=excluded.updated_at`,
 		sess.ID, sess.Label, sess.Host, sess.Port, sess.Username,
 		string(sess.AuthType), sess.Password, sess.KeyPath, sess.Passphrase,
 		sess.Group, sess.Keepalive, sess.Timeout, sess.Encoding,
-		sess.JumpHost, sess.JumpProfileID, sess.InitCommand,
+		sess.JumpHost, sess.JumpProfileID, sess.InitCommand, sess.ForwardAgent,
 		sess.CreatedAt,
 		sess.UpdatedAt,
 	)

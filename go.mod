@@ -5,6 +5,7 @@ go 1.23.0
 require (
 	github.com/UserExistsError/conpty v0.1.4
 	github.com/creack/pty v1.1.24
+	github.com/davidmz/go-pageant v1.0.2
 	github.com/google/uuid v1.6.0
 	github.com/pkg/sftp v1.13.9
 	github.com/wailsapp/wails/v2 v2.12.0

@@ -1,4 +1,4 @@
-import { saveSession, getSessions, openKeyDialog, validateKey } from './api.js';
+import { saveSession, getSessions, openKeyDialog, validateKey, listPortForwardsForSession, savePortForward, deletePortForward, checkAgentAvailable } from './api.js';
 import { showToast } from './toast.js';
 import { t } from './i18n.js';
 
@@ -13,7 +13,7 @@ export function openProfileForm(existing, onSaved) {
     label: '', host: '', port: 22, username: '',
     auth_type: 'password', password: '', key_path: '', passphrase: '',
     group: '', keepalive: 60, timeout: 30, encoding: 'UTF-8',
-    jump_host: '', jump_profile_id: '', init_command: '',
+    jump_host: '', jump_profile_id: '', init_command: '', forward_agent: false,
   };
 
   const overlay = document.createElement('div');
@@ -86,6 +86,11 @@ export function openProfileForm(existing, onSaved) {
     <div id="auth-agent" style="display:${sess.auth_type==='agent'?'block':'none'};">
       <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;color:var(--text-secondary);font-size:13px;">
         ${t('profileForm.agentInfo')}
+        <div id="sf-agent-status" style="margin-top:8px;font-size:12px;color:var(--text-muted);">${t('profileForm.agentChecking')}</div>
+      </div>
+      <div class="form-field" style="display:flex;align-items:center;justify-content:space-between;margin-top:10px;">
+        <label class="form-label" style="margin:0;">${t('profileForm.forwardAgent')}</label>
+        <div class="toggle-switch ${sess.forward_agent?'on':''}" id="sf-forward-agent"></div>
       </div>
     </div>
 
@@ -112,6 +117,13 @@ export function openProfileForm(existing, onSaved) {
           </select>
         </div>
         <div class="form-field"><label class="form-label">${t('profileForm.initCommand')}</label><input class="input" id="sf-init" value="${esc(sess.init_command)}" placeholder="tmux attach" /></div>
+        <div class="form-field">
+          <label class="form-label">${t('profileForm.pfTitle')}</label>
+          ${isNew ? `<div style="font-size:12px;color:var(--text-muted);">${t('profileForm.pfNewProfileHint')}</div>` : `
+            <div id="sf-pf-list"></div>
+            <button class="btn btn-secondary btn-sm" id="sf-pf-add" type="button" style="margin-top:6px;">${t('profileForm.pfAdd')}</button>
+          `}
+        </div>
       </div>
     </div>
     <div id="sf-err" style="color:var(--red);font-size:12px;margin-top:10px;display:none;"></div>
@@ -135,8 +147,27 @@ export function openProfileForm(existing, onSaved) {
       $('auth-password').style.display = mode === 'password' ? '' : 'none';
       $('auth-key').style.display = mode === 'key' ? '' : 'none';
       $('auth-agent').style.display = mode === 'agent' ? '' : 'none';
+      if (mode === 'agent') checkAgentStatus();
     });
   });
+
+  $('sf-forward-agent').addEventListener('click', () => {
+    $('sf-forward-agent').classList.toggle('on');
+  });
+
+  function checkAgentStatus() {
+    const statusEl = $('sf-agent-status');
+    if (!statusEl) return;
+    statusEl.textContent = t('profileForm.agentChecking');
+    checkAgentAvailable().then(ok => {
+      statusEl.textContent = ok ? t('profileForm.agentDetected') : t('profileForm.agentNotDetected');
+      statusEl.style.color = ok ? 'var(--green)' : 'var(--red)';
+    }).catch(() => {
+      statusEl.textContent = t('profileForm.agentNotDetected');
+      statusEl.style.color = 'var(--red)';
+    });
+  }
+  if (sess.auth_type === 'agent') checkAgentStatus();
 
   // Password toggle
   $('sf-pw-toggle').addEventListener('click', () => {
@@ -180,6 +211,66 @@ export function openProfileForm(existing, onSaved) {
     });
   }).catch(() => {});
 
+  // Port forwarding rules (existing profiles only — a new profile has no ID yet)
+  let forwardRules = [];
+  const deletedForwardIDs = [];
+  if (!isNew) {
+    listPortForwardsForSession(sess.id).then(rules => {
+      forwardRules = rules || [];
+      renderForwardRules();
+    }).catch(() => {});
+
+    $('sf-pf-add').addEventListener('click', () => {
+      forwardRules.push({ id: '', session_id: sess.id, type: 'local', bind_addr: '127.0.0.1', bind_port: 0, target_host: '', target_port: 0, auto_start: false, enabled: true });
+      renderForwardRules();
+    });
+  }
+
+  function renderForwardRules() {
+    const list = $('sf-pf-list');
+    if (!list) return;
+    if (forwardRules.length === 0) {
+      list.innerHTML = `<div style="font-size:12px;color:var(--text-muted);">${t('profileForm.pfEmpty')}</div>`;
+      return;
+    }
+    list.innerHTML = forwardRules.map((r, i) => `
+      <div class="pf-rule" data-idx="${i}" style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+        <select class="input pf-type" style="width:auto;">
+          <option value="local" ${r.type==='local'?'selected':''}>${t('profileForm.pfLocal')}</option>
+          <option value="remote" ${r.type==='remote'?'selected':''}>${t('profileForm.pfRemote')}</option>
+          <option value="dynamic" ${r.type==='dynamic'?'selected':''}>${t('profileForm.pfDynamic')}</option>
+        </select>
+        <input class="input pf-bindaddr" value="${esc(r.bind_addr||'127.0.0.1')}" style="width:110px;" placeholder="${t('profileForm.pfBindAddr')}" />
+        <input class="input pf-bindport" type="number" value="${r.bind_port||''}" style="width:80px;" placeholder="${t('profileForm.pfBindPort')}" />
+        <span class="pf-target-fields" style="display:${r.type==='dynamic'?'none':'flex'};gap:6px;">
+          <input class="input pf-targethost" value="${esc(r.target_host||'')}" style="width:130px;" placeholder="${t('profileForm.pfTargetHost')}" />
+          <input class="input pf-targetport" type="number" value="${r.target_port||''}" style="width:80px;" placeholder="${t('profileForm.pfTargetPort')}" />
+        </span>
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);">
+          <input type="checkbox" class="pf-autostart" ${r.auto_start?'checked':''} /> ${t('profileForm.pfAutoStart')}
+        </label>
+        <button class="btn btn-ghost btn-icon btn-sm pf-remove" type="button">🗑</button>
+      </div>`).join('');
+
+    list.querySelectorAll('.pf-rule').forEach(row => {
+      const idx = parseInt(row.dataset.idx, 10);
+      row.querySelector('.pf-type').addEventListener('change', e => {
+        forwardRules[idx].type = e.target.value;
+        row.querySelector('.pf-target-fields').style.display = e.target.value === 'dynamic' ? 'none' : 'flex';
+      });
+      row.querySelector('.pf-bindaddr').addEventListener('input', e => { forwardRules[idx].bind_addr = e.target.value; });
+      row.querySelector('.pf-bindport').addEventListener('input', e => { forwardRules[idx].bind_port = parseInt(e.target.value, 10) || 0; });
+      row.querySelector('.pf-targethost').addEventListener('input', e => { forwardRules[idx].target_host = e.target.value; });
+      row.querySelector('.pf-targetport').addEventListener('input', e => { forwardRules[idx].target_port = parseInt(e.target.value, 10) || 0; });
+      row.querySelector('.pf-autostart').addEventListener('change', e => { forwardRules[idx].auto_start = e.target.checked; });
+      row.querySelector('.pf-remove').addEventListener('click', () => {
+        const [removed] = forwardRules.splice(idx, 1);
+        if (removed?.id) deletedForwardIDs.push(removed.id);
+        renderForwardRules();
+      });
+    });
+  }
+
   // Advanced toggle
   $('sf-adv-toggle').addEventListener('click', () => {
     const body = $('sf-adv-body');
@@ -221,9 +312,14 @@ export function openProfileForm(existing, onSaved) {
       jump_host: '',
       jump_profile_id: $('sf-jump-profile').value,
       init_command: $('sf-init').value.trim(),
+      forward_agent: $('sf-forward-agent').classList.contains('on'),
     };
     try {
       const saved = await saveSession(updated);
+      await Promise.all([
+        ...forwardRules.map(r => savePortForward({ ...r, session_id: saved.id })),
+        ...deletedForwardIDs.map(id => deletePortForward(id)),
+      ]);
       close();
       onSaved(saved);
       showToast(t('toast.profileSaved', { name: saved.label || saved.host }));
