@@ -1297,13 +1297,14 @@ function toggleFind() {
 function setFindBar(show) {
   if (!activeTab?.findBar) return;
   activeTab.findBar.style.display = show ? '' : 'none';
+  const connID = activeConnectedPane(activeTab)?.connID;
   if (show) {
     activeTab.findInput?.focus();
   } else {
-    const connID = activeConnectedPane(activeTab)?.connID;
     if (connID) clearTerminalSearch(connID);
     const countEl = activeTab.findBar.querySelector('.find-count');
     if (countEl) countEl.textContent = '';
+    if (connID) focusTerminal(connID);
   }
   refitActiveTerminal();
 }
@@ -1411,6 +1412,8 @@ function setCmdBar(show) {
     if (activeTab.cmdBarInput) activeTab.cmdBarInput.value = '';
     const suggestionRow = activeTab.cmdBar.querySelector('.ai-cmdbar-suggestion');
     if (suggestionRow) suggestionRow.style.display = 'none';
+    const connID = activeConnectedPane(activeTab)?.connID;
+    if (connID) focusTerminal(connID);
   }
   refitActiveTerminal();
 }
