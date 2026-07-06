@@ -122,6 +122,25 @@ select option{background:var(--bg-elevated);color:var(--text-primary);}
 .modal-title{font-size:16px;font-weight:600;}
 .modal-body{padding:20px;overflow-y:auto;max-height:65vh;}
 .modal-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--border-subtle);background:var(--bg-elevated);}
+/* Port forwarding panel */
+.pf-rule-list{display:flex;flex-direction:column;gap:6px;}
+.pf-rule-row{display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--bg-primary);border:1px solid var(--border-subtle);border-radius:var(--radius-md);font-size:13px;}
+.pf-rule-type{width:52px;flex-shrink:0;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--text-muted);}
+.pf-rule-desc{flex:1;min-width:0;font-family:var(--font-mono);font-size:12.5px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pf-rule-status{flex-shrink:0;font-size:11px;font-weight:500;}
+.pf-rule-status.is-active{color:var(--green);} .pf-rule-status.is-error{color:var(--red);}
+.pf-empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:26px 16px;background:var(--bg-primary);border:1px solid var(--border-subtle);border-radius:var(--radius-md);color:var(--text-muted);font-size:13px;text-align:center;}
+.pf-empty-icon{font-size:22px;opacity:.6;}
+.pf-adhoc{margin-top:18px;padding-top:16px;border-top:1px solid var(--border-subtle);}
+.pf-adhoc-title{font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;}
+.pf-adhoc-title .pf-adhoc-hint{font-weight:400;text-transform:none;letter-spacing:0;opacity:.8;}
+.pf-adhoc-grid{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;}
+.pf-field{display:flex;flex-direction:column;gap:5px;}
+.pf-field label{font-size:11px;font-weight:500;color:var(--text-muted);}
+.pf-field-type{width:112px;flex-shrink:0;}
+.pf-field-port{width:96px;flex-shrink:0;}
+.pf-field-target{display:flex;gap:10px;flex:1 1 240px;min-width:240px;}
+.pf-field-host{flex:1;min-width:130px;}
 /* Terminal */
 .terminal-tab-content{position:absolute;inset:0;width:100%;height:100%;display:flex;flex-direction:row;min-width:0;min-height:0;visibility:hidden;pointer-events:none;z-index:0;}
 .terminal-tab-content.active{visibility:visible;pointer-events:auto;z-index:1;}

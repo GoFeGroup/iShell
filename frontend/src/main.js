@@ -1527,6 +1527,7 @@ function handleKeydown(e) {
 
 function handleNativeEsc() {
   if (document.getElementById('pp-overlay')) return; // profile picker handles it
+  if (document.getElementById('pf-overlay')) return; // port-forward panel handles it
   const pane = activeConnectedPane();
   if (!pane) return;
   sendInput(pane.connID, '\x1b').catch(e => console.error('nativeEsc sendInput:', e));

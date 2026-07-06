@@ -8,37 +8,64 @@ import { t } from './i18n.js';
 export function openPortForwardPanel(connID, sessionID) {
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
+  overlay.id = 'pf-overlay';
   overlay.innerHTML = `
-<div class="modal" style="width:520px;display:flex;flex-direction:column;max-height:80vh;">
+<div class="modal" style="width:640px;display:flex;flex-direction:column;max-height:80vh;">
   <div class="modal-header">
     <span class="modal-title">${t('portForward.title')}</span>
     <button class="btn btn-ghost btn-icon" id="pf-close">✕</button>
   </div>
   <div class="modal-body" style="flex:1;overflow-y:auto;">
     <div id="pf-panel-list"></div>
-    <div style="margin-top:14px;border-top:1px solid var(--border-subtle);padding-top:12px;">
-      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text-muted);">${t('portForward.adhocTitle')}</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-        <select class="input" id="pf-adhoc-type" style="width:auto;">
-          <option value="local">${t('profileForm.pfLocal')}</option>
-          <option value="remote">${t('profileForm.pfRemote')}</option>
-          <option value="dynamic">${t('profileForm.pfDynamic')}</option>
-        </select>
-        <input class="input" id="pf-adhoc-bindport" type="number" placeholder="${t('profileForm.pfBindPort')}" style="width:90px;" />
-        <span id="pf-adhoc-target" style="display:flex;gap:6px;">
-          <input class="input" id="pf-adhoc-targethost" placeholder="${t('profileForm.pfTargetHost')}" style="width:130px;" />
-          <input class="input" id="pf-adhoc-targetport" type="number" placeholder="${t('profileForm.pfTargetPort')}" style="width:90px;" />
-        </span>
-        <button class="btn btn-primary btn-sm" id="pf-adhoc-start">${t('portForward.start')}</button>
+    <div class="pf-adhoc">
+      <div class="pf-adhoc-title">${t('portForward.adhocTitle')} <span class="pf-adhoc-hint">${t('portForward.adhocHint')}</span></div>
+      <div class="pf-adhoc-grid">
+        <div class="pf-field pf-field-type">
+          <label>${t('profileForm.pfType')}</label>
+          <select class="input" id="pf-adhoc-type">
+            <option value="local">${t('profileForm.pfLocal')}</option>
+            <option value="remote">${t('profileForm.pfRemote')}</option>
+            <option value="dynamic">${t('profileForm.pfDynamic')}</option>
+          </select>
+        </div>
+        <div class="pf-field pf-field-port">
+          <label>${t('profileForm.pfBindPort')}</label>
+          <input class="input" id="pf-adhoc-bindport" type="number" placeholder="8080" />
+        </div>
+        <div class="pf-field-target" id="pf-adhoc-target">
+          <div class="pf-field pf-field-host">
+            <label>${t('profileForm.pfTargetHost')}</label>
+            <input class="input" id="pf-adhoc-targethost" placeholder="127.0.0.1" />
+          </div>
+          <div class="pf-field pf-field-port">
+            <label>${t('profileForm.pfTargetPort')}</label>
+            <input class="input" id="pf-adhoc-targetport" type="number" placeholder="3306" />
+          </div>
+        </div>
+        <button class="btn btn-primary" id="pf-adhoc-start">${t('portForward.start')}</button>
       </div>
     </div>
   </div>
 </div>`;
   document.getElementById('modal-root').appendChild(overlay);
   const $ = id => overlay.querySelector('#' + id);
-  const close = () => overlay.remove();
+  const close = () => {
+    document.removeEventListener('keydown', docEscHandler, true);
+    window.removeEventListener('ishell:nativeEsc', nativeEscHandler);
+    overlay.remove();
+  };
   $('pf-close').addEventListener('click', close);
   overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+  // Non-fullscreen: DOM keydown captured before other handlers
+  function docEscHandler(e) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+  }
+  document.addEventListener('keydown', docEscHandler, true);
+
+  // Fullscreen: native guard consumes ESC and emits this event instead of DOM keydown
+  function nativeEscHandler() { close(); }
+  window.addEventListener('ishell:nativeEsc', nativeEscHandler);
 
   $('pf-adhoc-type').addEventListener('change', e => {
     $('pf-adhoc-target').style.display = e.target.value === 'dynamic' ? 'none' : 'flex';
@@ -78,7 +105,9 @@ export function openPortForwardPanel(connID, sessionID) {
       return renderRuleRow(rule, status);
     });
     activeByID.forEach(status => rows.push(renderRuleRow(status.rule, status))); // active ad-hoc tunnels
-    list.innerHTML = rows.join('') || `<div style="font-size:12px;color:var(--text-muted);">${t('portForward.none')}</div>`;
+    list.innerHTML = rows.length
+      ? `<div class="pf-rule-list">${rows.join('')}</div>`
+      : `<div class="pf-empty"><span class="pf-empty-icon">⇄</span>${t('portForward.none')}</div>`;
     list.querySelectorAll('[data-start]').forEach(btn => btn.addEventListener('click', async () => {
       try { await startPortForward(connID, btn.dataset.start); refresh(); } catch (e) { showToast('❌ ' + e); }
     }));
@@ -93,15 +122,17 @@ export function openPortForwardPanel(connID, sessionID) {
       ? `${rule.bind_addr}:${rule.bind_port} (SOCKS)`
       : `${rule.bind_addr}:${rule.bind_port} → ${rule.target_host}:${rule.target_port}`;
     const active = !!status?.active;
+    const isError = !active && !!status?.error;
     const statusLabel = active ? t('portForward.running') : (status?.error ? '❌ ' + esc(status.error) : t('portForward.stopped'));
+    const statusClass = active ? 'is-active' : (isError ? 'is-error' : '');
     const actionBtn = active
       ? `<button class="btn btn-danger btn-sm" data-stop="${esc(rule.id)}">${t('portForward.stop')}</button>`
       : (rule.id ? `<button class="btn btn-secondary btn-sm" data-start="${esc(rule.id)}">${t('portForward.start')}</button>` : '');
     return `
-      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-subtle);font-size:13px;">
-        <span style="width:60px;color:var(--text-muted);">${typeLabel}</span>
-        <span style="flex:1;font-family:var(--font-mono);font-size:12px;">${esc(desc)}</span>
-        <span style="font-size:11px;color:${active ? 'var(--green)' : 'var(--text-muted)'};">${statusLabel}</span>
+      <div class="pf-rule-row">
+        <span class="pf-rule-type">${typeLabel}</span>
+        <span class="pf-rule-desc">${esc(desc)}</span>
+        <span class="pf-rule-status ${statusClass}">${statusLabel}</span>
         ${actionBtn}
       </div>`;
   }
