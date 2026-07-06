@@ -15,6 +15,10 @@ const DEFAULT_FONT_SIZE = 16;
 const RESTORE_DELAYS = [0, 50, 150, 300];
 const INPUT_CHUNK_SIZE = 8192;
 const INPUT_YIELD_EVERY_CHUNKS = 8;
+// Shells commonly answer an unsuccessful or ambiguous Tab completion with BEL.
+// Keep that protocol response from flashing the whole terminal. The deadline
+// allows for SSH latency while still preserving visual bells from later events.
+const TAB_BELL_SUPPRESSION_MS = 2000;
 const PERF_DEBUG = true;
 let autoFitSuspended = false;
 
@@ -493,6 +497,11 @@ export function createTerminal(connID, settings, options = {}) {
     if (e.isComposing || composing || e.key === 'Process') return true;
     if (blockAppShortcut(e)) return false;
 
+    if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      const inst = instances[connID];
+      if (inst) inst.suppressVisualBellUntil = Date.now() + TAB_BELL_SUPPRESSION_MS;
+    }
+
     const key = e.key.toLowerCase();
 
     // Copy: Cmd+C (Mac) or Ctrl+Shift+C (Win/Linux)
@@ -810,6 +819,7 @@ export function createTerminal(connID, settings, options = {}) {
     lastFitWidth: 0,
     lastFitHeight: 0,
     bellStyle: settings?.bell_style || 'visual',
+    suppressVisualBellUntil: 0,
     disposables: [osc7Disposable, osc1337Disposable, dataDisposable, scrollDisposable, bellDisposable],
   };
 
@@ -866,6 +876,7 @@ function handleBell(connID) {
   if (inst.bellStyle === 'sound') {
     playBeep();
   } else if (inst.bellStyle !== 'none') {
+    if (Date.now() < inst.suppressVisualBellUntil) return;
     inst.xtermEl.classList.add('bell-flash');
     setTimeout(() => inst.xtermEl?.classList.remove('bell-flash'), 150);
   }
