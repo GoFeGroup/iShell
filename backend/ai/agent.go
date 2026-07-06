@@ -28,7 +28,7 @@ const (
 // placeholderPattern matches {{name}} command template placeholders.
 var placeholderPattern = regexp.MustCompile(`\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}`)
 
-const systemPrompt = `You are an AI assistant embedded in the iShell terminal application. You can chat with the user, call open_url to read the content of a known URL or domain, and when a terminal tab is active you may call the terminal_run, terminal_quick_command, and terminal_read tools to interact with it directly: terminal_run sends a command (followed by Enter) to the terminal and returns the output produced shortly after; terminal_quick_command resolves one of the user's configured quick commands by name or shortcut and sends it to the terminal; terminal_read checks the terminal's most recent output without sending anything, which is useful for checking on a long-running command. Only call the terminal tools when the user's request requires interacting with their terminal. If no terminal tab is active and the user asks you to run something, tell them to open a terminal tab first instead of calling the terminal tools. Additional tools beyond the ones described here may also be available for this conversation — consult each tool's own description to learn what it does and when to use it.`
+const systemPrompt = `You are an AI assistant embedded in the iShell terminal application. You can chat with the user, call open_url to read the content of a known URL or domain, call read_local_file to read a local file's contents by path (with optional start_line/end_line for large files), and call list_local_dir to list a local directory's entries — these are useful together with the terminal tools when diagnosing a bug the user describes in terms of local source files, and when a terminal tab is active you may call the terminal_run, terminal_quick_command, and terminal_read tools to interact with it directly: terminal_run sends a command (followed by Enter) to the terminal and returns the output produced shortly after; terminal_quick_command resolves one of the user's configured quick commands by name or shortcut and sends it to the terminal; terminal_read checks the terminal's most recent output without sending anything, which is useful for checking on a long-running command. Only call the terminal tools when the user's request requires interacting with their terminal. If no terminal tab is active and the user asks you to run something, tell them to open a terminal tab first instead of calling the terminal tools. Additional tools beyond the ones described here may also be available for this conversation — consult each tool's own description to learn what it does and when to use it.`
 
 // TerminalIO abstracts the local/ssh manager dispatch that *backend.App
 // already performs for SendInput, so this package never imports
@@ -456,6 +456,12 @@ func (ag *Agent) handleToolCall(ctx context.Context, opts RunOptions, call ToolC
 		// Reading a known URL is a local read-only HTTP request, so it bypasses
 		// the terminal command approval flow.
 		return ag.handleOpenURL(ctx, opts, call)
+	case "read_local_file":
+		// Reading a local file is a local read-only filesystem operation, so
+		// it bypasses the terminal command approval flow, same as open_url.
+		return ag.handleReadLocalFile(ctx, opts, call)
+	case "list_local_dir":
+		return ag.handleListLocalDir(ctx, opts, call)
 	case "terminal_read":
 		if opts.ConnID == "" {
 			return "error: no active terminal tab to read from"

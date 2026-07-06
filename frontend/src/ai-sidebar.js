@@ -1465,6 +1465,7 @@ class AISidebarInstance {
     try { args = JSON.parse(call.function?.arguments || '{}'); } catch { args = {}; }
     let command;
     if (call.function?.name === 'open_url') command = args.url || '';
+    else if (call.function?.name === 'read_local_file' || call.function?.name === 'list_local_dir') command = args.path || '';
     else if (call.function?.name === 'terminal_run') command = args.command || '';
     else command = Object.values(args).map(String).join(' ');
     const rejected = resultMsg?.content === 'User declined to run this command.';
@@ -1628,5 +1629,7 @@ function formatRelativeTime(iso) {
 function toolLabel(tool, command) {
   if (tool === 'terminal_read') return t('aiSidebar.readAction');
   if (tool === 'open_url') return t('aiSidebar.openURLAction', { url: command || '' });
+  if (tool === 'read_local_file') return t('aiSidebar.readLocalFileAction', { path: command || '' });
+  if (tool === 'list_local_dir') return t('aiSidebar.listLocalDirAction', { path: command || '' });
   return '$ ' + command;
 }

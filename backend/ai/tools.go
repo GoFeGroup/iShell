@@ -66,6 +66,42 @@ func AgentTools() []Tool {
 				}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name: "read_local_file",
+				Description: "Read the contents of a file on the local machine running iShell (not a remote SSH host). " +
+					"Use this when the user references a local file or project path so you can inspect the actual source. " +
+					"Returns content with 1-based line numbers so you can cite exact lines. For large files, pass " +
+					"start_line/end_line to page through a specific range; binary files are rejected. If the path turns " +
+					"out to be a directory, call list_local_dir instead.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"path": {"type": "string", "description": "Absolute path, or a ~/-relative path, to the local file to read."},
+						"start_line": {"type": "integer", "description": "Optional 1-based line number to start reading from. Defaults to 1."},
+						"end_line": {"type": "integer", "description": "Optional 1-based inclusive line number to stop at. Defaults to the end of file (subject to the output size limit)."}
+					},
+					"required": ["path"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name: "list_local_dir",
+				Description: "List the files and subdirectories of a directory on the local machine running iShell (not " +
+					"a remote SSH host). Use this to explore a local project's structure, e.g. before reading specific " +
+					"files with read_local_file, or to locate a file the user only vaguely described.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"path": {"type": "string", "description": "Absolute path, or a ~/-relative path, to the local directory to list."}
+					},
+					"required": ["path"]
+				}`),
+			},
+		},
 	}
 }
 

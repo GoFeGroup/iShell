@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -892,6 +894,76 @@ func TestRunTurnOpenURLTool(t *testing.T) {
 	}
 	if rec.has("ai:tool_call:" + sess.ID) {
 		t.Fatal("open_url should not emit an approval card")
+	}
+	rec.waitFor(t, "ai:done:"+sess.ID, time.Second)
+}
+
+func TestRunTurnReadLocalFileTool(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(path, []byte("first line\nsecond line"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	srv := newToolCallTestServer(t, "read_local_file", map[string]string{"path": path})
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "Read Local File"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	term := &fakeTerminalIO{}
+	rec := newEventRecorder()
+	ag := NewAgent(st, term, rec.emit)
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, UserText: "read this file"})
+
+	result := rec.waitFor(t, "ai:tool_result:"+sess.ID, 2*time.Second).(map[string]any)
+	if result["tool"] != "read_local_file" {
+		t.Fatalf("tool = %v, want read_local_file", result["tool"])
+	}
+	output, _ := result["output"].(string)
+	if !strings.Contains(output, "first line") || !strings.Contains(output, "second line") {
+		t.Fatalf("output = %q, want file content", output)
+	}
+	if len(term.sentCommands()) != 0 {
+		t.Fatal("read_local_file must not send commands to the terminal")
+	}
+	if rec.has("ai:tool_call:" + sess.ID) {
+		t.Fatal("read_local_file should not emit an approval card")
+	}
+	rec.waitFor(t, "ai:done:"+sess.ID, time.Second)
+}
+
+func TestRunTurnListLocalDirTool(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	srv := newToolCallTestServer(t, "list_local_dir", map[string]string{"path": dir})
+	defer srv.Close()
+
+	st := newTestStore(t)
+	enableAI(t, st, srv.URL)
+	sess, err := st.SaveAIChatSession(storage.AIChatSession{Title: "List Local Dir"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	rec := newEventRecorder()
+	ag := NewAgent(st, &fakeTerminalIO{}, rec.emit)
+	ag.RunTurn(context.Background(), RunOptions{ChatID: sess.ID, UserText: "list this directory"})
+
+	result := rec.waitFor(t, "ai:tool_result:"+sess.ID, 2*time.Second).(map[string]any)
+	if result["tool"] != "list_local_dir" {
+		t.Fatalf("tool = %v, want list_local_dir", result["tool"])
+	}
+	output, _ := result["output"].(string)
+	if !strings.Contains(output, "a.txt") {
+		t.Fatalf("output = %q, want directory listing", output)
 	}
 	rec.waitFor(t, "ai:done:"+sess.ID, time.Second)
 }

@@ -74,7 +74,7 @@ func TestBuildToolListIncludesBuiltinAndEnabledCustomTools(t *testing.T) {
 		names[tool.Function.Name] = true
 	}
 
-	for _, want := range []string{"terminal_run", "terminal_read", "terminal_quick_command", "open_url", "git_log"} {
+	for _, want := range []string{"terminal_run", "terminal_read", "terminal_quick_command", "open_url", "read_local_file", "list_local_dir", "git_log"} {
 		if !names[want] {
 			t.Fatalf("tool list missing %q; got %v", want, names)
 		}
