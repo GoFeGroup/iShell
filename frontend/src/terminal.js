@@ -11,6 +11,14 @@ import { t } from './i18n.js';
 const isMac = navigator.platform.startsWith('Mac');
 const instances = {};  // connID → { term, fitAddon, resizeObs, dataHandler, xtermEl }
 const cwdByConn = {};
+const DEFAULT_FONT_FAMILY = "Menlo, Monaco, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace";
+// Common CJK-capable fonts across macOS/Windows/Linux, appended after the
+// user's Latin monospace choice. Without an explicit CJK font here, the
+// browser silently substitutes one per glyph while xterm still sizes each
+// character cell from the Latin font's metrics — the mismatch clips/overlaps
+// CJK glyphs into neighboring cells. This matters most when settings.font_family
+// is a single font name with no fallback chain of its own (see settings.js).
+const CJK_FONT_FALLBACK = "'PingFang SC', 'Microsoft YaHei', 'Noto Sans Mono CJK SC', 'WenQuanYi Micro Hei', sans-serif";
 const DEFAULT_FONT_SIZE = 16;
 const RESTORE_DELAYS = [0, 50, 150, 300];
 const INPUT_CHUNK_SIZE = 8192;
@@ -28,6 +36,11 @@ function perfLog(label, ...args) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function withCJKFallback(fontFamily) {
+  const base = (fontFamily || '').trim().replace(/,\s*monospace\s*$/i, '');
+  return `${base}, ${CJK_FONT_FALLBACK}, monospace`;
 }
 
 function chunkEndFor(text, start) {
@@ -287,7 +300,7 @@ export function createTerminal(connID, settings, options = {}) {
   const container = document.getElementById(containerId);
   if (!container) return null;
 
-  const resolvedFont = settings?.font_family || "Menlo, Monaco, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace";
+  const resolvedFont = withCJKFallback(settings?.font_family || DEFAULT_FONT_FAMILY);
   const resolvedSize = connID.startsWith('local-') ? DEFAULT_FONT_SIZE : (settings?.font_size || DEFAULT_FONT_SIZE);
 
   // Reuse existing terminal unless font settings changed.
