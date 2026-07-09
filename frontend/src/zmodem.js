@@ -24,18 +24,61 @@ function uint8ArrayToBase64(bytes) {
     return btoa(binary);
 }
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+const ZMODEM_ABORT_DRAIN_MS = 2500;
+const UPLOAD_CHUNK_SIZE = 8192;
+const UPLOAD_YIELD_EVERY_CHUNKS = 16;
+const CAN = 0x18;
+const BS = 0x08;
+const ETX = 0x03;
+const USER_CANCEL_OCTETS = [
+    CAN, CAN, CAN, CAN, CAN, CAN, CAN, CAN,
+    BS, BS, BS, BS, BS, BS, BS, BS, BS, BS,
+    ETX,
+];
+
 // Creates a Zmodem-aware data consumer for a terminal connection.
 // Returns { consume(b64), abort() }.
 // onActive(bool) is called when a Zmodem session starts (true) or ends (false).
 export function createZmodemSentry(connID, term, onActive) {
     let senderQueue = Promise.resolve();
     let currentSession = null;
+    let sendEpoch = 0;
+    let forceSender = false;
+    let drainTerminalUntil = 0;
+
+    const isDrainingTerminal = () => Date.now() < drainTerminalUntil;
+    const drainTerminalOutput = () => {
+        drainTerminalUntil = Math.max(drainTerminalUntil, Date.now() + ZMODEM_ABORT_DRAIN_MS);
+    };
+
+    const queuePeerBytes = (octets, { force = false } = {}) => {
+        const epoch = sendEpoch;
+        const b64 = octetsToBase64(octets);
+        senderQueue = senderQueue
+            .then(() => {
+                if (!force && epoch !== sendEpoch) return;
+                return sendInputBytes(connID, b64);
+            })
+            .catch(e => {
+                console.error('zmodem sender failed:', e);
+                showToast(t('zmodem.sendFailed'), 3000);
+            });
+    };
 
     const abortSession = () => {
         const s = currentSession;
+        drainTerminalOutput();
         if (s && !s.has_ended()) {
+            forceSender = true;
             try { s.abort(); } catch {}
+            finally { forceSender = false; }
         }
+        sendEpoch += 1;
+        queuePeerBytes(USER_CANCEL_OCTETS, { force: true });
         currentSession = null;
         onActive?.(false);
     };
@@ -44,16 +87,11 @@ export function createZmodemSentry(connID, term, onActive) {
     try {
         sentry = new Zmodem.Sentry({
             to_terminal(octets) {
+                if (isDrainingTerminal()) return;
                 term.write(new Uint8Array(octets));
             },
             sender(octets) {
-                const b64 = octetsToBase64(octets);
-                senderQueue = senderQueue
-                    .then(() => sendInputBytes(connID, b64))
-                    .catch(e => {
-                        console.error('zmodem sender failed:', e);
-                        showToast(t('zmodem.sendFailed'), 3000);
-                    });
+                queuePeerBytes(octets, { force: forceSender });
             },
             on_retract() {
                 currentSession = null;
@@ -61,6 +99,8 @@ export function createZmodemSentry(connID, term, onActive) {
             },
             on_detect(detection) {
                 const zsession = detection.confirm();
+                sendEpoch += 1;
+                drainTerminalUntil = 0;
                 currentSession = zsession;
                 onActive?.(true);
                 runSession(connID, zsession)
@@ -104,7 +144,9 @@ export function createZmodemSentry(connID, term, onActive) {
             }
             // Abort session on consume error so the terminal unfreezes
             abortSession();
-            try { term.write(bytes); } catch {}
+            if (!isDrainingTerminal()) {
+                try { term.write(bytes); } catch {}
+            }
         }
     };
 
@@ -191,18 +233,25 @@ async function sendFiles(connID, zsession) {
     showToast(t('zmodem.sending', { n: files.length }));
 
     for (const file of files) {
+        if (zsession.aborted?.()) throw new Zmodem.Error('aborted');
         const bytes = Uint8Array.from(atob(file.content), c => c.charCodeAt(0));
 
         const xfer = await zsession.send_offer({ name: file.name, size: file.size });
+        if (zsession.aborted?.()) throw new Zmodem.Error('aborted');
         if (xfer === undefined) continue; // remote skipped this file
 
-        const CHUNK = 8192;
-        for (let i = 0; i < bytes.length; i += CHUNK) {
-            xfer.send(bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+        for (let i = 0, chunks = 0; i < bytes.length; i += UPLOAD_CHUNK_SIZE, chunks++) {
+            if (zsession.aborted?.()) throw new Zmodem.Error('aborted');
+            xfer.send(bytes.subarray(i, Math.min(i + UPLOAD_CHUNK_SIZE, bytes.length)));
+            if (chunks > 0 && chunks % UPLOAD_YIELD_EVERY_CHUNKS === 0) {
+                await sleep(0);
+            }
         }
+        if (zsession.aborted?.()) throw new Zmodem.Error('aborted');
         await xfer.end();
     }
 
+    if (zsession.aborted?.()) throw new Zmodem.Error('aborted');
     await zsession.close();
     showToast(t('zmodem.uploadComplete'), 3000);
 }
