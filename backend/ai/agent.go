@@ -110,7 +110,12 @@ func (ag *Agent) RunTurn(ctx context.Context, opts RunOptions) {
 		cancel()
 	}()
 
-	settings, client, err := ag.loadSettingsAndClient()
+	sess, _ := ag.store.GetAIChatSession(opts.ChatID)
+	var providerID string
+	if sess != nil {
+		providerID = sess.ProviderID
+	}
+	settings, client, err := ag.loadSettingsAndClient(providerID)
 	if err != nil {
 		ag.emitError(opts.ChatID, err)
 		return
@@ -169,8 +174,8 @@ func (ag *Agent) RunTurn(ctx context.Context, opts RunOptions) {
 			return
 		}
 
-		sess, _ := ag.store.GetAIChatSession(opts.ChatID)
-		autoExec := sess != nil && sess.AutoExec
+		roundSess, _ := ag.store.GetAIChatSession(opts.ChatID)
+		autoExec := roundSess != nil && roundSess.AutoExec
 
 		results := make([]toolCallResult, 0, len(assistantMsg.ToolCalls))
 		for _, call := range assistantMsg.ToolCalls {
@@ -294,7 +299,10 @@ func (ag *Agent) ValidateResumeTurn(chatID string) error {
 
 // ── internals ────────────────────────────────────────────────────────────────
 
-func (ag *Agent) loadSettingsAndClient() (*storage.Settings, *Client, error) {
+// loadSettingsAndClient loads settings and builds a Client for providerID —
+// or for the default (first configured) provider when providerID is "" or
+// doesn't match any configured provider.
+func (ag *Agent) loadSettingsAndClient(providerID string) (*storage.Settings, *Client, error) {
 	settings, err := ag.store.LoadSettings()
 	if err != nil {
 		return nil, nil, fmt.Errorf("load settings: %w", err)
@@ -302,17 +310,42 @@ func (ag *Agent) loadSettingsAndClient() (*storage.Settings, *Client, error) {
 	if !settings.AIEnabled {
 		return nil, nil, fmt.Errorf("AI is not enabled in settings")
 	}
-	if settings.AIAPIKey == "" || settings.AIBaseURL == "" || settings.AIModel == "" {
+	provider, err := resolveAIProvider(settings.AIProviders, providerID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if provider.APIKey == "" || provider.BaseURL == "" || provider.Model == "" {
 		return nil, nil, fmt.Errorf("AI provider is not fully configured (key/base URL/model)")
 	}
-	return settings, NewClient(settings.AIBaseURL, settings.AIAPIKey, settings.AIModel), nil
+	return settings, NewClient(provider.BaseURL, provider.APIKey, provider.Model), nil
+}
+
+// resolveAIProvider returns the provider matching providerID, or the first
+// configured provider (the default) when providerID is "" or unmatched.
+func resolveAIProvider(providers []storage.AIProvider, providerID string) (*storage.AIProvider, error) {
+	if len(providers) == 0 {
+		return nil, fmt.Errorf("no AI provider is configured")
+	}
+	if providerID != "" {
+		for i := range providers {
+			if providers[i].ID == providerID {
+				return &providers[i], nil
+			}
+		}
+	}
+	return &providers[0], nil
 }
 
 // GenerateChatTitle summarizes and persists the first question of a new chat.
 // Failure is returned to the caller but intentionally does not fail the chat
 // turn itself.
 func (ag *Agent) GenerateChatTitle(ctx context.Context, chatID, question string) error {
-	_, client, err := ag.loadSettingsAndClient()
+	sess, _ := ag.store.GetAIChatSession(chatID)
+	var providerID string
+	if sess != nil {
+		providerID = sess.ProviderID
+	}
+	_, client, err := ag.loadSettingsAndClient(providerID)
 	if err != nil {
 		return err
 	}
@@ -332,7 +365,7 @@ func (ag *Agent) GenerateChatTitle(ctx context.Context, chatID, question string)
 // persistence, no chat history — used by the inline command bar. connID is
 // optional; when set, recent terminal output is attached as context.
 func (ag *Agent) GenerateCommandSuggestion(ctx context.Context, connID, prompt string) (string, error) {
-	_, client, err := ag.loadSettingsAndClient()
+	_, client, err := ag.loadSettingsAndClient("")
 	if err != nil {
 		return "", err
 	}
@@ -343,6 +376,22 @@ func (ag *Agent) GenerateCommandSuggestion(ctx context.Context, connID, prompt s
 		}
 	}
 	return client.GenerateCommandSuggestion(ctx, prompt, termContext)
+}
+
+// TestProvider verifies that provider's BaseURL/APIKey/Model actually work by
+// issuing one real completion request. It tests the given values directly
+// (not whatever is currently saved), so the settings UI can check a provider
+// before it's persisted. Callers should bound ctx with a short timeout — an
+// unreachable BaseURL otherwise hangs until the transport gives up.
+func (ag *Agent) TestProvider(ctx context.Context, provider storage.AIProvider) error {
+	if provider.BaseURL == "" || provider.APIKey == "" || provider.Model == "" {
+		return fmt.Errorf("AI provider is not fully configured (key/base URL/model)")
+	}
+	client := NewClient(provider.BaseURL, provider.APIKey, provider.Model)
+	return client.StreamChatCompletion(ctx, []Message{
+		{Role: "system", Content: "You are a connectivity test."},
+		{Role: "user", Content: "ping"},
+	}, nil, StreamHandler{})
 }
 
 func (ag *Agent) buildHistory(chatID string) ([]Message, error) {

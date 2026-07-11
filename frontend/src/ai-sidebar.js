@@ -1,7 +1,7 @@
 import {
   listAIChatSessionsForTarget, createAIChatSession, renameAIChatSession, deleteAIChatSession,
   getAIChatMessages, sendAIMessage, retryAIMessage, approveAIToolCall, rejectAIToolCall, setAIAutoExec,
-  stopAIRun, isAIRunActive, on, off,
+  setAIChatProvider, stopAIRun, isAIRunActive, on, off,
 } from './api.js';
 import { t } from './i18n.js';
 import { showToast } from './toast.js';
@@ -24,6 +24,16 @@ function perfLog(label, ...args) {
 
 const MIN_SIDEBAR_WIDTH = 240;
 const DEFAULT_SIDEBAR_WIDTH = 320;
+// "/new" or "/new <message>" typed into the composer starts a fresh chat
+// instead of being sent as a message — see handleNewChatCommand().
+const NEW_CHAT_COMMAND_RE = /^\/new(?:\s+([\s\S]*))?$/i;
+
+// Slash commands offered by the input box's autocomplete menu (see
+// updateSlashMenu()). Add new entries here to make them both suggested and
+// dispatchable — handleSend() still owns the actual per-command behavior.
+const SLASH_COMMANDS = [
+  { name: 'new', descKey: 'aiSidebar.slashNewDesc' },
+];
 
 export function initAISidebar(settings, activeTabGetter) {
   getActiveTab = activeTabGetter;
@@ -201,6 +211,7 @@ class AISidebarInstance {
     this.newBtn = els.newBtn;
     this.titleEl = els.titleEl;
     this.subtitleEl = els.subtitleEl;
+    this.modelSelectEl = els.modelSelectEl;
     this.closeBtn = els.closeBtn;
     this.getConnID = options.getConnID || (() => '');
     this.getTerminalMeta = options.getTerminalMeta || (() => ({}));
@@ -215,6 +226,15 @@ class AISidebarInstance {
     this.currentChatID = null;
     this.lastRenderedSignature = null;
     this.currentAutoExec = false;
+    // Provider chosen before a chat session exists yet (new chat, no
+    // message sent). Applied to the session as soon as handleNewChat()
+    // creates it. Once a session exists, its own provider_id is authoritative.
+    this.pendingProviderID = '';
+    // Slash-command autocomplete state for the composer textarea — see
+    // updateSlashMenu()/renderSlashMenu() in buildChatViewSkeleton().
+    this.slashMenuEl = null;
+    this.slashMenuItems = [];
+    this.slashMenuIndex = 0;
     this.currentAssistantBubble = null;
     this.currentAssistantRaw = '';
     this.isSending = false;
@@ -239,6 +259,7 @@ class AISidebarInstance {
     this.historyBtn?.addEventListener('click', () => this.showSessionList());
     this.newBtn?.addEventListener('click', () => this.handleNewChat());
     this.closeBtn?.addEventListener('click', () => this.setOpen(false, { animate: true, notify: true }));
+    this.modelSelectEl?.addEventListener('change', () => this.handleProviderSelect(this.modelSelectEl.value));
     this.updateHeader();
     this.initResizer();
     this.applySidebarWidth();
@@ -332,12 +353,46 @@ class AISidebarInstance {
     const meta = this.getTerminalMeta?.() || {};
     const sess = this.chatsForTarget.find(s => s.id === this.currentChatID);
     if (this.titleEl) this.titleEl.textContent = sess?.title || t('aiSidebar.title');
-    const parts = [meta.host || meta.label, meta.cwd, meta.model || aiSettings.ai_model].filter(Boolean);
+    const parts = [meta.host || meta.label, meta.cwd].filter(Boolean);
     if (this.subtitleEl) {
       this.subtitleEl.textContent = parts.join(' · ');
       this.subtitleEl.title = parts.join('\n');
     }
+    this.renderModelSelect(sess);
     if (this.historyBtn) this.historyBtn.style.display = this.currentChatID ? '' : 'none';
+  }
+
+  // renderModelSelect fills the header's model dropdown from the globally
+  // configured AI providers (aiSettings.ai_providers) and selects whichever
+  // one applies to the current chat: the session's own provider_id once it
+  // exists, otherwise a choice made before the session was created, otherwise
+  // the default (first provider). Hidden entirely when fewer than two
+  // providers are configured — there's nothing to choose between.
+  renderModelSelect(sess) {
+    const select = this.modelSelectEl;
+    if (!select) return;
+    const providers = Array.isArray(aiSettings.ai_providers) ? aiSettings.ai_providers : [];
+    if (providers.length < 2) {
+      select.style.display = 'none';
+      select.innerHTML = '';
+      return;
+    }
+    const currentID = sess?.provider_id || this.pendingProviderID || providers[0].id;
+    select.innerHTML = providers.map(p => `<option value="${p.id}">${escHtml(p.name || p.id)}</option>`).join('');
+    select.value = currentID;
+    select.style.display = '';
+  }
+
+  async handleProviderSelect(providerID) {
+    this.pendingProviderID = providerID;
+    if (!this.currentChatID) return; // no chat yet — applied once handleNewChat() creates one
+    const sess = this.chatsForTarget.find(s => s.id === this.currentChatID);
+    if (sess) sess.provider_id = providerID;
+    try {
+      await setAIChatProvider(this.currentChatID, providerID);
+    } catch (e) {
+      showToast('❌ ' + e);
+    }
   }
 
   isOpen() {
@@ -782,6 +837,13 @@ class AISidebarInstance {
     if (!this.currentTargetID) return;
     try {
       const sess = await createAIChatSession(this.currentTargetID, t('aiSidebar.defaultChatTitle'));
+      // Carry over a model picked in the header before this chat existed
+      // (e.g. from an empty "new chat" state) onto the session that just
+      // got created for it.
+      if (this.pendingProviderID) {
+        sess.provider_id = this.pendingProviderID;
+        try { await setAIChatProvider(sess.id, this.pendingProviderID); } catch { /* best-effort */ }
+      }
       this.chatsForTarget = [sess, ...this.chatsForTarget];
       await this.openChat(sess.id);
     } catch (e) {
@@ -806,6 +868,7 @@ class AISidebarInstance {
 
     const sess = this.chatsForTarget.find(s => s.id === chatID);
     this.currentAutoExec = !!sess?.auto_exec;
+    this.pendingProviderID = sess?.provider_id || '';
 
     if (this.listEl) this.listEl.style.display = 'none';
     if (this.backBtn) this.backBtn.style.display = '';
@@ -930,6 +993,9 @@ class AISidebarInstance {
 
     const inputRow = document.createElement('div');
     inputRow.className = 'ai-chat-input-row';
+    const slashMenu = document.createElement('div');
+    slashMenu.className = 'ai-slash-menu';
+    slashMenu.style.display = 'none';
     const textarea = document.createElement('textarea');
     textarea.rows = 1;
     textarea.placeholder = t('aiSidebar.inputPlaceholder');
@@ -942,6 +1008,17 @@ class AISidebarInstance {
       compositionJustEndedUntil = Date.now() + 80;
     });
     textarea.addEventListener('keydown', (e) => {
+      if (this.slashMenuItems.length > 0) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); this.moveSlashSelection(1); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); this.moveSlashSelection(-1); return; }
+        if (e.key === 'Escape') { e.preventDefault(); this.closeSlashMenu(); return; }
+        if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey) {
+          if (e.isComposing || composing || e.keyCode === 229 || Date.now() < compositionJustEndedUntil) return;
+          e.preventDefault();
+          this.applySlashSelection(this.slashMenuItems[this.slashMenuIndex]);
+          return;
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         if (e.isComposing || composing || e.keyCode === 229 || Date.now() < compositionJustEndedUntil) return;
         e.preventDefault();
@@ -951,7 +1028,12 @@ class AISidebarInstance {
     textarea.addEventListener('input', () => {
       this.resizeInput();
       sessionStorage.setItem(this.draftKey(), textarea.value);
+      this.updateSlashMenu();
     });
+    // A menu-item mousedown calls preventDefault() (see renderSlashMenu()),
+    // so clicking a suggestion never fires this blur — only genuine
+    // focus-away clicks (elsewhere in the sidebar, another tab, etc.) do.
+    textarea.addEventListener('blur', () => this.closeSlashMenu());
     const actionBtn = document.createElement('button');
     actionBtn.className = 'btn btn-primary btn-icon ai-chat-action';
     actionBtn.setAttribute('aria-label', t('aiSidebar.send'));
@@ -964,7 +1046,7 @@ class AISidebarInstance {
         await stopAIRun(this.currentChatID);
       } catch (e) { showToast('❌ ' + e); }
     });
-    inputRow.append(textarea, actionBtn);
+    inputRow.append(slashMenu, textarea, actionBtn);
 
     const footer = document.createElement('div');
     footer.className = 'ai-composer-footer';
@@ -991,6 +1073,9 @@ class AISidebarInstance {
 
     this.messagesEl = messages;
     this.inputEl = textarea;
+    this.slashMenuEl = slashMenu;
+    this.slashMenuItems = [];
+    this.slashMenuIndex = 0;
     this.actionBtn = actionBtn;
     this.statusEl = status;
     this.modeBtn = modeBtn;
@@ -1104,9 +1189,15 @@ class AISidebarInstance {
 
   async handleSend() {
     if (!this.inputEl || this.isSending || this.isConfirmingSend || !this.currentChatID) return;
+    const raw = this.inputEl.value.trim();
+    if (!raw) return;
+    const newChatMatch = raw.match(NEW_CHAT_COMMAND_RE);
+    if (newChatMatch) {
+      await this.handleNewChatCommand(newChatMatch[1] ? newChatMatch[1].trim() : '');
+      return;
+    }
     const chatID = this.currentChatID;
-    const text = this.inputEl.value.trim();
-    if (!text) return;
+    const text = raw;
     const contexts = this.pendingContexts.map(item => ({ ...item }));
     if (!await this.confirmContextAutoExec(contexts) || this.currentChatID !== chatID) return;
 
@@ -1119,6 +1210,92 @@ class AISidebarInstance {
     this.renderPendingContexts();
     this.appendUserBubble(text, contexts);
     await this.sendUnpersistedPrompt(chatID, text, contexts);
+  }
+
+  // handleNewChatCommand implements the "/new" input shortcut: it starts a
+  // fresh chat (same as clicking the ＋ button) so the next message begins
+  // with no prior conversation history. Any text typed after "/new" is sent
+  // as that new chat's first message once it's ready.
+  async handleNewChatCommand(followupText) {
+    if (!this.inputEl) return;
+    this.inputEl.value = '';
+    sessionStorage.removeItem(this.draftKey());
+    this.resizeInput();
+    this.pendingContexts = [];
+    this.renderPendingContexts();
+    await this.handleNewChat();
+    if (followupText && this.currentChatID && this.inputEl) {
+      this.inputEl.value = followupText;
+      await this.handleSend();
+    }
+  }
+
+  // updateSlashMenu opens/filters/closes the composer's slash-command
+  // suggestion popup based on the textarea's current value. Only fires while
+  // the whole input is still "/" plus a bare command-name fragment (no space
+  // yet) — once the user types a space, they're composing the command's
+  // arguments/message, not choosing a command, so the menu closes.
+  updateSlashMenu() {
+    if (!this.inputEl || !this.slashMenuEl) return;
+    const match = this.inputEl.value.match(/^\/([a-zA-Z]*)$/);
+    if (!match) { this.closeSlashMenu(); return; }
+    const fragment = match[1].toLowerCase();
+    const items = SLASH_COMMANDS.filter(c => c.name.startsWith(fragment));
+    if (items.length === 0) { this.closeSlashMenu(); return; }
+    this.slashMenuItems = items;
+    this.slashMenuIndex = 0;
+    this.renderSlashMenu();
+    this.slashMenuEl.style.display = '';
+  }
+
+  renderSlashMenu() {
+    const el = this.slashMenuEl;
+    if (!el) return;
+    el.innerHTML = this.slashMenuItems.map((c, i) => `
+      <div class="ai-slash-item${i === this.slashMenuIndex ? ' selected' : ''}" data-idx="${i}">
+        <span class="ai-slash-item-name">/${escHtml(c.name)}</span>
+        <span class="ai-slash-item-desc">${escHtml(t(c.descKey))}</span>
+      </div>
+    `).join('');
+    el.querySelectorAll('.ai-slash-item').forEach(row => {
+      // mousedown (not click) + preventDefault so this fires before the
+      // textarea blurs — a blur would otherwise close the menu first and
+      // the click event would land on nothing.
+      row.addEventListener('mousedown', e => {
+        e.preventDefault();
+        this.applySlashSelection(this.slashMenuItems[Number(row.dataset.idx)]);
+      });
+      row.addEventListener('mouseenter', () => {
+        this.slashMenuIndex = Number(row.dataset.idx);
+        this.renderSlashMenu();
+      });
+    });
+  }
+
+  closeSlashMenu() {
+    this.slashMenuItems = [];
+    this.slashMenuIndex = 0;
+    if (this.slashMenuEl) { this.slashMenuEl.style.display = 'none'; this.slashMenuEl.innerHTML = ''; }
+  }
+
+  moveSlashSelection(dir) {
+    if (this.slashMenuItems.length === 0) return;
+    this.slashMenuIndex = (this.slashMenuIndex + dir + this.slashMenuItems.length) % this.slashMenuItems.length;
+    this.renderSlashMenu();
+  }
+
+  // applySlashSelection completes the command name (leaving the menu so the
+  // user can keep typing an optional message after it) rather than sending
+  // immediately — an extra Enter, now with no menu in the way, dispatches it.
+  applySlashSelection(item) {
+    if (!item || !this.inputEl) return;
+    this.inputEl.value = '/' + item.name + ' ';
+    this.closeSlashMenu();
+    this.resizeInput();
+    sessionStorage.setItem(this.draftKey(), this.inputEl.value);
+    this.inputEl.focus();
+    const len = this.inputEl.value.length;
+    this.inputEl.setSelectionRange(len, len);
   }
 
   async sendUnpersistedPrompt(chatID, text, contexts) {

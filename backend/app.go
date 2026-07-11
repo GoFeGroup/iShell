@@ -599,6 +599,9 @@ func (a *App) SaveSettings(settings storage.Settings) error {
 	if err := ai.ValidateCustomToolCalls(settings.CustomToolCalls); err != nil {
 		return err
 	}
+	if err := ai.ValidateAIProviders(settings.AIProviders); err != nil {
+		return err
+	}
 	return a.store.SaveSettings(settings)
 }
 
@@ -810,6 +813,23 @@ func (a *App) RenameAIChatSession(id, title string) error {
 	return err
 }
 
+// SetAIChatProvider records which configured AI provider a chat session
+// should use for subsequent turns; providerID "" reverts it to the default
+// (first configured) provider.
+func (a *App) SetAIChatProvider(chatID, providerID string) error {
+	if a.store == nil {
+		return fmt.Errorf("store not ready")
+	}
+	sess, err := a.store.GetAIChatSession(chatID)
+	if err != nil {
+		return err
+	}
+	if sess == nil {
+		return fmt.Errorf("chat session %s not found", chatID)
+	}
+	return a.store.SetAIChatProvider(chatID, providerID)
+}
+
 func (a *App) DeleteAIChatSession(id string) error {
 	if a.store == nil {
 		return fmt.Errorf("store not ready")
@@ -913,6 +933,19 @@ func (a *App) GenerateCommandSuggestion(connID, prompt string) (string, error) {
 	ctx, cancel := context.WithTimeout(a.ctx, 20*time.Second)
 	defer cancel()
 	return a.aiAgent.GenerateCommandSuggestion(ctx, connID, prompt)
+}
+
+// TestAIProvider verifies that a model service's Base URL/API Key/Model are
+// valid by issuing one real completion request against them. It checks the
+// values passed in directly, so the settings UI can test a provider before
+// saving it.
+func (a *App) TestAIProvider(provider storage.AIProvider) error {
+	if a.aiAgent == nil {
+		return fmt.Errorf("AI is not ready")
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
+	defer cancel()
+	return a.aiAgent.TestProvider(ctx, provider)
 }
 
 const maxAIContextBytes = 64 * 1024

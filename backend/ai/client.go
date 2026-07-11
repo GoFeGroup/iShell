@@ -28,10 +28,15 @@ type ToolFunction struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
-// Message is one entry in a Chat Completions conversation.
+// Message is one entry in a Chat Completions conversation. Content
+// deliberately has no omitempty: an assistant turn that only calls tools has
+// Content == "", and some OpenAI-compatible gateways reject a request where
+// the "content" key is missing entirely (they fill the gap with a literal
+// JSON null and then reject that null with "expected a string, got null").
+// Always emitting "content" — even as "" — keeps every gateway happy.
 type Message struct {
 	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
+	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
@@ -110,7 +115,26 @@ func (c *Client) GenerateCommandSuggestion(ctx context.Context, prompt string, t
 	err := c.StreamChatCompletion(ctx, []Message{
 		{Role: "system", Content: commandSuggestionPrompt},
 		{Role: "user", Content: userContent},
-	}, nil, StreamHandler{OnDelta: func(content string) { out.WriteString(content) }})
+	}, nil, StreamHandler{
+		OnDelta: func(content string) { out.WriteString(content) },
+		OnToolCall: func(calls []ToolCall) {
+			if out.Len() > 0 {
+				return
+			}
+			for _, call := range calls {
+				if call.Function.Name != "terminal_run" {
+					continue
+				}
+				var args struct {
+					Command string `json:"command"`
+				}
+				if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err == nil && strings.TrimSpace(args.Command) != "" {
+					out.WriteString(args.Command)
+					return
+				}
+			}
+		},
+	})
 	if err != nil {
 		return "", err
 	}
@@ -218,6 +242,7 @@ func (c *Client) StreamChatCompletion(ctx context.Context, messages []Message, t
 
 	pending := map[int]*ToolCall{}
 	maxIndex := -1
+	dsmlFilter := newDSMLContentFilter()
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -245,7 +270,11 @@ func (c *Client) StreamChatCompletion(ctx context.Context, messages []Message, t
 		choice := chunk.Choices[0]
 
 		if choice.Delta.Content != "" && h.OnDelta != nil {
-			h.OnDelta(choice.Delta.Content)
+			if delta := dsmlFilter.Push(choice.Delta.Content); delta != "" {
+				h.OnDelta(delta)
+			}
+		} else if choice.Delta.Content != "" {
+			dsmlFilter.Push(choice.Delta.Content)
 		}
 
 		for _, tc := range choice.Delta.ToolCalls {
@@ -270,17 +299,28 @@ func (c *Client) StreamChatCompletion(ctx context.Context, messages []Message, t
 		}
 
 		if choice.FinishReason != nil {
-			if *choice.FinishReason == "tool_calls" && len(pending) > 0 && h.OnToolCall != nil {
-				calls := make([]ToolCall, 0, len(pending))
+			if delta := dsmlFilter.Flush(); delta != "" && h.OnDelta != nil {
+				h.OnDelta(delta)
+			}
+			dsmlCalls := dsmlFilter.ToolCalls()
+			finishReason := *choice.FinishReason
+			if len(dsmlCalls) > 0 {
+				finishReason = "tool_calls"
+			}
+			if finishReason == "tool_calls" && h.OnToolCall != nil {
+				calls := make([]ToolCall, 0, len(pending)+len(dsmlCalls))
 				for i := 0; i <= maxIndex; i++ {
 					if tc, ok := pending[i]; ok {
 						calls = append(calls, *tc)
 					}
 				}
-				h.OnToolCall(calls)
+				calls = append(calls, dsmlCalls...)
+				if len(calls) > 0 {
+					h.OnToolCall(calls)
+				}
 			}
 			if h.OnDone != nil {
-				h.OnDone(*choice.FinishReason)
+				h.OnDone(finishReason)
 			}
 		}
 	}

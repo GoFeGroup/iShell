@@ -74,9 +74,7 @@ func enableAI(t *testing.T, st *storage.Store, baseURL string) {
 		t.Fatalf("load settings: %v", err)
 	}
 	settings.AIEnabled = true
-	settings.AIAPIKey = "test-key"
-	settings.AIBaseURL = baseURL
-	settings.AIModel = "test-model"
+	settings.AIProviders = []storage.AIProvider{{ID: "test-provider", Name: "Test", APIKey: "test-key", BaseURL: baseURL, Model: "test-model"}}
 	if err := st.SaveSettings(*settings); err != nil {
 		t.Fatalf("save settings: %v", err)
 	}

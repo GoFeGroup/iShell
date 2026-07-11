@@ -76,22 +76,32 @@ type Settings struct {
 	ShowQuickCommands   bool                `json:"show_quick_commands" yaml:"show_quick_commands"`
 	Language            string              `json:"language" yaml:"language"`
 	AIEnabled           bool                `json:"ai_enabled" yaml:"ai_enabled"`
-	AIAPIKey            string              `json:"ai_api_key" yaml:"ai_api_key"`
-	AIBaseURL           string              `json:"ai_base_url" yaml:"ai_base_url"`
-	AIModel             string              `json:"ai_model" yaml:"ai_model"`
+	AIProviders         []AIProvider        `json:"ai_providers" yaml:"ai_providers"`
 	CustomToolCalls     []CustomToolCall    `json:"custom_tool_calls" yaml:"custom_tool_calls"`
+}
+
+// AIProvider is one configured OpenAI-compatible model service. The first
+// entry in Settings.AIProviders is the default used when a chat session
+// hasn't picked one explicitly.
+type AIProvider struct {
+	ID      string `json:"id" yaml:"id"`
+	Name    string `json:"name" yaml:"name"`
+	BaseURL string `json:"base_url" yaml:"base_url"`
+	APIKey  string `json:"api_key" yaml:"api_key"`
+	Model   string `json:"model" yaml:"model"`
 }
 
 // AIChatSession is a single AI chat conversation, managed from the AI
 // sidebar. Not part of ExportData — chat history is local-only and never
 // included in config export/import.
 type AIChatSession struct {
-	ID        string `json:"id" yaml:"id"`
-	TargetID  string `json:"target_id" yaml:"target_id"` // bound terminal identity: SSH Session.ID, or "__local__"
-	Title     string `json:"title" yaml:"title"`
-	AutoExec  bool   `json:"auto_exec" yaml:"auto_exec"`
-	CreatedAt string `json:"created_at" yaml:"created_at"`
-	UpdatedAt string `json:"updated_at" yaml:"updated_at"`
+	ID         string `json:"id" yaml:"id"`
+	TargetID   string `json:"target_id" yaml:"target_id"` // bound terminal identity: SSH Session.ID, or "__local__"
+	Title      string `json:"title" yaml:"title"`
+	AutoExec   bool   `json:"auto_exec" yaml:"auto_exec"`
+	ProviderID string `json:"provider_id" yaml:"provider_id"` // AIProvider.ID; "" means "use the default (first) provider"
+	CreatedAt  string `json:"created_at" yaml:"created_at"`
+	UpdatedAt  string `json:"updated_at" yaml:"updated_at"`
 }
 
 // AIChatMessage is one message in an AIChatSession's history. Messages are
@@ -168,8 +178,7 @@ func DefaultSettings() Settings {
 		ShowQuickCommands:   true,
 		Language:            "auto",
 		AIEnabled:           false,
-		AIBaseURL:           "https://api.openai.com/v1",
-		AIModel:             "gpt-4o-mini",
+		AIProviders:         []AIProvider{},
 		CustomToolCalls:     []CustomToolCall{},
 	}
 }

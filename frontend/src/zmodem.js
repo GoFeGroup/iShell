@@ -2,6 +2,7 @@ import Zmodem from 'zmodem.js';
 import { sendInputBytes, openFilesForZmodem, saveZmodemFile } from './api.js';
 import { showToast } from './toast.js';
 import { t } from './i18n.js';
+import { createZmodemHeaderFilter, splitLeadingZmodemHeader } from './zmodem-protocol.mjs';
 
 function octetsToBase64(octets) {
     let binary = '';
@@ -46,27 +47,43 @@ const USER_CANCEL_OCTETS = [
 export function createZmodemSentry(connID, term, onActive) {
     let senderQueue = Promise.resolve();
     let currentSession = null;
-    let sendEpoch = 0;
+    // Only invalidate queued protocol bytes after an explicit cancellation.
+    // A normal session transition must not discard its final ZFIN/ZRINIT
+    // handshake while the Wails IPC queue is still draining.
+    let cancelEpoch = 0;
     let forceSender = false;
     let drainTerminalUntil = 0;
+    let sessionActive = false;
+    const terminalOutput = createZmodemHeaderFilter();
 
     const isDrainingTerminal = () => Date.now() < drainTerminalUntil;
     const drainTerminalOutput = () => {
         drainTerminalUntil = Math.max(drainTerminalUntil, Date.now() + ZMODEM_ABORT_DRAIN_MS);
+        terminalOutput.reset();
     };
 
     const queuePeerBytes = (octets, { force = false } = {}) => {
-        const epoch = sendEpoch;
+        const epoch = cancelEpoch;
         const b64 = octetsToBase64(octets);
         senderQueue = senderQueue
             .then(() => {
-                if (!force && epoch !== sendEpoch) return;
+                if (!force && epoch !== cancelEpoch) return;
                 return sendInputBytes(connID, b64);
             })
             .catch(e => {
                 console.error('zmodem sender failed:', e);
                 showToast(t('zmodem.sendFailed'), 3000);
             });
+    };
+
+    const finishSession = (session) => {
+        if (session && currentSession !== session) return;
+        currentSession = null;
+        sessionActive = false;
+        // Clear any stuck partial-header state so the shell's next prompt
+        // (or any other post-transfer output) is never swallowed/mangled.
+        terminalOutput.reset();
+        onActive?.(false);
     };
 
     const abortSession = () => {
@@ -77,10 +94,9 @@ export function createZmodemSentry(connID, term, onActive) {
             try { s.abort(); } catch {}
             finally { forceSender = false; }
         }
-        sendEpoch += 1;
+        cancelEpoch += 1;
         queuePeerBytes(USER_CANCEL_OCTETS, { force: true });
-        currentSession = null;
-        onActive?.(false);
+        finishSession(s);
     };
 
     let sentry;
@@ -88,21 +104,40 @@ export function createZmodemSentry(connID, term, onActive) {
         sentry = new Zmodem.Sentry({
             to_terminal(octets) {
                 if (isDrainingTerminal()) return;
-                term.write(new Uint8Array(octets));
+                // Once a session is confirmed active, anything the library still
+                // forwards here is zmodem-internal noise (frame-misalignment
+                // "garbage" between files, e.g. before a ZFILE header for the
+                // next file) — never legitimate shell output. Drop it outright
+                // instead of running it through the header pattern filter.
+                if (sessionActive) return;
+                const output = terminalOutput.consume(octets);
+                if (output.length > 0) term.write(new Uint8Array(output));
             },
             sender(octets) {
                 queuePeerBytes(octets, { force: forceSender });
             },
             on_retract() {
-                currentSession = null;
-                onActive?.(false);
+                finishSession();
             },
             on_detect(detection) {
                 const zsession = detection.confirm();
-                sendEpoch += 1;
                 drainTerminalUntil = 0;
                 currentSession = zsession;
                 onActive?.(true);
+                // zsentry.js forwards the same chunk that completed detection to
+                // to_terminal() synchronously, in this same tick (it still needs
+                // the streaming header filter, since that chunk may legitimately
+                // contain preceding shell text sharing the read with the ZRQINIT/
+                // ZRINIT header). Only bytes forwarded on a *later* tick -- i.e.
+                // "garbage" events during an already-active session -- should be
+                // hard-muted, so defer flipping the gate by one microtask; this
+                // always resolves before the next terminal:data event can arrive.
+                Promise.resolve().then(() => {
+                    if (currentSession === zsession) sessionActive = true;
+                });
+                // The protocol's session_end event is authoritative. Do not
+                // keep terminal input blocked while file persistence finishes.
+                zsession.on('session_end', () => finishSession(zsession));
                 runSession(connID, zsession)
                     .catch(e => {
                         const msg = String(e?.message ?? e);
@@ -112,8 +147,7 @@ export function createZmodemSentry(connID, term, onActive) {
                         }
                     })
                     .finally(() => {
-                        currentSession = null;
-                        onActive?.(false);
+                        finishSession(zsession);
                     });
             },
         });
@@ -136,7 +170,24 @@ export function createZmodemSentry(connID, term, onActive) {
             return;
         }
         try {
-            sentry.consume(bytes);
+            // zmodem.js's Sentry only detects a new session if a single
+            // consume() call contains nothing but the header (plus an
+            // optional trailing XON) — see splitLeadingZmodemHeader's doc
+            // comment. A real SSH read can bundle the header with whatever
+            // the peer wrote right after it, so split it off first when
+            // there's no session yet; once one exists, per-session parsing
+            // has no such restriction and extra bytes are handled as-is.
+            if (!currentSession) {
+                const split = splitLeadingZmodemHeader(bytes);
+                if (split) {
+                    sentry.consume(split.header);
+                    if (split.rest.length) sentry.consume(split.rest);
+                } else {
+                    sentry.consume(bytes);
+                }
+            } else {
+                sentry.consume(bytes);
+            }
         } catch (e) {
             const msg = String(e?.message ?? e);
             if (!msg.includes('aborted') && !msg.includes('peer_aborted')) {
@@ -188,21 +239,29 @@ async function receiveFiles(zsession) {
         transferPromises.push(p);
     });
 
+    // Wait for session to end, with a 2-minute safety timeout.
+    // Register this before start(): a fast local/SSH peer may complete the
+    // final handshake before a later listener could observe it.
+    const SESSION_TIMEOUT_MS = 120_000;
+    const sessionEnd = new Promise(resolve => zsession.on('session_end', resolve));
+    let timeoutID;
+    const timeout = new Promise((_, reject) => {
+        timeoutID = setTimeout(() => reject(new Error('timeout')), SESSION_TIMEOUT_MS);
+    });
+
     // start() sends ZRINIT to the server, initiating the transfer handshake.
     zsession.start();
 
-    // Wait for session to end, with a 2-minute safety timeout.
-    const SESSION_TIMEOUT_MS = 120_000;
-    const sessionEnd = new Promise(resolve => zsession.on('session_end', resolve));
-    const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), SESSION_TIMEOUT_MS));
-
-    await Promise.race([sessionEnd, timeout]).catch(e => {
+    try {
+        await Promise.race([sessionEnd, timeout]);
+    } catch (e) {
         try { zsession.abort(); } catch {}
         if (String(e?.message).includes('timeout')) {
             showToast(t('zmodem.timedOut'), 3000);
         }
-    });
+    } finally {
+        clearTimeout(timeoutID);
+    }
 
     // Wait for in-flight file saves, but don't block forever if accept() hung.
     await Promise.race([

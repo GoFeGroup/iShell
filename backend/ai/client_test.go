@@ -23,6 +23,42 @@ func sseBody(chunks ...string) string {
 	return b.String()
 }
 
+func contentChunk(t *testing.T, content string, finish any) string {
+	t.Helper()
+	payload := map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta": map[string]any{
+					"content": content,
+				},
+				"finish_reason": finish,
+			},
+		},
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal content chunk: %v", err)
+	}
+	return string(b)
+}
+
+func finishChunk(t *testing.T, finish string) string {
+	t.Helper()
+	payload := map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta":         map[string]any{},
+				"finish_reason": finish,
+			},
+		},
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal finish chunk: %v", err)
+	}
+	return string(b)
+}
+
 func TestStreamChatCompletionDeltasAndDone(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -49,6 +85,59 @@ func TestStreamChatCompletionDeltasAndDone(t *testing.T) {
 	}
 	if finish != "stop" {
 		t.Fatalf("finish_reason = %q, want stop", finish)
+	}
+}
+
+func TestStreamChatCompletionParsesDSMLToolCallContent(t *testing.T) {
+	dsml := `<｜｜DSML｜｜tool_calls>
+<｜｜DSML｜｜invoke name="terminal_run">
+<｜｜DSML｜｜parameter name="command" string="true">timeout 30 grep -i "/scale|replicas" apiserver-audit.log</｜｜DSML｜｜parameter>
+</｜｜DSML｜｜invoke>
+</｜｜DSML｜｜tool_calls>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		splitAt := strings.Index(dsml, "\n") + 1
+		_, _ = w.Write([]byte(sseBody(
+			contentChunk(t, dsml[:splitAt], nil),
+			contentChunk(t, dsml[splitAt:], nil),
+			finishChunk(t, "stop"),
+		)))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "key", "model")
+	var gotDelta strings.Builder
+	var calls []ToolCall
+	var finish string
+	err := c.StreamChatCompletion(context.Background(), nil, AgentTools(), StreamHandler{
+		OnDelta:    func(s string) { gotDelta.WriteString(s) },
+		OnToolCall: func(tc []ToolCall) { calls = tc },
+		OnDone:     func(fr string) { finish = fr },
+	})
+	if err != nil {
+		t.Fatalf("StreamChatCompletion: %v", err)
+	}
+	if gotDelta.String() != "" {
+		t.Fatalf("delta leaked DSML content: %q", gotDelta.String())
+	}
+	if finish != "tool_calls" {
+		t.Fatalf("finish_reason = %q, want tool_calls", finish)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("got %d tool calls, want 1", len(calls))
+	}
+	if calls[0].ID != "dsml_call_1" || calls[0].Function.Name != "terminal_run" {
+		t.Fatalf("call = %+v, want dsml terminal_run", calls[0])
+	}
+	var args struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(calls[0].Function.Arguments), &args); err != nil {
+		t.Fatalf("unmarshal arguments: %v", err)
+	}
+	want := `timeout 30 grep -i "/scale|replicas" apiserver-audit.log`
+	if args.Command != want {
+		t.Fatalf("command = %q, want %q", args.Command, want)
 	}
 }
 
@@ -80,6 +169,31 @@ func TestStreamChatCompletionReassemblesToolCallFragments(t *testing.T) {
 	}
 	if calls[0].Function.Arguments != `{"command":"ls"}` {
 		t.Fatalf("arguments = %q, want %q", calls[0].Function.Arguments, `{"command":"ls"}`)
+	}
+}
+
+func TestGenerateCommandSuggestionExtractsDSMLTerminalRunCommand(t *testing.T) {
+	dsml := `<｜｜DSML｜｜tool_calls>
+<｜｜DSML｜｜invoke name="terminal_run">
+<｜｜DSML｜｜parameter name="command" string="true">git subtree pull --prefix vendor/foo origin main</｜｜DSML｜｜parameter>
+</｜｜DSML｜｜invoke>
+</｜｜DSML｜｜tool_calls>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sseBody(
+			contentChunk(t, dsml, nil),
+			finishChunk(t, "stop"),
+		)))
+	}))
+	defer srv.Close()
+
+	cmd, err := NewClient(srv.URL, "key", "model").GenerateCommandSuggestion(context.Background(), "pull subtree", "")
+	if err != nil {
+		t.Fatalf("GenerateCommandSuggestion: %v", err)
+	}
+	want := "git subtree pull --prefix vendor/foo origin main"
+	if cmd != want {
+		t.Fatalf("cmd = %q, want %q", cmd, want)
 	}
 }
 

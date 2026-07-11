@@ -205,3 +205,29 @@ func ValidateCustomToolCalls(custom []storage.CustomToolCall) error {
 	}
 	return nil
 }
+
+// ValidateAIProviders checks configured model services before they are
+// persisted: each needs a name/base URL/model, and IDs (assigned by the
+// frontend when a provider is added) must be unique.
+func ValidateAIProviders(providers []storage.AIProvider) error {
+	seen := make(map[string]bool, len(providers))
+	for _, p := range providers {
+		if p.ID == "" {
+			return fmt.Errorf("AI provider %q is missing an ID", p.Name)
+		}
+		if seen[p.ID] {
+			return fmt.Errorf("duplicate AI provider ID %q", p.ID)
+		}
+		seen[p.ID] = true
+		if p.Name == "" {
+			return fmt.Errorf("AI provider is missing a name")
+		}
+		if p.BaseURL == "" {
+			return fmt.Errorf("AI provider %q is missing a base URL", p.Name)
+		}
+		if p.Model == "" {
+			return fmt.Errorf("AI provider %q is missing a model", p.Name)
+		}
+	}
+	return nil
+}

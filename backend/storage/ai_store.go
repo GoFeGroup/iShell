@@ -14,7 +14,7 @@ import (
 // updated first.
 func (s *Store) ListAIChatSessionsByTarget(targetID string) ([]AIChatSession, error) {
 	rows, err := s.db.Query(`
-		SELECT id, target_id, title, auto_exec, created_at, updated_at
+		SELECT id, target_id, title, auto_exec, provider_id, created_at, updated_at
 		FROM ai_chat_sessions WHERE target_id = ? ORDER BY updated_at DESC`, targetID)
 	if err != nil {
 		return nil, err
@@ -24,7 +24,7 @@ func (s *Store) ListAIChatSessionsByTarget(targetID string) ([]AIChatSession, er
 	var sessions []AIChatSession
 	for rows.Next() {
 		var sess AIChatSession
-		if err := rows.Scan(&sess.ID, &sess.TargetID, &sess.Title, &sess.AutoExec, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.TargetID, &sess.Title, &sess.AutoExec, &sess.ProviderID, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
 			return nil, err
 		}
 		sessions = append(sessions, sess)
@@ -35,9 +35,9 @@ func (s *Store) ListAIChatSessionsByTarget(targetID string) ([]AIChatSession, er
 func (s *Store) GetAIChatSession(id string) (*AIChatSession, error) {
 	var sess AIChatSession
 	err := s.db.QueryRow(`
-		SELECT id, target_id, title, auto_exec, created_at, updated_at
+		SELECT id, target_id, title, auto_exec, provider_id, created_at, updated_at
 		FROM ai_chat_sessions WHERE id = ?`, id).Scan(
-		&sess.ID, &sess.TargetID, &sess.Title, &sess.AutoExec, &sess.CreatedAt, &sess.UpdatedAt)
+		&sess.ID, &sess.TargetID, &sess.Title, &sess.AutoExec, &sess.ProviderID, &sess.CreatedAt, &sess.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -59,11 +59,11 @@ func (s *Store) SaveAIChatSession(sess AIChatSession) (*AIChatSession, error) {
 	sess.UpdatedAt = now
 
 	_, err := s.db.Exec(`
-		INSERT INTO ai_chat_sessions (id, target_id, title, auto_exec, created_at, updated_at)
-		VALUES (?,?,?,?,?,?)
+		INSERT INTO ai_chat_sessions (id, target_id, title, auto_exec, provider_id, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
-			title=excluded.title, auto_exec=excluded.auto_exec, updated_at=excluded.updated_at`,
-		sess.ID, sess.TargetID, sess.Title, sess.AutoExec, sess.CreatedAt, sess.UpdatedAt)
+			title=excluded.title, auto_exec=excluded.auto_exec, provider_id=excluded.provider_id, updated_at=excluded.updated_at`,
+		sess.ID, sess.TargetID, sess.Title, sess.AutoExec, sess.ProviderID, sess.CreatedAt, sess.UpdatedAt)
 	return &sess, err
 }
 
@@ -74,6 +74,15 @@ func (s *Store) SetAIChatAutoExec(id string, autoExec bool) error {
 	_, err := s.db.Exec(`
 		UPDATE ai_chat_sessions SET auto_exec = ?, updated_at = ? WHERE id = ?`,
 		autoExec, time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
+// SetAIChatProvider records which AIProvider a chat session should use for
+// subsequent turns; "" means "use the default (first) provider".
+func (s *Store) SetAIChatProvider(id, providerID string) error {
+	_, err := s.db.Exec(`
+		UPDATE ai_chat_sessions SET provider_id = ?, updated_at = ? WHERE id = ?`,
+		providerID, time.Now().UTC().Format(time.RFC3339), id)
 	return err
 }
 

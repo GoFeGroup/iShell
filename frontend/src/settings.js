@@ -1,4 +1,4 @@
-import { getSettings, saveSettings, getKnownHosts, removeKnownHost, exportConfig, importConfig, listBuiltinToolCalls, getVersion } from './api.js';
+import { getSettings, saveSettings, getKnownHosts, removeKnownHost, exportConfig, importConfig, listBuiltinToolCalls, getVersion, testAIProvider } from './api.js';
 import { showToast } from './toast.js';
 import { shortcutLabelForIndex } from './quick-command.js';
 import { loadProfiles } from './sidebar.js';
@@ -15,12 +15,14 @@ export async function initSettings(initialPage = 'appearance') {
   const languagePref = getLanguagePref();
   let quickCommandGroups = normalizeQuickCommandGroups(settings);
   let customToolCalls = normalizeCustomToolCalls(settings.custom_tool_calls);
+  let aiProviders = normalizeAIProviders(settings.ai_providers);
   // IDs/hostnames currently armed for delete (showing inline Delete/Cancel
   // in place of their normal actions) — at most one per list at a time.
   // Mirrors ai-sidebar.js's inline-confirm pattern instead of
   // window.confirm(), which this app's webview does not reliably support.
   let confirmingToolDeleteID = null;
   let confirmingGroupDeleteID = null;
+  let confirmingProviderDeleteID = null;
   let confirmingHostname = null;
 
   // Live, mutable view of the persisted settings. Every control updates this
@@ -185,18 +187,12 @@ export async function initSettings(initialPage = 'appearance') {
           <div><div class="settings-row-label">${t('settings.ai.enabled')}</div><div class="settings-row-desc">${t('settings.ai.enabledDesc')}</div></div>
           <div class="settings-row-control"><div class="toggle-switch ${settings.ai_enabled?'on':''}" id="st-ai-enabled"></div></div>
         </div>
-        <div class="settings-row">
-          <div class="settings-row-label">${t('settings.ai.apiKey')}</div>
-          <div class="settings-row-control"><input class="input" id="st-ai-key" type="password" autocomplete="off" value="${esc(settings.ai_api_key||'')}" placeholder="${t('settings.ai.apiKeyPlaceholder')}" style="width:240px;" /></div>
-        </div>
-        <div class="settings-row">
-          <div class="settings-row-label">${t('settings.ai.baseUrl')}</div>
-          <div class="settings-row-control"><input class="input" id="st-ai-baseurl" value="${esc(settings.ai_base_url||'')}" placeholder="${t('settings.ai.baseUrlPlaceholder')}" style="width:240px;" /></div>
-        </div>
-        <div class="settings-row">
-          <div class="settings-row-label">${t('settings.ai.model')}</div>
-          <div class="settings-row-control"><input class="input" id="st-ai-model" value="${esc(settings.ai_model||'')}" placeholder="${t('settings.ai.modelPlaceholder')}" style="width:240px;" /></div>
-        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">${t('settings.ai.providersTitle')}</div>
+        <div class="settings-row-desc" style="margin-bottom:10px;">${t('settings.ai.providersDesc')}</div>
+        <div id="ai-provider-editor"></div>
+        <button class="btn btn-secondary btn-sm" id="ai-provider-add" type="button">${t('settings.ai.addProvider')}</button>
       </div>
     </div>
 
@@ -388,15 +384,20 @@ export async function initSettings(initialPage = 'appearance') {
   });
   bindToggle('st-show-qc', on => { current.show_quick_commands = on; persist(); });
   bindToggle('st-ai-enabled', on => { current.ai_enabled = on; persist(); });
-  document.getElementById('st-ai-key')?.addEventListener('input', e => {
-    current.ai_api_key = e.target.value; persistDebounced();
+
+  function persistAIProviders() {
+    current.ai_providers = collectAIProviders();
+    persist();
+  }
+
+  renderAIProvidersEditor();
+  document.getElementById('ai-provider-add')?.addEventListener('click', () => {
+    collectAIProviders({ keepBlank: true });
+    aiProviders.push({ id: makeProviderID(), name: t('settings.ai.newProviderName'), base_url: '', api_key: '', model: '' });
+    renderAIProvidersEditor();
+    persistAIProviders();
   });
-  document.getElementById('st-ai-baseurl')?.addEventListener('input', e => {
-    current.ai_base_url = e.target.value; persistDebounced();
-  });
-  document.getElementById('st-ai-model')?.addEventListener('input', e => {
-    current.ai_model = e.target.value; persistDebounced();
-  });
+
   function bindToggle(id, onChange) {
     const el = document.getElementById(id);
     if (!el) return;
@@ -730,6 +731,116 @@ export async function initSettings(initialPage = 'appearance') {
       }));
   }
 
+  function renderAIProvidersEditor() {
+    const editor = document.getElementById('ai-provider-editor');
+    if (!editor) return;
+    if (aiProviders.length === 0) {
+      editor.innerHTML = `<div class="tc-empty">${t('settings.ai.noProviders')}</div>`;
+      return;
+    }
+    editor.innerHTML = aiProviders.map((p, idx) => `
+      <div class="tc-group" data-provider-id="${esc(p.id)}">
+        <div class="tc-group-header">
+          <input class="input tc-group-name ai-provider-name" value="${esc(p.name)}" placeholder="${t('settings.ai.providerNamePlaceholder')}" />
+          ${idx === 0 ? `<span class="tc-builtin-badge">${t('settings.ai.defaultBadge')}</span>` : ''}
+          <div class="tc-group-header-actions${confirmingProviderDeleteID === p.id ? ' confirming' : ''}">
+            ${confirmingProviderDeleteID === p.id ? `
+              <span class="ai-confirm-label">${t('settings.ai.confirmDeleteProvider')}</span>
+              <button class="btn btn-danger btn-sm ai-provider-confirm-delete" type="button">${t('common.delete')}</button>
+              <button class="btn btn-ghost btn-sm ai-provider-cancel-delete" type="button">${t('common.cancel')}</button>
+            ` : `
+              <button class="btn btn-ghost btn-icon btn-sm ai-provider-up" type="button" title="${t('settings.ai.moveUp')}" ${idx === 0 ? 'disabled' : ''}>↑</button>
+              <button class="btn btn-ghost btn-icon btn-sm ai-provider-down" type="button" title="${t('settings.ai.moveDown')}" ${idx === aiProviders.length - 1 ? 'disabled' : ''}>↓</button>
+              <button class="btn btn-danger btn-icon btn-sm ai-provider-delete" type="button" title="${t('settings.toolCalls.deleteToolCall')}">✕</button>
+            `}
+          </div>
+        </div>
+        <div class="tc-group-body">
+          <input class="input ai-provider-baseurl" value="${esc(p.base_url)}" placeholder="${t('settings.ai.baseUrlPlaceholder')}" />
+          <input class="input ai-provider-apikey" type="password" autocomplete="off" value="${esc(p.api_key)}" placeholder="${t('settings.ai.apiKeyPlaceholder')}" />
+          <input class="input ai-provider-model" value="${esc(p.model)}" placeholder="${t('settings.ai.modelPlaceholder')}" />
+          <div class="ai-provider-test-row">
+            <button class="btn btn-secondary btn-sm ai-provider-test" type="button">${t('settings.ai.testConnection')}</button>
+            <span class="ai-provider-test-result"></span>
+          </div>
+        </div>
+      </div>
+    `).join('');
+
+    editor.querySelectorAll('.tc-group').forEach(groupEl => {
+      const providerId = groupEl.dataset.providerId;
+
+      groupEl.querySelector('.ai-provider-delete')?.addEventListener('click', () => {
+        collectAIProviders({ keepBlank: true });
+        confirmingProviderDeleteID = providerId;
+        renderAIProvidersEditor();
+      });
+      groupEl.querySelector('.ai-provider-confirm-delete')?.addEventListener('click', () => {
+        collectAIProviders({ keepBlank: true });
+        confirmingProviderDeleteID = null;
+        aiProviders = aiProviders.filter(p => p.id !== providerId);
+        renderAIProvidersEditor();
+        persistAIProviders();
+      });
+      groupEl.querySelector('.ai-provider-cancel-delete')?.addEventListener('click', () => {
+        confirmingProviderDeleteID = null;
+        renderAIProvidersEditor();
+      });
+      groupEl.querySelector('.ai-provider-up')?.addEventListener('click', () => {
+        collectAIProviders({ keepBlank: true });
+        const i = aiProviders.findIndex(p => p.id === providerId);
+        if (i > 0) [aiProviders[i - 1], aiProviders[i]] = [aiProviders[i], aiProviders[i - 1]];
+        renderAIProvidersEditor();
+        persistAIProviders();
+      });
+      groupEl.querySelector('.ai-provider-down')?.addEventListener('click', () => {
+        collectAIProviders({ keepBlank: true });
+        const i = aiProviders.findIndex(p => p.id === providerId);
+        if (i >= 0 && i < aiProviders.length - 1) [aiProviders[i + 1], aiProviders[i]] = [aiProviders[i], aiProviders[i + 1]];
+        renderAIProvidersEditor();
+        persistAIProviders();
+      });
+      groupEl.querySelector('.ai-provider-name')?.addEventListener('blur', () => persistAIProviders());
+      groupEl.querySelector('.ai-provider-baseurl')?.addEventListener('blur', () => persistAIProviders());
+      groupEl.querySelector('.ai-provider-apikey')?.addEventListener('blur', () => persistAIProviders());
+      groupEl.querySelector('.ai-provider-model')?.addEventListener('blur', () => persistAIProviders());
+
+      groupEl.querySelector('.ai-provider-test')?.addEventListener('click', async e => {
+        collectAIProviders({ keepBlank: true });
+        const provider = aiProviders.find(p => p.id === providerId);
+        const resultEl = groupEl.querySelector('.ai-provider-test-result');
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.textContent = t('settings.ai.testing');
+        if (resultEl) { resultEl.textContent = ''; resultEl.classList.remove('ai-provider-test-ok', 'ai-provider-test-fail'); }
+        try {
+          await testAIProvider({ id: provider.id, name: provider.name, base_url: provider.base_url, api_key: provider.api_key, model: provider.model });
+          if (resultEl) { resultEl.textContent = t('settings.ai.testSuccess'); resultEl.classList.add('ai-provider-test-ok'); }
+        } catch (err) {
+          if (resultEl) { resultEl.textContent = t('settings.ai.testFailed') + ': ' + err; resultEl.classList.add('ai-provider-test-fail'); }
+        } finally {
+          btn.disabled = false;
+          btn.textContent = t('settings.ai.testConnection');
+        }
+      });
+    });
+  }
+
+  function collectAIProviders(options = {}) {
+    const groupEls = Array.from(document.querySelectorAll('#ai-provider-editor .tc-group'));
+    if (groupEls.length > 0) {
+      aiProviders = groupEls.map(groupEl => ({
+        id: groupEl.dataset.providerId || makeProviderID(),
+        name: groupEl.querySelector('.ai-provider-name')?.value.trim() || '',
+        base_url: groupEl.querySelector('.ai-provider-baseurl')?.value.trim() || '',
+        api_key: groupEl.querySelector('.ai-provider-apikey')?.value || '',
+        model: groupEl.querySelector('.ai-provider-model')?.value.trim() || '',
+      }));
+    }
+    if (options.keepBlank) return aiProviders;
+    return aiProviders.filter(p => p.name || p.base_url || p.model);
+  }
+
   function renderKnownHostsList() {
     const container = document.getElementById('kh-list');
     if (!container) return;
@@ -791,6 +902,7 @@ function escText(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 function makeID() { return 'qc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
 function makeGroupID() { return 'grp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
 function makeToolID() { return 'tc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
+function makeProviderID() { return 'ai-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
 function firstCommandLine(s) {
   const real = (s || '').split(/\r?\n/).find(line => line.trim())?.trim() || '';
   if (!real) return t('settings.quickCommands.commandFallback');
@@ -819,6 +931,17 @@ function normalizeQuickCommandGroups(settings) {
   }
   return [];
 }
+function normalizeAIProviders(providers) {
+  if (!Array.isArray(providers)) return [];
+  return providers.map(p => ({
+    id: p?.id || makeProviderID(),
+    name: p?.name || '',
+    base_url: p?.base_url || '',
+    api_key: p?.api_key || '',
+    model: p?.model || '',
+  }));
+}
+
 function normalizeCustomToolCalls(toolCalls) {
   if (!Array.isArray(toolCalls)) return [];
   return toolCalls.map(tc => ({

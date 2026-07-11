@@ -509,6 +509,7 @@ function ensureTerminalContent(tab) {
             <div class="ai-sidebar-title">${t('aiSidebar.title')}</div>
             <div class="ai-sidebar-subtitle"></div>
           </div>
+          <select class="ai-model-select" style="display:none;" title="${t('aiSidebar.selectModel')}"></select>
           <button class="btn btn-ghost btn-icon ai-history" title="${t('aiSidebar.history')}" aria-label="${t('aiSidebar.history')}">☰</button>
           <button class="btn btn-ghost btn-icon ai-new" title="${t('aiSidebar.newChat')}" aria-label="${t('aiSidebar.newChat')}">＋</button>
           <button class="btn btn-ghost btn-icon ai-close" title="${t('common.close')}" aria-label="${t('common.close')}">×</button>
@@ -543,6 +544,7 @@ function ensureTerminalContent(tab) {
     newBtn: content.querySelector('.ai-new'),
     titleEl: content.querySelector('.ai-sidebar-title'),
     subtitleEl: content.querySelector('.ai-sidebar-subtitle'),
+    modelSelectEl: content.querySelector('.ai-model-select'),
     closeBtn: content.querySelector('.ai-close'),
   }, {
     getConnID: () => activeTab === tab ? (activeConnectedPane(tab)?.connID || '') : '',
@@ -553,7 +555,6 @@ function ensureTerminalContent(tab) {
         label: pane?.sessionLabel || tab.sessionLabel || t('aiSidebar.terminalContext'),
         host: pane?.isLocal ? t('aiSidebar.localTerminal') : (pane?.host || tab.host || ''),
         cwd: connID ? (getTerminalCWD(connID) || '') : '',
-        model: settings?.ai_model || '',
       };
     },
     getTerminalSelection: () => {

@@ -178,6 +178,11 @@ const dict = {
         apiKey: 'API Key', apiKeyPlaceholder: 'sk-…',
         baseUrl: 'Base URL', baseUrlPlaceholder: 'https://api.openai.com/v1',
         model: 'Model name', modelPlaceholder: 'gpt-4o-mini',
+        providersTitle: 'Model Services', providersDesc: 'Configure one or more OpenAI-compatible model services. The first one is used by default.',
+        addProvider: 'Add Model Service', providerNamePlaceholder: 'Service name', newProviderName: 'New Service',
+        testConnection: 'Test', testing: 'Testing…', testSuccess: 'Connected successfully', testFailed: 'Test failed',
+        defaultBadge: 'Default', noProviders: 'No model services configured yet.',
+        confirmDeleteProvider: 'Delete this model service?', moveUp: 'Move up', moveDown: 'Move down',
       },
       toolCalls: {
         builtinTitle: 'Built-in Tools', builtinDesc: 'These tools are always available to the AI assistant and cannot be edited or removed.',
@@ -225,6 +230,8 @@ const dict = {
     },
     aiSidebar: {
       title: 'AI Assistant', newChat: '+ New Chat', noChats: 'No chats yet. Start a new one.',
+      selectModel: 'Model service',
+      slashNewDesc: 'Start a new chat with a clean context',
       autoExecLabel: 'Auto-run commands',
       autoExecDesc: 'Skip the Run/Reject confirmation for this chat.',
       inputPlaceholder: 'Message the assistant…', send: 'Send',
@@ -426,6 +433,11 @@ const dict = {
         apiKey: 'API Key', apiKeyPlaceholder: 'sk-…',
         baseUrl: 'Base URL', baseUrlPlaceholder: 'https://api.openai.com/v1',
         model: '模型名称', modelPlaceholder: 'gpt-4o-mini',
+        providersTitle: '模型服务', providersDesc: '配置一个或多个 OpenAI 兼容的模型服务，第一个为默认使用的服务。',
+        addProvider: '添加模型服务', providerNamePlaceholder: '服务名称', newProviderName: '新模型服务',
+        testConnection: '检测', testing: '检测中…', testSuccess: '连接成功', testFailed: '检测失败',
+        defaultBadge: '默认', noProviders: '尚未配置任何模型服务。',
+        confirmDeleteProvider: '确认删除该模型服务？', moveUp: '上移', moveDown: '下移',
       },
       toolCalls: {
         builtinTitle: '内置工具', builtinDesc: '这些工具始终对 AI 助手可用，不能编辑或删除。',
@@ -473,6 +485,8 @@ const dict = {
     },
     aiSidebar: {
       title: 'AI 助手', newChat: '+ 新建会话', noChats: '暂无会话，新建一个开始吧。',
+      selectModel: '模型服务',
+      slashNewDesc: '开始一个全新上下文的会话',
       autoExecLabel: '自动执行命令',
       autoExecDesc: '跳过此会话的运行/拒绝确认。',
       inputPlaceholder: '给助手发消息…', send: '发送',
@@ -672,6 +686,11 @@ const dict = {
         apiKey: 'API Key', apiKeyPlaceholder: 'sk-…',
         baseUrl: 'Base URL', baseUrlPlaceholder: 'https://api.openai.com/v1',
         model: '模型名稱', modelPlaceholder: 'gpt-4o-mini',
+        providersTitle: '模型服務', providersDesc: '設定一個或多個 OpenAI 相容的模型服務，第一個為預設使用的服務。',
+        addProvider: '新增模型服務', providerNamePlaceholder: '服務名稱', newProviderName: '新模型服務',
+        testConnection: '檢測', testing: '檢測中…', testSuccess: '連線成功', testFailed: '檢測失敗',
+        defaultBadge: '預設', noProviders: '尚未設定任何模型服務。',
+        confirmDeleteProvider: '確認刪除此模型服務？', moveUp: '上移', moveDown: '下移',
       },
       toolCalls: {
         builtinTitle: '內建工具', builtinDesc: '這些工具始終可供 AI 助理使用，無法編輯或刪除。',
@@ -719,6 +738,8 @@ const dict = {
     },
     aiSidebar: {
       title: 'AI 助理', newChat: '+ 新增會話', noChats: '尚無會話，新增一個開始吧。',
+      selectModel: '模型服務',
+      slashNewDesc: '開始一個全新上下文的會話',
       autoExecLabel: '自動執行指令',
       autoExecDesc: '跳過此會話的執行/拒絕確認。',
       inputPlaceholder: '給助理發訊息…', send: '傳送',

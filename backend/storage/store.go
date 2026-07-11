@@ -138,6 +138,7 @@ func (s *Store) runMigrations() error {
 		{"sessions", "jump_profile_id", "TEXT NOT NULL DEFAULT ''"},
 		{"sessions", "forward_agent", "INTEGER NOT NULL DEFAULT 0"},
 		{"ai_chat_sessions", "target_id", "TEXT NOT NULL DEFAULT ''"},
+		{"ai_chat_sessions", "provider_id", "TEXT NOT NULL DEFAULT ''"},
 		{"ai_chat_messages", "context_json", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, m := range migrations {
@@ -298,12 +299,13 @@ func (s *Store) LoadSettings() (*Settings, error) {
 		if _, ok := fields["show_quick_commands"]; !ok {
 			st.ShowQuickCommands = true
 		}
-		def := DefaultSettings()
-		if _, ok := fields["ai_base_url"]; !ok {
-			st.AIBaseURL = def.AIBaseURL
-		}
-		if _, ok := fields["ai_model"]; !ok {
-			st.AIModel = def.AIModel
+		// Pre-multi-provider settings stored a single ai_base_url/ai_api_key/
+		// ai_model triple. Fold it into AIProviders[0] so existing users keep
+		// their configured service after upgrading.
+		if _, ok := fields["ai_providers"]; !ok {
+			if migrated := migrateLegacyAIProvider(fields); migrated != nil {
+				st.AIProviders = []AIProvider{*migrated}
+			}
 		}
 	}
 	if st.QuickCommands == nil {
@@ -312,6 +314,9 @@ func (s *Store) LoadSettings() (*Settings, error) {
 	if st.QuickCommandGroups == nil {
 		st.QuickCommandGroups = []QuickCommandGroup{}
 	}
+	if st.AIProviders == nil {
+		st.AIProviders = []AIProvider{}
+	}
 	if st.CustomToolCalls == nil {
 		st.CustomToolCalls = []CustomToolCall{}
 	}
@@ -319,6 +324,26 @@ func (s *Store) LoadSettings() (*Settings, error) {
 		st.Language = "auto"
 	}
 	return &st, nil
+}
+
+// migrateLegacyAIProvider reconstructs a single AIProvider from the
+// pre-multi-provider ai_base_url/ai_api_key/ai_model fields, or returns nil
+// if none of them were set (nothing to migrate).
+func migrateLegacyAIProvider(fields map[string]json.RawMessage) *AIProvider {
+	var baseURL, apiKey, model string
+	_ = json.Unmarshal(fields["ai_base_url"], &baseURL)
+	_ = json.Unmarshal(fields["ai_api_key"], &apiKey)
+	_ = json.Unmarshal(fields["ai_model"], &model)
+	if baseURL == "" && apiKey == "" && model == "" {
+		return nil
+	}
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+	return &AIProvider{ID: uuid.NewString(), Name: "Default", BaseURL: baseURL, APIKey: apiKey, Model: model}
 }
 
 func (s *Store) SaveSettings(st Settings) error {
