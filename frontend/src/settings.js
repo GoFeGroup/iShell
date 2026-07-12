@@ -1,4 +1,4 @@
-import { getSettings, saveSettings, getKnownHosts, removeKnownHost, exportConfig, importConfig, listBuiltinToolCalls, getVersion, testAIProvider } from './api.js';
+import { getSettings, saveSettings, getKnownHosts, removeKnownHost, exportConfig, importConfig, listBuiltinToolCalls, getVersion, testAIProvider, getMCPServerStatus } from './api.js';
 import { showToast } from './toast.js';
 import { shortcutLabelForIndex } from './quick-command.js';
 import { loadProfiles } from './sidebar.js';
@@ -11,6 +11,7 @@ export async function initSettings(initialPage = 'appearance') {
   const kh = await getKnownHosts().catch(() => []);
   const builtinToolCalls = await listBuiltinToolCalls().catch(() => []);
   const appVersion = await getVersion().catch(() => 'dev');
+  const mcpStatus = await getMCPServerStatus().catch(() => ({ running: false, addr: '', error: '' }));
   const fontSize = settings.font_size || 16;
   const languagePref = getLanguagePref();
   let quickCommandGroups = normalizeQuickCommandGroups(settings);
@@ -42,6 +43,7 @@ export async function initSettings(initialPage = 'appearance') {
     <div class="nav-pill" data-page="ssh"><span class="nav-pill-icon">🔒</span>${t('settings.nav.ssh')}</div>
     <div class="nav-pill" data-page="quick-commands"><span class="nav-pill-icon">⚡</span>${t('settings.nav.quickCommands')}</div>
     <div class="nav-pill" data-page="ai"><span class="nav-pill-icon">✨</span>${t('settings.nav.ai')}</div>
+    <div class="nav-pill" data-page="ai-mcp"><span class="nav-pill-icon">🔌</span>${t('settings.nav.aiMcp')}</div>
     <div class="nav-pill" data-page="tool-calls"><span class="nav-pill-icon">🔧</span>${t('settings.nav.toolCalls')}</div>
     <div class="nav-pill" data-page="backup"><span class="nav-pill-icon">💾</span>${t('settings.nav.backup')}</div>
     <div class="nav-pill" data-page="shortcuts"><span class="nav-pill-icon">⌨️</span>${t('settings.nav.shortcuts')}</div>
@@ -193,6 +195,26 @@ export async function initSettings(initialPage = 'appearance') {
         <div class="settings-row-desc" style="margin-bottom:10px;">${t('settings.ai.providersDesc')}</div>
         <div id="ai-provider-editor"></div>
         <button class="btn btn-secondary btn-sm" id="ai-provider-add" type="button">${t('settings.ai.addProvider')}</button>
+      </div>
+    </div>
+
+    <!-- AI - MCP Server -->
+    <div class="settings-page" id="sp-ai-mcp">
+      <div class="settings-page-title">${t('settings.nav.aiMcp')}</div>
+      <div class="settings-section">
+        <div class="settings-row">
+          <div><div class="settings-row-label">${t('settings.ai.mcpEnabled')}</div><div class="settings-row-desc">${t('settings.ai.mcpEnabledDesc')}</div></div>
+          <div class="settings-row-control"><div class="toggle-switch ${settings.mcp_server_enabled?'on':''}" id="st-mcp-enabled"></div></div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">${t('settings.ai.mcpPort')}</div>
+          <div class="settings-row-control"><input class="input" type="number" id="st-mcp-port" value="${settings.mcp_server_port || 7378}" style="width:100px;" /></div>
+        </div>
+        <div class="settings-row-desc" id="mcp-status" style="margin:6px 0 10px;"></div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">${t('settings.ai.mcpConnectHelp')}</div>
+        <div id="mcp-connect-commands"></div>
       </div>
     </div>
 
@@ -384,6 +406,55 @@ export async function initSettings(initialPage = 'appearance') {
   });
   bindToggle('st-show-qc', on => { current.show_quick_commands = on; persist(); });
   bindToggle('st-ai-enabled', on => { current.ai_enabled = on; persist(); });
+
+  function renderMCPStatus(st) {
+    const statusEl = document.getElementById('mcp-status');
+    if (statusEl) {
+      if (st.running) {
+        statusEl.textContent = `${t('settings.ai.mcpStatusRunning')} ${st.addr}`;
+        statusEl.style.color = 'var(--green)';
+      } else {
+        statusEl.textContent = st.error ? `${t('settings.ai.mcpStatusStopped')} — ${st.error}` : t('settings.ai.mcpStatusStopped');
+        statusEl.style.color = 'var(--text-muted)';
+      }
+    }
+    const port = current.mcp_server_port || 7378;
+    const commands = [
+      `claude mcp add --transport http ishell http://127.0.0.1:${port}/mcp`,
+      `codex mcp add ishell --url http://127.0.0.1:${port}/mcp`,
+    ];
+    const box = document.getElementById('mcp-connect-commands');
+    if (box) {
+      box.innerHTML = commands.map(cmd => `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <code style="flex:1;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;overflow-x:auto;white-space:nowrap;">${esc(cmd)}</code>
+          <button class="btn btn-secondary btn-sm mcp-copy-btn" data-cmd="${esc(cmd)}" type="button">${t('settings.ai.mcpCopy')}</button>
+        </div>`).join('');
+      box.querySelectorAll('.mcp-copy-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          await navigator.clipboard.writeText(btn.dataset.cmd);
+          const orig = btn.textContent;
+          btn.textContent = t('settings.ai.mcpCopied');
+          setTimeout(() => { btn.textContent = orig; }, 1200);
+        });
+      });
+    }
+  }
+  async function refreshMCPStatus() {
+    const st = await getMCPServerStatus().catch(() => ({ running: false, addr: '', error: '' }));
+    renderMCPStatus(st);
+  }
+  renderMCPStatus(mcpStatus);
+  bindToggle('st-mcp-enabled', async on => {
+    current.mcp_server_enabled = on;
+    await persist();
+    refreshMCPStatus();
+  });
+  document.getElementById('st-mcp-port')?.addEventListener('change', async e => {
+    current.mcp_server_port = parseInt(e.target.value) || 7378;
+    await persist();
+    refreshMCPStatus();
+  });
 
   function persistAIProviders() {
     current.ai_providers = collectAIProviders();

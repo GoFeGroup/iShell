@@ -113,7 +113,7 @@ const dict = {
       nav: {
         appearance: 'Appearance', terminal: 'Terminal', ssh: 'SSH / Security',
         quickCommands: 'Quick Commands', backup: 'Import / Export',
-        shortcuts: 'Shortcuts', about: 'About', ai: 'AI - Model Service', toolCalls: 'AI - Tool Calls',
+        shortcuts: 'Shortcuts', about: 'About', ai: 'AI - Model Service', aiMcp: 'AI - MCP Service', toolCalls: 'AI - Tool Calls',
       },
       appearance: {
         theme: 'Theme', colorTheme: 'Color theme', dark: 'Dark', light: 'Light',
@@ -183,6 +183,10 @@ const dict = {
         testConnection: 'Test', testing: 'Testing…', testSuccess: 'Connected successfully', testFailed: 'Test failed',
         defaultBadge: 'Default', noProviders: 'No model services configured yet.',
         confirmDeleteProvider: 'Delete this model service?', moveUp: 'Move up', moveDown: 'Move down',
+        mcpEnabled: 'Enable MCP Server',
+        mcpEnabledDesc: 'Once enabled, any local process that can reach this port — including your own claude/codex CLI — can read and run commands in any terminal tab open in iShell, with no confirmation prompt. Only enable this if you trust everything running on this machine.',
+        mcpPort: 'Port', mcpStatusRunning: 'Running at', mcpStatusStopped: 'Stopped',
+        mcpConnectHelp: 'Add iShell as an MCP tool source in your claude/codex CLI:', mcpCopy: 'Copy', mcpCopied: 'Copied',
       },
       toolCalls: {
         builtinTitle: 'Built-in Tools', builtinDesc: 'These tools are always available to the AI assistant and cannot be edited or removed.',
@@ -368,7 +372,7 @@ const dict = {
       nav: {
         appearance: '外观', terminal: '终端', ssh: 'SSH / 安全',
         quickCommands: '快速命令', backup: '导入 / 导出',
-        shortcuts: '快捷键', about: '关于', ai: 'AI-模型服务', toolCalls: 'AI-工具调用',
+        shortcuts: '快捷键', about: '关于', ai: 'AI-模型服务', aiMcp: 'AI-MCP服务', toolCalls: 'AI-工具调用',
       },
       appearance: {
         theme: '主题', colorTheme: '配色主题', dark: '深色', light: '浅色',
@@ -438,6 +442,10 @@ const dict = {
         testConnection: '检测', testing: '检测中…', testSuccess: '连接成功', testFailed: '检测失败',
         defaultBadge: '默认', noProviders: '尚未配置任何模型服务。',
         confirmDeleteProvider: '确认删除该模型服务？', moveUp: '上移', moveDown: '下移',
+        mcpEnabled: '启用 MCP Server',
+        mcpEnabledDesc: '开启后，任何能连接到本机该端口的进程——包括你自己的 claude/codex CLI——都可以读取并执行 iShell 中任意已打开终端 tab 里的命令，不会有二次确认。仅在你信任这台机器上运行的所有程序时开启。',
+        mcpPort: '端口', mcpStatusRunning: '正在监听', mcpStatusStopped: '已停止',
+        mcpConnectHelp: '在你的 claude/codex CLI 中把 iShell 加为 MCP 工具源：', mcpCopy: '复制', mcpCopied: '已复制',
       },
       toolCalls: {
         builtinTitle: '内置工具', builtinDesc: '这些工具始终对 AI 助手可用，不能编辑或删除。',
@@ -621,7 +629,7 @@ const dict = {
       nav: {
         appearance: '外觀', terminal: '終端機', ssh: 'SSH / 安全性',
         quickCommands: '快速指令', backup: '匯入 / 匯出',
-        shortcuts: '快捷鍵', about: '關於', ai: 'AI-模型服務', toolCalls: 'AI-工具呼叫',
+        shortcuts: '快捷鍵', about: '關於', ai: 'AI-模型服務', aiMcp: 'AI-MCP服務', toolCalls: 'AI-工具呼叫',
       },
       appearance: {
         theme: '主題', colorTheme: '配色主題', dark: '深色', light: '淺色',
@@ -691,6 +699,10 @@ const dict = {
         testConnection: '檢測', testing: '檢測中…', testSuccess: '連線成功', testFailed: '檢測失敗',
         defaultBadge: '預設', noProviders: '尚未設定任何模型服務。',
         confirmDeleteProvider: '確認刪除此模型服務？', moveUp: '上移', moveDown: '下移',
+        mcpEnabled: '啟用 MCP Server',
+        mcpEnabledDesc: '開啟後，任何能連線到本機該埠的行程——包括你自己的 claude/codex CLI——都可以讀取並執行 iShell 中任意已開啟終端機分頁裡的命令，不會有二次確認。僅在你信任這台機器上執行的所有程式時開啟。',
+        mcpPort: '埠號', mcpStatusRunning: '正在監聽', mcpStatusStopped: '已停止',
+        mcpConnectHelp: '在你的 claude/codex CLI 中把 iShell 加為 MCP 工具來源：', mcpCopy: '複製', mcpCopied: '已複製',
       },
       toolCalls: {
         builtinTitle: '內建工具', builtinDesc: '這些工具始終可供 AI 助理使用，無法編輯或刪除。',

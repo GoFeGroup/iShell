@@ -299,6 +299,9 @@ func (s *Store) LoadSettings() (*Settings, error) {
 		if _, ok := fields["show_quick_commands"]; !ok {
 			st.ShowQuickCommands = true
 		}
+		if _, ok := fields["mcp_server_port"]; !ok {
+			st.MCPServerPort = 7378
+		}
 		// Pre-multi-provider settings stored a single ai_base_url/ai_api_key/
 		// ai_model triple. Fold it into AIProviders[0] so existing users keep
 		// their configured service after upgrading.

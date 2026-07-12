@@ -132,6 +132,17 @@ func (m *Manager) Since(connID string, offset int64) ([]byte, error) {
 	return sess.em.Since(offset), nil
 }
 
+// ListActive returns the connIDs of all active local sessions.
+func (m *Manager) ListActive() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]string, 0, len(m.sessions))
+	for id := range m.sessions {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // CloseAll terminates all local sessions on app shutdown.
 func (m *Manager) CloseAll() {
 	m.mu.Lock()

@@ -18,6 +18,7 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"ishell/backend/ai"
 	"ishell/backend/local"
+	"ishell/backend/mcpserver"
 	"ishell/backend/osutil"
 	"ishell/backend/ssh"
 	"ishell/backend/storage"
@@ -30,6 +31,7 @@ type App struct {
 	sshMgr    *ssh.Manager
 	localMgr  *local.Manager
 	aiAgent   *ai.Agent
+	mcpSrv    *mcpserver.Server
 	dataDir   string
 	transfers map[string]TransferRecord
 	cancels   map[string]context.CancelFunc
@@ -79,6 +81,13 @@ func (a *App) Startup(ctx context.Context) {
 	})
 	a.transfers = make(map[string]TransferRecord)
 	a.cancels = make(map[string]context.CancelFunc)
+
+	a.mcpSrv = mcpserver.New(a)
+	if settings, err := a.GetSettings(); err == nil && settings.MCPServerEnabled {
+		if err := a.mcpSrv.Start(settings.MCPServerPort); err != nil {
+			wailsRuntime.LogErrorf(ctx, "start MCP server: %v", err)
+		}
+	}
 }
 
 // FocusWindow brings the app window to the foreground and ensures it has
@@ -128,7 +137,10 @@ func appBundlePath(exe string) string {
 	return ""
 }
 
-func (a *App) Shutdown(_ context.Context) {
+func (a *App) Shutdown(ctx context.Context) {
+	if a.mcpSrv != nil {
+		_ = a.mcpSrv.Stop(ctx)
+	}
 	a.sshMgr.CloseAll()
 	a.localMgr.CloseAll()
 	if a.store != nil {
@@ -602,7 +614,73 @@ func (a *App) SaveSettings(settings storage.Settings) error {
 	if err := ai.ValidateAIProviders(settings.AIProviders); err != nil {
 		return err
 	}
-	return a.store.SaveSettings(settings)
+	if err := a.store.SaveSettings(settings); err != nil {
+		return err
+	}
+	a.applyMCPServerSettings(settings)
+	return nil
+}
+
+// applyMCPServerSettings starts or stops the MCP server to match the saved
+// settings. Errors (e.g. port already in use) are surfaced via
+// GetMCPServerStatus rather than failing the settings save.
+func (a *App) applyMCPServerSettings(settings storage.Settings) {
+	if a.mcpSrv == nil {
+		return
+	}
+	if !settings.MCPServerEnabled {
+		_ = a.mcpSrv.Stop(a.ctx)
+		return
+	}
+	if err := a.mcpSrv.Start(settings.MCPServerPort); err != nil {
+		wailsRuntime.LogErrorf(a.ctx, "start MCP server: %v", err)
+	}
+}
+
+// MCPServerStatus is the JSON shape returned to the settings page.
+type MCPServerStatus struct {
+	Running bool   `json:"running"`
+	Addr    string `json:"addr"`
+	Error   string `json:"error,omitempty"`
+}
+
+// GetMCPServerStatus reports whether the local MCP server is currently
+// listening, its full endpoint URL, and the last error encountered (e.g. a
+// port conflict), for display in the settings page.
+func (a *App) GetMCPServerStatus() MCPServerStatus {
+	if a.mcpSrv == nil {
+		return MCPServerStatus{}
+	}
+	running, addr, err := a.mcpSrv.Status()
+	st := MCPServerStatus{Running: running, Addr: addr}
+	if err != nil {
+		st.Error = err.Error()
+	}
+	return st
+}
+
+// ListTerminals returns every currently open terminal tab (SSH connections
+// and local shells), for the MCP list_terminals tool and any future
+// terminal-picker UI.
+func (a *App) ListTerminals() []mcpserver.TerminalInfo {
+	out := make([]mcpserver.TerminalInfo, 0)
+	for connID, sessionID := range a.sshMgr.ListActive() {
+		info := mcpserver.TerminalInfo{ConnID: connID, Kind: "ssh"}
+		if a.store != nil {
+			if sess, err := a.store.GetSession(sessionID); err == nil && sess != nil {
+				info.Label = sess.Label
+				info.Host = sess.Host
+			}
+		}
+		if info.Label == "" {
+			info.Label = connID
+		}
+		out = append(out, info)
+	}
+	for _, connID := range a.localMgr.ListActive() {
+		out = append(out, mcpserver.TerminalInfo{ConnID: connID, Label: "Local Shell", Kind: "local"})
+	}
+	return out
 }
 
 // ListBuiltinToolCalls returns the read-only listing of built-in AI tools

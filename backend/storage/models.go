@@ -78,6 +78,8 @@ type Settings struct {
 	AIEnabled           bool                `json:"ai_enabled" yaml:"ai_enabled"`
 	AIProviders         []AIProvider        `json:"ai_providers" yaml:"ai_providers"`
 	CustomToolCalls     []CustomToolCall    `json:"custom_tool_calls" yaml:"custom_tool_calls"`
+	MCPServerEnabled    bool                `json:"mcp_server_enabled" yaml:"mcp_server_enabled"`
+	MCPServerPort       int                 `json:"mcp_server_port" yaml:"mcp_server_port"`
 }
 
 // AIProvider is one configured OpenAI-compatible model service. The first
@@ -180,5 +182,7 @@ func DefaultSettings() Settings {
 		AIEnabled:           false,
 		AIProviders:         []AIProvider{},
 		CustomToolCalls:     []CustomToolCall{},
+		MCPServerEnabled:    false,
+		MCPServerPort:       7378,
 	}
 }
