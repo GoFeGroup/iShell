@@ -190,3 +190,41 @@ func TestEmitterClosedDropsWrites(t *testing.T) {
 		t.Fatalf("write after close should be dropped, got %q", out)
 	}
 }
+
+func TestEmitterZmodemDrainDropsBinaryAndKeepsPromptSuffix(t *testing.T) {
+	var out []byte
+	var mu sync.Mutex
+	e := newTestEmitter(&out, &mu)
+
+	e.Write([]byte("buffered protocol data"))
+	e.BeginZmodemDrain()
+	e.Write(make([]byte, 16*1024))
+	prompt := []byte("\x1b[?2004h\x1b[01;32mroot@host\x1b[00m:# ")
+	mixed := append(make([]byte, 1024), prompt...)
+	e.Write(mixed)
+	e.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if string(out) != string(prompt) {
+		t.Fatalf("emitted output = %q, want prompt %q", out, prompt)
+	}
+}
+
+func TestEmitterZmodemDrainFindsPromptMarkerAcrossWrites(t *testing.T) {
+	var out []byte
+	var mu sync.Mutex
+	e := newTestEmitter(&out, &mu)
+
+	e.BeginZmodemDrain()
+	e.Write([]byte{0x00, 0xff, 0x1b, 0x5b, 0x3f})
+	e.Write([]byte("2004h$ "))
+	e.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := "\x1b[?2004h$ "
+	if string(out) != want {
+		t.Fatalf("emitted output = %q, want %q", out, want)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -36,6 +37,12 @@ type App struct {
 	transfers map[string]TransferRecord
 	cancels   map[string]context.CancelFunc
 	txMu      sync.RWMutex
+
+	// zmodemFiles holds files opened for chunked Zmodem read/write, keyed by
+	// an opaque handle. Read handles (upload) and write handles (download)
+	// share one map since handles are unique regardless of direction.
+	zmodemFiles map[string]*os.File
+	zmodemMu    sync.Mutex
 }
 
 type TransferRecord struct {
@@ -81,6 +88,7 @@ func (a *App) Startup(ctx context.Context) {
 	})
 	a.transfers = make(map[string]TransferRecord)
 	a.cancels = make(map[string]context.CancelFunc)
+	a.zmodemFiles = make(map[string]*os.File)
 
 	a.mcpSrv = mcpserver.New(a)
 	if settings, err := a.GetSettings(); err == nil && settings.MCPServerEnabled {
@@ -141,6 +149,7 @@ func (a *App) Shutdown(ctx context.Context) {
 	if a.mcpSrv != nil {
 		_ = a.mcpSrv.Stop(ctx)
 	}
+	a.closeZmodemFiles()
 	a.sshMgr.CloseAll()
 	a.localMgr.CloseAll()
 	if a.store != nil {
@@ -740,48 +749,124 @@ func (a *App) SendInputBytes(connID, b64data string) error {
 	return a.sshMgr.SendInput(connID, data)
 }
 
-// ZmodemFile holds file metadata and base64-encoded content for Zmodem transfer.
-type ZmodemFile struct {
-	Name    string `json:"name"`
-	Size    int64  `json:"size"`
-	Content string `json:"content"` // base64-encoded
+// zmodemChunkSize bounds each Zmodem file-transfer IPC call. Passing a whole
+// large file as one base64 string makes the Wails call's JSON.stringify +
+// postMessage a single synchronous main-thread operation on the JS side that
+// can take seconds — chunking keeps each call small enough not to stall
+// other pending work (session-end cleanup, keyboard unblock) behind it.
+const zmodemChunkSize = 512 * 1024
+
+// registerZmodemFile stores f under a fresh handle for later
+// WriteZmodemFileChunk/ReadZmodemFileChunk/Close/Abort calls.
+func (a *App) registerZmodemFile(f *os.File) string {
+	handle := uuid.NewString()
+	a.zmodemMu.Lock()
+	a.zmodemFiles[handle] = f
+	a.zmodemMu.Unlock()
+	return handle
 }
 
-// OpenFilesForZmodem opens a file-picker dialog and returns the selected files
-// with their contents base64-encoded, for use with the rz (receive) Zmodem command.
-func (a *App) OpenFilesForZmodem() ([]ZmodemFile, error) {
+func (a *App) takeZmodemFile(handle string, remove bool) (*os.File, bool) {
+	a.zmodemMu.Lock()
+	f, ok := a.zmodemFiles[handle]
+	if ok && remove {
+		delete(a.zmodemFiles, handle)
+	}
+	a.zmodemMu.Unlock()
+	return f, ok
+}
+
+func (a *App) closeZmodemFiles() {
+	a.zmodemMu.Lock()
+	files := a.zmodemFiles
+	a.zmodemFiles = make(map[string]*os.File)
+	a.zmodemMu.Unlock()
+
+	for _, f := range files {
+		_ = f.Close()
+	}
+}
+
+// ZmodemFileMeta holds file metadata for a file picked to send via Zmodem
+// (rz). Content is read afterward, in chunks, via OpenZmodemUploadFile /
+// ReadZmodemFileChunk, rather than all at once here.
+type ZmodemFileMeta struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+	Path string `json:"path"`
+}
+
+// PickFilesForZmodem opens a file-picker dialog and returns metadata for the
+// selected files, for use with the rz (receive) Zmodem command. Contents are
+// read later in chunks so a large file never has to cross the Go<->JS
+// boundary as one big string.
+func (a *App) PickFilesForZmodem() ([]ZmodemFileMeta, error) {
 	paths, err := wailsRuntime.OpenMultipleFilesDialog(a.ctx, wailsRuntime.OpenDialogOptions{
 		Title: "Select files to send (rz)",
 	})
 	if err != nil || len(paths) == 0 {
 		return nil, err
 	}
-	var files []ZmodemFile
+	var files []ZmodemFileMeta
 	for _, p := range paths {
 		info, err := os.Stat(p)
 		if err != nil {
 			continue
 		}
-		content, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		files = append(files, ZmodemFile{
-			Name:    filepath.Base(p),
-			Size:    info.Size(),
-			Content: base64.StdEncoding.EncodeToString(content),
-		})
+		files = append(files, ZmodemFileMeta{Name: filepath.Base(p), Size: info.Size(), Path: p})
 	}
 	return files, nil
 }
 
-// SaveZmodemFile saves a file received via Zmodem (sz) to the downloads directory.
-// Returns the full path of the saved file.
-func (a *App) SaveZmodemFile(filename, b64data string) (string, error) {
-	data, err := base64.StdEncoding.DecodeString(b64data)
+// OpenZmodemUploadFile opens path for reading and returns a handle for
+// subsequent ReadZmodemFileChunk/CloseZmodemUploadFile calls.
+func (a *App) OpenZmodemUploadFile(path string) (string, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("base64 decode: %w", err)
+		return "", fmt.Errorf("open file: %w", err)
 	}
+	return a.registerZmodemFile(f), nil
+}
+
+// ZmodemFileChunk is a chunk read by ReadZmodemFileChunk. Wails' method
+// dispatcher only unwraps a single non-error return value (see
+// BoundMethod.Call in the wails runtime), so chunk+eof are bundled into one
+// struct rather than returned as separate values.
+type ZmodemFileChunk struct {
+	Chunk string `json:"chunk"`
+	EOF   bool   `json:"eof"`
+}
+
+// ReadZmodemFileChunk reads up to zmodemChunkSize bytes from the file opened
+// under handle and returns it base64-encoded. EOF is true once the file has
+// been fully read (Chunk may be non-empty on the same call that reports EOF).
+func (a *App) ReadZmodemFileChunk(handle string) (ZmodemFileChunk, error) {
+	f, ok := a.takeZmodemFile(handle, false)
+	if !ok {
+		return ZmodemFileChunk{}, fmt.Errorf("zmodem file handle not found: %s", handle)
+	}
+	buf := make([]byte, zmodemChunkSize)
+	n, readErr := io.ReadFull(f, buf)
+	if readErr != nil && readErr != io.ErrUnexpectedEOF && readErr != io.EOF {
+		return ZmodemFileChunk{}, fmt.Errorf("read file: %w", readErr)
+	}
+	eof := readErr == io.ErrUnexpectedEOF || readErr == io.EOF
+	return ZmodemFileChunk{Chunk: base64.StdEncoding.EncodeToString(buf[:n]), EOF: eof}, nil
+}
+
+// CloseZmodemUploadFile closes the file opened under handle.
+func (a *App) CloseZmodemUploadFile(handle string) error {
+	f, ok := a.takeZmodemFile(handle, true)
+	if !ok {
+		return nil
+	}
+	return f.Close()
+}
+
+// OpenZmodemFile resolves a collision-safe destination path under the
+// downloads directory, creates it for writing, and returns a handle for
+// subsequent WriteZmodemFileChunk/CloseZmodemFile/AbortZmodemFile calls.
+func (a *App) OpenZmodemFile(filename string) (string, error) {
 	dir := a.GetDownloadsDir()
 	base := filepath.Base(filepath.FromSlash(filename))
 	destPath := filepath.Join(dir, base)
@@ -797,10 +882,54 @@ func (a *App) SaveZmodemFile(filename, b64data string) (string, error) {
 			}
 		}
 	}
-	if err := os.WriteFile(destPath, data, 0644); err != nil {
-		return "", fmt.Errorf("write file: %w", err)
+	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return "", fmt.Errorf("create file: %w", err)
 	}
-	return destPath, nil
+	return a.registerZmodemFile(f), nil
+}
+
+// WriteZmodemFileChunk decodes and appends a chunk to the file opened under
+// handle, in call order.
+func (a *App) WriteZmodemFileChunk(handle, b64chunk string) error {
+	f, ok := a.takeZmodemFile(handle, false)
+	if !ok {
+		return fmt.Errorf("zmodem file handle not found: %s", handle)
+	}
+	data, err := base64.StdEncoding.DecodeString(b64chunk)
+	if err != nil {
+		return fmt.Errorf("base64 decode: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+	return nil
+}
+
+// CloseZmodemFile closes the file opened under handle and returns its final
+// absolute path.
+func (a *App) CloseZmodemFile(handle string) (string, error) {
+	f, ok := a.takeZmodemFile(handle, true)
+	if !ok {
+		return "", fmt.Errorf("zmodem file handle not found: %s", handle)
+	}
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("close file: %w", err)
+	}
+	return path, nil
+}
+
+// AbortZmodemFile closes and deletes a partially-written file opened under
+// handle (used when the frontend cancels or hits an error mid-save).
+func (a *App) AbortZmodemFile(handle string) error {
+	f, ok := a.takeZmodemFile(handle, true)
+	if !ok {
+		return nil
+	}
+	path := f.Name()
+	f.Close()
+	return os.Remove(path)
 }
 
 // ── Config import/export ─────────────────────────────────────────────────────

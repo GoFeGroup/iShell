@@ -23,6 +23,28 @@ type TermSession struct {
 	ctx     context.Context
 }
 
+func zmodemInputKind(data []byte) string {
+	if len(data) == 19 {
+		cancel := true
+		for i := 0; i < 8; i++ {
+			cancel = cancel && data[i] == 0x18
+		}
+		for i := 8; i < 18; i++ {
+			cancel = cancel && data[i] == 0x08
+		}
+		if cancel && data[18] == 0x03 {
+			return "cancel"
+		}
+	}
+	if len(data) == 1 && data[0] == 0x03 {
+		return "ctrl-c"
+	}
+	if len(data) >= 4 && data[0] == 0x2a && data[1] == 0x2a && data[2] == 0x18 && data[3] == 0x42 {
+		return "frame"
+	}
+	return ""
+}
+
 // newTermSession opens a PTY shell on the given SSH client and starts
 // streaming stdout/stderr back to the frontend via Wails events.
 func newTermSession(ctx context.Context, connID string, client *gossh.Client, cols, rows int, forwardAgent bool) (*TermSession, error) {
@@ -128,6 +150,10 @@ func (ts *TermSession) pumpOutput(r io.Reader) {
 func (ts *TermSession) Write(data []byte) error {
 	buf := make([]byte, len(data))
 	copy(buf, data)
+	kind := zmodemInputKind(buf)
+	if kind == "cancel" {
+		ts.out.BeginZmodemDrain()
+	}
 	select {
 	case ts.inputCh <- buf:
 		return nil

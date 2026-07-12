@@ -127,6 +127,17 @@
 <!-- Toast -->
 <div id="kb-toast"></div>
 
+<!-- Zmodem transfer progress -->
+<div id="zmodem-progress">
+  <div class="zp-header">
+    <span class="zp-icon" id="zp-icon">⬇</span>
+    <span class="zp-name" id="zp-name"></span>
+    <span class="zp-pct" id="zp-pct"></span>
+  </div>
+  <div class="progress-bar"><div class="progress-fill downloading" id="zp-fill" style="width:0%;"></div></div>
+  <div class="zp-speed" id="zp-speed"></div>
+</div>
+
 <!-- Host key warning dialog -->
 <div class="overlay" id="hostkey-overlay" style="display:none;">
   <div class="modal" style="width:460px;">

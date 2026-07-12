@@ -8,6 +8,16 @@ const header = new Uint8Array([
     ...encoder.encode('0'.repeat(14)),
     0x0d, 0x0a,
 ]);
+// Real lrzsz `sz`/`rz` terminates hex headers with 0x8a instead of the plain
+// LF (0x0a) the spec describes — the zmodem.js library's own parser checks
+// for this explicitly. A ZRQINIT header's CRC over an all-zero payload is
+// itself zero, so this is the literal, correctly-formed byte sequence behind
+// what renders on screen as "**B00000000000000" (ZDLE and CR don't print).
+const lrzszHeader = new Uint8Array([
+    ...encoder.encode('**\x18B'),
+    ...encoder.encode('0'.repeat(14)),
+    0x0d, 0x8a,
+]);
 
 test('removes a detected ZMODEM hex header while preserving preceding output', () => {
     const prefix = encoder.encode('sending file...\r\n');
@@ -109,4 +119,51 @@ test('splits at the first header when leading shell text precedes it', () => {
         header: new Uint8Array([...prefix, ...header]),
         rest: extra,
     });
+});
+
+test('removes a detected lrzsz-style header (0x8a line terminator)', () => {
+    const prefix = encoder.encode('sending file...\r\n');
+    const input = new Uint8Array([...prefix, ...lrzszHeader]);
+
+    assert.deepEqual(stripDetectedZmodemHeader(input), prefix);
+});
+
+test('filters an lrzsz-style header (0x8a line terminator) from a single chunk', () => {
+    const filter = createZmodemHeaderFilter();
+
+    assert.deepEqual(filter.consume(lrzszHeader), new Uint8Array());
+});
+
+test('splits an lrzsz-style header (0x8a line terminator) followed by extra bytes', () => {
+    const extra = encoder.encode('some more protocol noise');
+    const input = new Uint8Array([...lrzszHeader, ...extra]);
+
+    assert.deepEqual(splitLeadingZmodemHeader(input), { header: lrzszHeader, rest: extra });
+});
+
+// lrzsz's `sz` always sends the literal "rz\r" fallback-invocation hint
+// immediately before the real header (ZMODEM spec ch. 8.1's session-startup
+// convention). We auto-detect, so it's just noise in front of the header.
+const rzTrigger = new Uint8Array([0x72, 0x7a, 0x0d]); // "rz\r"
+
+test('swallows "rz\\r" immediately preceding a header in the same chunk', () => {
+    const filter = createZmodemHeaderFilter();
+    const input = new Uint8Array([...rzTrigger, ...lrzszHeader]);
+
+    assert.deepEqual(filter.consume(input), new Uint8Array());
+});
+
+test('swallows "rz\\r" when it arrives in a separate chunk from the header', () => {
+    const filter = createZmodemHeaderFilter();
+
+    assert.deepEqual(filter.consume(rzTrigger), new Uint8Array());
+    assert.deepEqual(filter.consume(lrzszHeader), new Uint8Array());
+});
+
+test('treats "rz\\r" as ordinary output when no header follows', () => {
+    const filter = createZmodemHeaderFilter();
+    const trailing = encoder.encode('$ ');
+    const input = new Uint8Array([...rzTrigger, ...trailing]);
+
+    assert.deepEqual(filter.consume(input), new Uint8Array([...rzTrigger, ...trailing]));
 });

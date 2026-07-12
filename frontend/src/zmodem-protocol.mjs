@@ -4,13 +4,29 @@ const HEX_HEADER = 0x42;
 const CARRIAGE_RETURN = 0x0d;
 const CR_8BIT = 0x8d;
 const LINE_FEED = 0x0a;
+// lrzsz (the near-universal Linux sz/rz) sends this in place of a plain LF to
+// terminate a hex header — the zmodem.js library's own parser checks for it
+// explicitly (see node_modules/zmodem.js/src/zheader.js: "lrzsz sends this").
+const LF_8BIT = 0x8a;
 const XON = 0x11;
 const ZMODEM_HEX_HEADER_LENGTH = 20;
+// The ZMODEM spec's session-startup convention (also what lrzsz's `sz`
+// unconditionally sends): a literal "rz\r" hint immediately before the real
+// header, so a human at a terminal without auto-detection knows to type `rz`
+// manually. We do auto-detect, so it's just noise in front of the header.
+const RZ_TRIGGER = [0x72, 0x7a, 0x0d]; // "rz\r"
 
 function isHexOctet(octet) {
     return (octet >= 0x30 && octet <= 0x39)
         || (octet >= 0x41 && octet <= 0x46)
         || (octet >= 0x61 && octet <= 0x66);
+}
+
+function matchesAt(bytes, pos, pattern) {
+    for (let i = 0; i < pattern.length; i++) {
+        if (bytes[pos + i] !== pattern[i]) return false;
+    }
+    return true;
 }
 
 const headerPrefixMatches = (bytes, start) => bytes[start] === ASTERISK
@@ -27,7 +43,7 @@ const isHeaderByteValid = (bytes, start, available) => {
         if (!isHexOctet(bytes[start + i])) return false;
     }
     if (available > 18 && bytes[start + 18] !== CARRIAGE_RETURN && bytes[start + 18] !== CR_8BIT) return false;
-    return available <= 19 || bytes[start + 19] === LINE_FEED;
+    return available <= 19 || bytes[start + 19] === LINE_FEED || bytes[start + 19] === LF_8BIT;
 };
 
 // zmodem.js detects a complete initial hex header, then still forwards that
@@ -38,7 +54,7 @@ export function stripDetectedZmodemHeader(octets) {
     if (octets[end - 1] === XON) end -= 1;
 
     const start = end - ZMODEM_HEX_HEADER_LENGTH;
-    if (start < 0 || octets[end - 1] !== LINE_FEED) return octets;
+    if (start < 0 || (octets[end - 1] !== LINE_FEED && octets[end - 1] !== LF_8BIT)) return octets;
     if (octets[end - 2] !== CARRIAGE_RETURN && octets[end - 2] !== CR_8BIT) return octets;
     if (octets[start] !== ASTERISK || octets[start + 1] !== ASTERISK
         || octets[start + 2] !== ZDLE || octets[start + 3] !== HEX_HEADER) {
@@ -78,6 +94,24 @@ export function createZmodemHeaderFilter() {
             }
             while (pos < bytes.length) {
                 const available = bytes.length - pos;
+
+                // Only swallow "rz\r" when a real header immediately follows
+                // (lrzsz never sends anything in between); otherwise it's
+                // ordinary text, e.g. a user actually typing "rz" and Enter.
+                if (available >= 3 && matchesAt(bytes, pos, RZ_TRIGGER)) {
+                    const afterPos = pos + 3;
+                    const afterAvailable = bytes.length - afterPos;
+                    if (afterAvailable < 4) {
+                        const prefix = [ASTERISK, ASTERISK, ZDLE, HEX_HEADER];
+                        let matches = true;
+                        for (let i = 0; i < afterAvailable; i++) matches &&= bytes[afterPos + i] === prefix[i];
+                        if (matches) { pending = bytes.slice(pos); break; }
+                    } else if (headerPrefixMatches(bytes, afterPos) && isHeaderByteValid(bytes, afterPos, afterAvailable)) {
+                        pos = afterPos; // drop "rz\r"; the header itself is handled below
+                        continue;
+                    }
+                }
+
                 if (bytes[pos] !== ASTERISK) {
                     output.push(bytes[pos++]);
                     continue;

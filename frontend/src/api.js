@@ -61,9 +61,15 @@ export const startAdHocForward          = (connID, pf)     => go().StartAdHocFor
 export const stopPortForward            = (connID, id)     => go().StopPortForward(connID, id);
 export const listActiveForwards         = (connID)         => go().ListActiveForwards(connID);
 
-export const sendInputBytes     = (id, b64)        => go().SendInputBytes(id, b64);
-export const openFilesForZmodem = ()               => go().OpenFilesForZmodem();
-export const saveZmodemFile     = (name, b64)      => go().SaveZmodemFile(name, b64);
+export const sendInputBytes        = (id, b64)        => go().SendInputBytes(id, b64);
+export const pickFilesForZmodem    = ()               => go().PickFilesForZmodem();
+export const openZmodemUploadFile  = (path)           => go().OpenZmodemUploadFile(path);
+export const readZmodemFileChunk   = (handle)         => go().ReadZmodemFileChunk(handle);
+export const closeZmodemUploadFile = (handle)         => go().CloseZmodemUploadFile(handle);
+export const openZmodemFile        = (name)           => go().OpenZmodemFile(name);
+export const writeZmodemFileChunk  = (handle, b64)    => go().WriteZmodemFileChunk(handle, b64);
+export const closeZmodemFile       = (handle)         => go().CloseZmodemFile(handle);
+export const abortZmodemFile       = (handle)         => go().AbortZmodemFile(handle);
 
 // ── AI ────────────────────────────────────────────────────────────────────────
 export const listAIChatSessionsForTarget = (targetID)  => go().ListAIChatSessionsForTarget(targetID);

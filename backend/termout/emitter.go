@@ -15,6 +15,7 @@
 package termout
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"sync"
@@ -44,6 +45,9 @@ type Emitter struct {
 	timer  *time.Timer
 	closed bool
 
+	zmodemDrain     bool
+	zmodemDrainTail []byte
+
 	// Bounded ring buffer of raw output, independent of the coalesce/flush
 	// path above — read by AI tool calls (Snapshot/Since) to see what a
 	// terminal_run command produced, without affecting the frontend stream.
@@ -62,6 +66,36 @@ func New(ctx context.Context, connID string) *Emitter {
 	}
 }
 
+var zmodemRecoveryMarkers = [][]byte{
+	{0x1b, 0x5b, 0x3f, 0x32, 0x30, 0x30, 0x34, 0x68}, // ESC[?2004h
+	[]byte("\x1b]1337;CurrentDir="),
+}
+
+func zmodemRecoveryOffset(p []byte) int {
+	offset := -1
+	for _, marker := range zmodemRecoveryMarkers {
+		if i := bytes.Index(p, marker); i >= 0 && (offset < 0 || i < offset) {
+			offset = i
+		}
+	}
+	return offset
+}
+
+// BeginZmodemDrain drops buffered and subsequent protocol output until a
+// strong interactive-shell marker appears. Already-emitted frontend events
+// are handled by the matching fast drain in zmodem.js.
+func (e *Emitter) BeginZmodemDrain() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.timer != nil {
+		e.timer.Stop()
+		e.timer = nil
+	}
+	e.buf = e.buf[:0]
+	e.zmodemDrain = true
+	e.zmodemDrainTail = e.zmodemDrainTail[:0]
+}
+
 // Write appends p to the buffer and schedules a flush. It is safe to call from
 // multiple reader goroutines concurrently; the mutex serialises their output so
 // the frontend receives a single ordered stream. Write never blocks on I/O.
@@ -75,6 +109,23 @@ func (e *Emitter) Write(p []byte) {
 		return
 	}
 	e.writeRingLocked(p)
+	if e.zmodemDrain {
+		combined := make([]byte, 0, len(e.zmodemDrainTail)+len(p))
+		combined = append(combined, e.zmodemDrainTail...)
+		combined = append(combined, p...)
+		if offset := zmodemRecoveryOffset(combined); offset >= 0 {
+			e.zmodemDrain = false
+			e.zmodemDrainTail = e.zmodemDrainTail[:0]
+			p = combined[offset:]
+		} else {
+			const tailSize = 17
+			if len(combined) > tailSize {
+				combined = combined[len(combined)-tailSize:]
+			}
+			e.zmodemDrainTail = append(e.zmodemDrainTail[:0], combined...)
+			return
+		}
+	}
 	e.buf = append(e.buf, p...)
 	if len(e.buf) >= maxBuf {
 		e.flushLocked()

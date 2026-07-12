@@ -211,6 +211,14 @@ kbd{padding:2px 6px;background:var(--bg-elevated);border:1px solid var(--border)
 /* Toast */
 #kb-toast{position:fixed;bottom:44px;left:50%;transform:translateX(-50%);background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);padding:5px 16px;border-radius:20px;font-size:13px;z-index:1000;opacity:0;transition:opacity .18s;pointer-events:none;box-shadow:var(--shadow-md);white-space:nowrap;}
 #kb-toast.show{opacity:1;}
+/* Zmodem transfer progress */
+#zmodem-progress{position:fixed;right:16px;bottom:44px;width:240px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-md);padding:10px 12px;z-index:1000;opacity:0;pointer-events:none;transition:opacity .18s;}
+#zmodem-progress.show{opacity:1;}
+.zp-header{display:flex;align-items:center;gap:6px;margin-bottom:6px;}
+.zp-icon{font-size:12px;flex-shrink:0;}
+.zp-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;font-weight:500;color:var(--text-primary);}
+.zp-pct{font-size:11px;color:var(--text-muted);font-family:var(--font-mono);flex-shrink:0;}
+.zp-speed{margin-top:4px;font-size:11px;color:var(--text-muted);text-align:right;}
 /* Context menu */
 .ctx-menu{position:fixed;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-md);min-width:160px;overflow:hidden;z-index:200;}
 .ctx-item{padding:7px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;color:var(--text-primary);transition:background .1s;}
