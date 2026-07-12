@@ -19,18 +19,18 @@ import (
 
 // Conn holds an active SSH connection and its sub-resources.
 type Conn struct {
-	ID             string
-	SessionID      string
-	client         *gossh.Client
-	jumpClient     *gossh.Client
-	term           *TermSession
-	sftpCl         *sftp.Client
-	mu             sync.Mutex
-	stopKeepalive  chan struct{}
-	forwardsMu     sync.Mutex
-	forwards       map[string]*forwardHandle
-	sshAgent       sshagent.Agent
-	agentCloser    io.Closer
+	ID            string
+	SessionID     string
+	client        *gossh.Client
+	jumpClient    *gossh.Client
+	term          *TermSession
+	sftpCl        *sftp.Client
+	mu            sync.Mutex
+	stopKeepalive chan struct{}
+	forwardsMu    sync.Mutex
+	forwards      map[string]*forwardHandle
+	sshAgent      sshagent.Agent
+	agentCloser   io.Closer
 }
 
 // Manager manages all active SSH connections.
@@ -55,14 +55,15 @@ func NewManager(ctx context.Context, store *storage.Store) *Manager {
 // ── Connect ───────────────────────────────────────────────────────────────────
 
 type ConnectOptions struct {
-	Session        storage.Session
-	JumpSession    *storage.Session // nil = direct connection
-	Password       string           // override password (from connect dialog)
-	KeyPath        string           // override key path
-	Passphrase     string           // override passphrase
-	KnownHostsPath string
-	StrictHostKey  bool
-	Cols, Rows     int
+	Session         storage.Session
+	JumpSession     *storage.Session // nil = direct connection
+	Password        string           // override password (from connect dialog)
+	KeyPath         string           // override key path
+	Passphrase      string           // override passphrase
+	KnownHostsPath  string
+	StrictHostKey   bool
+	SkipHostKeyHost string
+	Cols, Rows      int
 }
 
 type HostKeyError struct {
@@ -151,6 +152,9 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 		}
 		// Wrap to emit an event on unknown host so the frontend can prompt
 		hkCallback = func(hostname string, remote net.Addr, key gossh.PublicKey) error {
+			if hostname == opts.SkipHostKeyHost {
+				return nil
+			}
 			err := cb(hostname, remote, key)
 			if err != nil {
 				fp := gossh.FingerprintSHA256(key)
@@ -285,6 +289,9 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 			close(stopKA)
 		}
 		client.Close()
+		if jumpClient != nil {
+			jumpClient.Close()
+		}
 		return "", fmt.Errorf("open pty: %w", err)
 	}
 	agentConnected = true

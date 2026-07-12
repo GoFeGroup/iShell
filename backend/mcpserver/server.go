@@ -51,6 +51,7 @@ type Server struct {
 	addr    string
 	lastErr error
 	httpSrv *server.StreamableHTTPServer
+	netSrv  *http.Server
 	ln      net.Listener
 }
 
@@ -70,7 +71,7 @@ func (s *Server) Start(port int) error {
 		return nil
 	}
 	if s.running {
-		s.stopLocked()
+		_ = s.stopLocked(context.Background())
 	}
 	if port <= 0 {
 		return fmt.Errorf("invalid MCP server port: %d", port)
@@ -87,18 +88,21 @@ func (s *Server) Start(port int) error {
 	httpSrv := server.NewStreamableHTTPServer(mcpSrv, server.WithEndpointPath("/mcp"))
 
 	s.httpSrv = httpSrv
+	s.netSrv = &http.Server{Handler: httpSrv}
 	s.ln = ln
 	s.addr = addr
 	s.running = true
 	s.lastErr = nil
 
+	srv := s.netSrv
 	go func() {
-		srv := &http.Server{Handler: httpSrv}
 		err := srv.Serve(ln)
 		if err != nil && err != http.ErrServerClosed {
 			s.mu.Lock()
-			s.lastErr = err
-			s.running = false
+			if s.netSrv == srv && s.running {
+				s.lastErr = err
+				s.running = false
+			}
 			s.mu.Unlock()
 		}
 	}()
@@ -110,22 +114,28 @@ func (s *Server) Start(port int) error {
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.stopLocked()
+	return s.stopLocked(ctx)
 }
 
-func (s *Server) stopLocked() error {
+func (s *Server) stopLocked(ctx context.Context) error {
 	if !s.running {
 		return nil
 	}
 	s.running = false
 	var err error
+	if s.netSrv != nil {
+		err = s.netSrv.Shutdown(ctx)
+	}
 	if s.httpSrv != nil {
-		err = s.httpSrv.Shutdown(context.Background())
+		if shutdownErr := s.httpSrv.Shutdown(ctx); err == nil {
+			err = shutdownErr
+		}
 	}
 	if s.ln != nil {
 		_ = s.ln.Close()
 	}
 	s.httpSrv = nil
+	s.netSrv = nil
 	s.ln = nil
 	return err
 }

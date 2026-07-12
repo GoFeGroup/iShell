@@ -213,6 +213,7 @@ type ConnectRequest struct {
 	Cols             int    `json:"cols"`
 	Rows             int    `json:"rows"`
 	SkipHostKeyCheck bool   `json:"skip_host_key_check"`
+	SkipHostKeyHost  string `json:"skip_host_key_hostname"`
 }
 
 func (a *App) Connect(req ConnectRequest) (string, error) {
@@ -231,7 +232,7 @@ func (a *App) Connect(req ConnectRequest) (string, error) {
 		khPath = settings.KnownHostsPath
 		strictHK = settings.StrictHostKey
 	}
-	if req.SkipHostKeyCheck {
+	if req.SkipHostKeyCheck && req.SkipHostKeyHost == "" {
 		strictHK = false
 	}
 
@@ -241,15 +242,16 @@ func (a *App) Connect(req ConnectRequest) (string, error) {
 	}
 
 	connID, err := a.sshMgr.Connect(ssh.ConnectOptions{
-		Session:        *sess,
-		JumpSession:    jumpSess,
-		Password:       req.Password,
-		KeyPath:        req.KeyPath,
-		Passphrase:     req.Passphrase,
-		KnownHostsPath: khPath,
-		StrictHostKey:  strictHK,
-		Cols:           req.Cols,
-		Rows:           req.Rows,
+		Session:         *sess,
+		JumpSession:     jumpSess,
+		Password:        req.Password,
+		KeyPath:         req.KeyPath,
+		Passphrase:      req.Passphrase,
+		KnownHostsPath:  khPath,
+		StrictHostKey:   strictHK,
+		SkipHostKeyHost: req.SkipHostKeyHost,
+		Cols:            req.Cols,
+		Rows:            req.Rows,
 	})
 	return connID, err
 }
@@ -302,12 +304,7 @@ func (a *App) Since(connID string, offset int64) ([]byte, error) {
 
 // AcceptHostKey writes the pending host key for hostname to known_hosts.
 func (a *App) AcceptHostKey(hostname string) error {
-	settings, _ := a.store.LoadSettings()
-	khPath := ""
-	if settings != nil {
-		khPath = settings.KnownHostsPath
-	}
-	return a.sshMgr.AcceptAndStoreHostKey(hostname, khPath)
+	return a.sshMgr.AcceptAndStoreHostKey(hostname, a.knownHostsPath())
 }
 
 // CheckAgentAvailable reports whether a running SSH agent (ssh-agent via
@@ -570,10 +567,15 @@ func (a *App) transferProgressHandler(connID, action, remotePath, localPath stri
 			rec.Action = progress.Action
 		}
 		a.transfers[progress.TransferID] = rec
+		var cancel context.CancelFunc
 		if progress.Finished {
+			cancel = a.cancels[progress.TransferID]
 			delete(a.cancels, progress.TransferID)
 		}
 		a.txMu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 
 		wailsRuntime.EventsEmit(a.ctx, "sftp:progress", rec)
 	}
@@ -701,21 +703,22 @@ func (a *App) ListBuiltinToolCalls() []ai.BuiltinToolInfo {
 // ── Known hosts ───────────────────────────────────────────────────────────────
 
 func (a *App) GetKnownHosts() ([]ssh.KnownHostEntry, error) {
-	settings, _ := a.store.LoadSettings()
-	khPath := ""
-	if settings != nil {
-		khPath = settings.KnownHostsPath
-	}
-	return ssh.ListKnownHosts(khPath)
+	return ssh.ListKnownHosts(a.knownHostsPath())
 }
 
 func (a *App) RemoveKnownHost(hostname string) error {
-	settings, _ := a.store.LoadSettings()
-	khPath := ""
-	if settings != nil {
-		khPath = settings.KnownHostsPath
+	return ssh.RemoveKnownHost(a.knownHostsPath(), hostname)
+}
+
+func (a *App) knownHostsPath() string {
+	if a.store == nil {
+		return ""
 	}
-	return ssh.RemoveKnownHost(khPath, hostname)
+	settings, _ := a.store.LoadSettings()
+	if settings == nil {
+		return ""
+	}
+	return settings.KnownHostsPath
 }
 
 // ── Key validation ────────────────────────────────────────────────────────────

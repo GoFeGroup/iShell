@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	gossh "golang.org/x/crypto/ssh"
@@ -15,12 +16,14 @@ import (
 
 // TermSession wraps an interactive SSH shell session with a PTY.
 type TermSession struct {
-	connID  string
-	session *gossh.Session
-	stdin   io.WriteCloser
-	inputCh chan []byte
-	out     *termout.Emitter
-	ctx     context.Context
+	connID    string
+	session   *gossh.Session
+	stdin     io.WriteCloser
+	inputCh   chan []byte
+	out       *termout.Emitter
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
 }
 
 func zmodemInputKind(data []byte) string {
@@ -97,13 +100,15 @@ func newTermSession(ctx context.Context, connID string, client *gossh.Client, co
 		return nil, fmt.Errorf("start shell: %w", err)
 	}
 
+	sessionCtx, cancel := context.WithCancel(ctx)
 	ts := &TermSession{
 		connID:  connID,
 		session: sess,
 		stdin:   stdin,
 		inputCh: make(chan []byte, 256),
 		out:     termout.New(ctx, connID),
-		ctx:     ctx,
+		ctx:     sessionCtx,
+		cancel:  cancel,
 	}
 
 	// Single writer goroutine: guarantees FIFO order regardless of how many
@@ -123,8 +128,13 @@ func newTermSession(ctx context.Context, connID string, client *gossh.Client, co
 
 // pumpInput drains inputCh and writes to SSH stdin sequentially.
 func (ts *TermSession) pumpInput() {
-	for data := range ts.inputCh {
-		if _, err := ts.stdin.Write(data); err != nil {
+	for {
+		select {
+		case data := <-ts.inputCh:
+			if _, err := ts.stdin.Write(data); err != nil {
+				return
+			}
+		case <-ts.ctx.Done():
 			return
 		}
 	}
@@ -179,7 +189,9 @@ func (ts *TermSession) Since(offset int64) []byte {
 }
 
 func (ts *TermSession) Close() {
-	close(ts.inputCh)
-	_ = ts.stdin.Close()
-	_ = ts.session.Close()
+	ts.closeOnce.Do(func() {
+		ts.cancel()
+		_ = ts.stdin.Close()
+		_ = ts.session.Close()
+	})
 }

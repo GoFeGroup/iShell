@@ -23,16 +23,12 @@ const DEFAULT_FONT_SIZE = 16;
 const RESTORE_DELAYS = [0, 50, 150, 300];
 const INPUT_CHUNK_SIZE = 8192;
 const INPUT_YIELD_EVERY_CHUNKS = 8;
+const INPUT_MAX_RETRIES = 3;
 // Shells commonly answer an unsuccessful or ambiguous Tab completion with BEL.
 // Keep that protocol response from flashing the whole terminal. The deadline
 // allows for SSH latency while still preserving visual bells from later events.
 const TAB_BELL_SUPPRESSION_MS = 2000;
-const PERF_DEBUG = true;
 let autoFitSuspended = false;
-
-function perfLog(label, ...args) {
-  if (PERF_DEBUG) console.log('[PERF-FIT]', label, ...args);
-}
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -59,6 +55,7 @@ function makeInputSender(connID) {
   let head = 0;
   let offset = 0;
   let draining = false;
+  let retries = 0;
 
   async function drain() {
     if (draining) return;
@@ -71,6 +68,7 @@ function makeInputSender(connID) {
         const payload = text.slice(offset, end);
         try {
           await sendInput(connID, payload);
+          retries = 0;
           offset = end;
           if (offset >= text.length) {
             head += 1;
@@ -87,6 +85,13 @@ function makeInputSender(connID) {
           }
         } catch (e) {
           console.error('sendInput:', e);
+          retries += 1;
+          if (!instances[connID] || retries >= INPUT_MAX_RETRIES) {
+            queue.length = 0;
+            head = 0;
+            offset = 0;
+            return;
+          }
           await sleep(8);
         }
       }
@@ -158,13 +163,6 @@ function scheduleViewportRestore(connID, delays = RESTORE_DELAYS, snapshot = nul
   };
   inst.restoreSnapshot = restoreSnapshot;
   inst.restoreTimers = [];
-  perfLog('scheduleViewportRestore', {
-    connID,
-    delays,
-    canceled,
-    markTabSwitch,
-    snapshot: restoreSnapshot,
-  });
 
   delays.forEach(delay => {
     const run = () => {
@@ -195,7 +193,6 @@ function cancelViewportRestore(inst) {
 
 function cancelPendingFit(inst) {
   if (inst?.pendingFitRAF) {
-    perfLog('cancelPendingFit', { connID: inst.connID });
     cancelAnimationFrame(inst.pendingFitRAF);
   }
   if (inst) inst.pendingFitRAF = 0;
@@ -205,24 +202,12 @@ function scheduleTerminalFit(connID, inst, options = {}) {
   if (!inst) return;
   if (autoFitSuspended && options.caller === 'ResizeObserver') {
     inst.needsFitAfterSuspend = true;
-    perfLog('scheduleTerminalFit suspended', { connID, caller: options.caller || '' });
     return;
   }
-  const requestedAt = performance.now();
   cancelPendingFit(inst);
-  perfLog('scheduleTerminalFit', {
-    connID,
-    restoreScroll: !!options.restoreScroll,
-    caller: options.caller || '',
-  });
   inst.pendingFitRAF = requestAnimationFrame(() => {
     inst.pendingFitRAF = 0;
     if (instances[connID] !== inst) return;
-    perfLog('runTerminalFit', {
-      connID,
-      caller: options.caller || '',
-      wait: (performance.now() - requestedAt).toFixed(1) + 'ms',
-    });
     fitVisibleTerminal(connID, inst, options);
   });
 }
@@ -240,7 +225,6 @@ function visibleTerminalRect(inst) {
 function fitVisibleTerminal(connID, inst, { restoreScroll = false, snapshot = null } = {}) {
   const rect = visibleTerminalRect(inst);
   if (!rect) return false;
-  const startedAt = performance.now();
   const restoreSnapshot = restoreScroll ? (snapshot || {
     viewportY: inst.savedViewportY ?? inst.term.buffer.active.viewportY,
     baseY: inst.savedBaseY ?? inst.term.buffer.active.baseY,
@@ -257,14 +241,6 @@ function fitVisibleTerminal(connID, inst, { restoreScroll = false, snapshot = nu
   if (restoreScroll) scheduleViewportRestore(connID, RESTORE_DELAYS, restoreSnapshot);
   inst.lastFitWidth = rect.width;
   inst.lastFitHeight = rect.height;
-  perfLog('fitVisibleTerminal', {
-    connID,
-    restoreScroll,
-    resized,
-    cols: `${prevCols}->${inst.term.cols}`,
-    rows: `${prevRows}->${inst.term.rows}`,
-    cost: (performance.now() - startedAt).toFixed(1) + 'ms',
-  });
   return true;
 }
 
@@ -325,7 +301,6 @@ export function createTerminal(connID, settings, options = {}) {
         scheduleTerminalFit(connID, inst, { restoreScroll: true, snapshot: restoreSnapshot, caller: 'createTerminal-RAF' });
       } else {
         cancelPendingFit(inst);
-        perfLog('reuseMountedTerminal skip fit', { connID, containerId });
       }
       inst.containerEl = container;
       inst.containerId = containerId;
@@ -405,7 +380,6 @@ export function createTerminal(connID, settings, options = {}) {
     const inst = instances[connID];
     if (!inst?.inputEnabled) {
       if (data === '\r') {
-        console.log('[reconnect] onData Enter while disabled', { connID, hasCallback: !!inst?.reconnectCallback });
         inst?.reconnectCallback?.();
       }
       return;
@@ -779,7 +753,6 @@ export function createTerminal(connID, settings, options = {}) {
     const rect = visibleTerminalRect(inst);
     if (!rect) return;
     if (rect.width === inst.lastFitWidth && rect.height === inst.lastFitHeight) {
-      perfLog('ResizeObserver skip unchanged size', { connID, width: rect.width, height: rect.height });
       return;
     }
     const restoreSnapshot = Date.now() - (inst._lastTabSwitch ?? 0) < 500
@@ -1060,7 +1033,6 @@ export function fitTerminal(connID, { restoreScroll = false, caller = 'fitTermin
 
 export function suspendTerminalAutoFit(suspended) {
   autoFitSuspended = !!suspended;
-  perfLog('suspendTerminalAutoFit', { suspended: autoFitSuspended });
   if (autoFitSuspended) return;
   Object.entries(instances).forEach(([connID, inst]) => {
     if (!inst.needsFitAfterSuspend) return;

@@ -202,8 +202,10 @@ func TestServerStartStopStatus(t *testing.T) {
 	if err := s.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}
-	if running, _, _ := s.Status(); running {
+	if running, _, lastErr := s.Status(); running {
 		t.Fatalf("expected not running after Stop")
+	} else if lastErr != nil {
+		t.Fatalf("expected clean stop without a stale listener error, got %v", lastErr)
 	}
 }
 

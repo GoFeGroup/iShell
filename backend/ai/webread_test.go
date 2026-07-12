@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
@@ -100,6 +101,29 @@ func TestOpenURLRejectsNonPublicAddresses(t *testing.T) {
 		if err := validateOpenURLTarget(context.Background(), u); err == nil {
 			t.Fatalf("validateOpenURLTarget(%q) returned nil error", raw)
 		}
+	}
+}
+
+func TestDialPublicContextRevalidatesDNSAtDialTime(t *testing.T) {
+	originalLookup := lookupNetIP
+	t.Cleanup(func() { lookupNetIP = originalLookup })
+
+	lookupNetIP = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+	}
+	u, err := normalizeOpenURL("http://rebind.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateOpenURLTarget(context.Background(), u); err != nil {
+		t.Fatalf("initial public validation failed: %v", err)
+	}
+
+	lookupNetIP = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+	}
+	if _, err := dialPublicContext(context.Background(), "tcp", "rebind.example:80"); err == nil {
+		t.Fatal("dialPublicContext accepted a DNS-rebound loopback address")
 	}
 }
 

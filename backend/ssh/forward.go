@@ -68,6 +68,12 @@ func (m *Manager) StartForward(connID string, rule storage.PortForward) (string,
 	if conn.forwards == nil {
 		conn.forwards = make(map[string]*forwardHandle)
 	}
+	if _, exists := conn.forwards[rule.ID]; exists {
+		conn.forwardsMu.Unlock()
+		cancel()
+		listener.Close()
+		return "", fmt.Errorf("forward %s is already running", rule.ID)
+	}
 	conn.forwards[rule.ID] = handle
 	conn.forwardsMu.Unlock()
 
@@ -130,7 +136,9 @@ func (m *Manager) acceptForwardConns(ctx context.Context, conn *Conn, handle *fo
 	defer func() {
 		handle.listener.Close()
 		conn.forwardsMu.Lock()
-		delete(conn.forwards, handle.rule.ID)
+		if conn.forwards[handle.rule.ID] == handle {
+			delete(conn.forwards, handle.rule.ID)
+		}
 		conn.forwardsMu.Unlock()
 	}()
 	for {

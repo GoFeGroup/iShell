@@ -140,21 +140,26 @@ func UploadFileWithProgress(ctx context.Context, transferID string, client *sftp
 	go func() {
 		defer src.Close()
 		defer dst.Close()
-		emitProgress(ctx, onProgress, transferID, name, "upload", 0, total, 0, false, false, "")
+		var lastEmit time.Time
+		emit := func(done int64, speed float64, finished, cancelled bool, errMsg string) {
+			lastEmit = time.Now()
+			emitProgress(ctx, onProgress, transferID, name, "upload", done, total, speed, finished, cancelled, errMsg)
+		}
+		emit(0, 0, false, false, "")
 		start := time.Now()
 		var done int64
 		buf := make([]byte, 32*1024)
 		for {
 			select {
 			case <-ctx.Done():
-				emitProgress(ctx, onProgress, transferID, name, "upload", done, total, 0, true, true, "")
+				emit(done, 0, true, true, "")
 				return
 			default:
 			}
 			n, err := src.Read(buf)
 			if n > 0 {
 				if _, werr := dst.Write(buf[:n]); werr != nil {
-					emitProgress(ctx, onProgress, transferID, name, "upload", done, total, 0, true, false, werr.Error())
+					emit(done, 0, true, false, werr.Error())
 					return
 				}
 				done += int64(n)
@@ -163,17 +168,19 @@ func UploadFileWithProgress(ctx context.Context, transferID string, client *sftp
 				if elapsed > 0 {
 					speed = float64(done) / elapsed
 				}
-				emitProgress(ctx, onProgress, transferID, name, "upload", done, total, speed, false, false, "")
+				if time.Since(lastEmit) >= 200*time.Millisecond {
+					emit(done, speed, false, false, "")
+				}
 			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				emitProgress(ctx, onProgress, transferID, name, "upload", done, total, 0, true, false, err.Error())
+				emit(done, 0, true, false, err.Error())
 				return
 			}
 		}
-		emitProgress(ctx, onProgress, transferID, name, "upload", total, total, 0, true, false, "")
+		emit(total, 0, true, false, "")
 	}()
 
 	return nil
@@ -212,21 +219,26 @@ func DownloadFileWithProgress(ctx context.Context, transferID string, client *sf
 	go func() {
 		defer src.Close()
 		defer dst.Close()
-		emitProgress(ctx, onProgress, transferID, name, "download", 0, total, 0, false, false, "")
+		var lastEmit time.Time
+		emit := func(done int64, speed float64, finished, cancelled bool, errMsg string) {
+			lastEmit = time.Now()
+			emitProgress(ctx, onProgress, transferID, name, "download", done, total, speed, finished, cancelled, errMsg)
+		}
+		emit(0, 0, false, false, "")
 		start := time.Now()
 		var done int64
 		buf := make([]byte, 32*1024)
 		for {
 			select {
 			case <-ctx.Done():
-				emitProgress(ctx, onProgress, transferID, name, "download", done, total, 0, true, true, "")
+				emit(done, 0, true, true, "")
 				return
 			default:
 			}
 			n, err := src.Read(buf)
 			if n > 0 {
 				if _, werr := dst.Write(buf[:n]); werr != nil {
-					emitProgress(ctx, onProgress, transferID, name, "download", done, total, 0, true, false, werr.Error())
+					emit(done, 0, true, false, werr.Error())
 					return
 				}
 				done += int64(n)
@@ -235,17 +247,19 @@ func DownloadFileWithProgress(ctx context.Context, transferID string, client *sf
 				if elapsed > 0 {
 					speed = float64(done) / elapsed
 				}
-				emitProgress(ctx, onProgress, transferID, name, "download", done, total, speed, false, false, "")
+				if time.Since(lastEmit) >= 200*time.Millisecond {
+					emit(done, speed, false, false, "")
+				}
 			}
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				emitProgress(ctx, onProgress, transferID, name, "download", done, total, 0, true, false, err.Error())
+				emit(done, 0, true, false, err.Error())
 				return
 			}
 		}
-		emitProgress(ctx, onProgress, transferID, name, "download", total, total, 0, true, false, "")
+		emit(total, 0, true, false, "")
 	}()
 
 	return nil

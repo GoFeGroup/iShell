@@ -24,8 +24,18 @@ const (
 	maxWebReadRedirects     = 5
 )
 
+var lookupNetIP = net.DefaultResolver.LookupNetIP
+
+var webReadTransport = func() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialContext = dialPublicContext
+	return transport
+}()
+
 var webReadClient = &http.Client{
-	Timeout: 12 * time.Second,
+	Timeout:   12 * time.Second,
+	Transport: webReadTransport,
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= maxWebReadRedirects {
 			return fmt.Errorf("stopped after %d redirects", maxWebReadRedirects)
@@ -143,7 +153,7 @@ func validateOpenURLTarget(ctx context.Context, u *url.URL) error {
 	if addr, err := netip.ParseAddr(hostname); err == nil {
 		return validatePublicAddr(addr, hostname)
 	}
-	addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", hostname)
+	addrs, err := lookupNetIP(ctx, "ip", hostname)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", hostname, err)
 	}
@@ -156,6 +166,42 @@ func validateOpenURLTarget(ctx context.Context, u *url.URL) error {
 		}
 	}
 	return nil
+}
+
+func dialPublicContext(ctx context.Context, network, address string) (net.Conn, error) {
+	hostname, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("parse dial address %q: %w", address, err)
+	}
+	hostname = strings.TrimSuffix(hostname, ".")
+	var addrs []netip.Addr
+	if addr, parseErr := netip.ParseAddr(hostname); parseErr == nil {
+		addrs = []netip.Addr{addr}
+	} else {
+		addrs, err = lookupNetIP(ctx, "ip", hostname)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s: %w", hostname, err)
+		}
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("resolve %s: no addresses", hostname)
+	}
+	for _, addr := range addrs {
+		if err := validatePublicAddr(addr, hostname); err != nil {
+			return nil, err
+		}
+	}
+
+	dialer := &net.Dialer{}
+	var lastErr error
+	for _, addr := range addrs {
+		conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
+	}
+	return nil, fmt.Errorf("dial %s: %w", hostname, lastErr)
 }
 
 func validatePublicAddr(addr netip.Addr, hostname string) error {

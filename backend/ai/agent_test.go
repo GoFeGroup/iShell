@@ -843,6 +843,9 @@ func TestRunTurnOpenURLTool(t *testing.T) {
 		_, _ = w.Write([]byte(`<html><head><title>Tool Page</title></head><body><p>Readable page body.</p></body></html>`))
 	}))
 	defer pageSrv.Close()
+	origWebReadClient := webReadClient
+	webReadClient = pageSrv.Client()
+	t.Cleanup(func() { webReadClient = origWebReadClient })
 
 	args, err := json.Marshal(map[string]string{"url": pageSrv.URL})
 	if err != nil {

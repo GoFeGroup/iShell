@@ -2,6 +2,9 @@ package ssh
 
 import (
 	"bufio"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -121,10 +124,40 @@ func RemoveKnownHost(khPath, hostname string) error {
 	}
 	var kept []string
 	for _, line := range strings.Split(string(data), "\n") {
-		if !strings.HasPrefix(strings.TrimSpace(line), hostname) {
+		if !knownHostsLineMatches(line, hostname) {
 			kept = append(kept, line)
 		}
 	}
 	return os.WriteFile(khPath, []byte(strings.Join(kept, "\n")), 0600)
 }
 
+func knownHostsLineMatches(line, hostname string) bool {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) < 1 || strings.HasPrefix(fields[0], "#") {
+		return false
+	}
+	for _, pattern := range strings.Split(fields[0], ",") {
+		if pattern == hostname || hashedHostnameMatches(pattern, hostname) {
+			return true
+		}
+	}
+	return false
+}
+
+func hashedHostnameMatches(pattern, hostname string) bool {
+	parts := strings.Split(pattern, "|")
+	if len(parts) != 4 || parts[0] != "" || parts[1] != "1" {
+		return false
+	}
+	salt, err := base64.StdEncoding.DecodeString(parts[2])
+	if err != nil {
+		return false
+	}
+	want, err := base64.StdEncoding.DecodeString(parts[3])
+	if err != nil {
+		return false
+	}
+	h := hmac.New(sha1.New, salt)
+	_, _ = h.Write([]byte(hostname))
+	return hmac.Equal(h.Sum(nil), want)
+}

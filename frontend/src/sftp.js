@@ -604,12 +604,22 @@ function setBreadcrumb(pane, path) {
   if (!el) return;
   const normalized = (path || '/').replace(/\\/g,'/');
   const parts = normalized.split('/').filter(Boolean);
-  const root = `<span class="breadcrumb-seg" onclick="window._sftp.navTo('${pane}','/')">/</span>`;
-  const rest = parts.map((p, i) => {
-    const sub = '/' + parts.slice(0, i+1).join('/');
-    return `<span class="breadcrumb-seg" onclick="window._sftp.navTo('${pane}','${escAttr(sub)}')">${escHtml(p)}</span><span class="breadcrumb-sep">/</span>`;
-  }).join('');
-  el.innerHTML = root + rest;
+  el.replaceChildren();
+  const addSegment = (label, target) => {
+    const segment = document.createElement('span');
+    segment.className = 'breadcrumb-seg';
+    segment.textContent = label;
+    segment.addEventListener('click', () => window._sftp.navTo(pane, target));
+    el.appendChild(segment);
+  };
+  addSegment('/', '/');
+  parts.forEach((part, i) => {
+    addSegment(part, '/' + parts.slice(0, i + 1).join('/'));
+    const separator = document.createElement('span');
+    separator.className = 'breadcrumb-sep';
+    separator.textContent = '/';
+    el.appendChild(separator);
+  });
 }
 window._sftp.navTo = (pane, path) => {
   if (pane === 'local') { localPath = path; saveCurrentState(); loadLocal(); }
