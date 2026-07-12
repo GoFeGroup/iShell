@@ -209,6 +209,18 @@ test('receiver completes ZFIN/OO handshake and releases terminal input', async (
     assert.ok(sent.some(bytes => containsRawHeaderPrefix(bytes)), 'expected a ZFIN response to the peer');
     assert.deepEqual(writes.at(-1), Array.from(encoder.encode('$ ')));
 });
+test('receiver accepts OO split across terminal data events', async () => {
+    const { sentry, active } = createHarness();
+    sentry.consume(toBase64(HEADER));
+
+    const zfin = new Uint8Array(Zmodem.Header.build('ZFIN').to_hex());
+    sentry.consume(toBase64(zfin));
+    sentry.consume(toBase64(new Uint8Array([0x4f])));
+    sentry.consume(toBase64(new Uint8Array([0x4f])));
+    await flushPromises();
+
+    assert.equal(active.at(-1), false);
+});
 test('receiver tolerates a peer that omits OO and prints the shell prompt after ZFIN', async () => {
     const { sentry, writes, active } = createHarness();
     sentry.consume(toBase64(HEADER));
@@ -221,4 +233,71 @@ test('receiver tolerates a peer that omits OO and prints the shell prompt after 
 
     assert.equal(active.at(-1), false);
     assert.deepEqual(writes.at(-1), Array.from(prompt));
+});
+test('receiver retries ZFIN and finishes when the peer omits OO and prompt output', async () => {
+    const { sentry, sent, active } = createHarness();
+    sentry.consume(toBase64(HEADER));
+    await flushPromises();
+
+    const zfin = new Uint8Array(Zmodem.Header.build('ZFIN').to_hex());
+    sentry.consume(toBase64(zfin));
+    await new Promise(resolve => setTimeout(resolve, 2100));
+
+    const zfinWrites = sent.filter(bytes => containsRawHeaderPrefix(bytes));
+    assert.ok(zfinWrites.length >= 3, `expected initial ZRINIT, ZFIN response and retry: ${JSON.stringify(sent)}`);
+    assert.equal(active.at(-1), false);
+});
+
+test('receiver saves two sequential sz offers and the batch exits normally', async () => {
+    const opened = [];
+    const saved = new Map();
+    window.go.backend.App.OpenZmodemFile = async name => {
+        opened.push(name);
+        saved.set(name, []);
+        return name;
+    };
+    window.go.backend.App.WriteZmodemFileChunk = async (handle, b64) => {
+        saved.get(handle).push(...Buffer.from(b64, 'base64'));
+    };
+    window.go.backend.App.CloseZmodemFile = async handle => `C:/Downloads/${handle}`;
+    window.go.backend.App.AbortZmodemFile = async () => {};
+
+    let receiver;
+    let senderRun;
+    const senderSentry = new Zmodem.Sentry({
+        to_terminal() {},
+        sender(octets) { receiver.consume(toBase64(octets)); },
+        on_retract() {},
+        on_detect(detection) {
+            const session = detection.confirm();
+            senderRun = (async () => {
+                for (const [name, text] of [['one.txt', 'one'], ['two.txt', 'two']]) {
+                    const bytes = encoder.encode(text);
+                    const transfer = await session.send_offer({ name, size: bytes.length });
+                    assert.ok(transfer, `receiver skipped ${name}`);
+                    await transfer.end(bytes);
+                }
+                await session.close();
+            })();
+        },
+    });
+
+    const active = [];
+    receiver = createZmodemSentry(
+        'test-conn',
+        { write() {} },
+        value => active.push(value),
+        async (_connID, b64) => senderSentry.consume(Array.from(Buffer.from(b64, 'base64'))),
+    );
+    receiver.consume(toBase64(HEADER));
+
+    for (let i = 0; i < 20 && !senderRun; i++) await flushPromises();
+    assert.ok(senderRun, 'sender session was not detected');
+    await senderRun;
+    await flushPromises();
+
+    assert.deepEqual(opened, ['one.txt', 'two.txt']);
+    assert.equal(Buffer.from(saved.get('one.txt')).toString(), 'one');
+    assert.equal(Buffer.from(saved.get('two.txt')).toString(), 'two');
+    assert.equal(active.at(-1), false);
 });

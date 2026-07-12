@@ -106,6 +106,9 @@ function sleep(ms) {
 const ZMODEM_ABORT_DRAIN_MS = 2500;
 const ZMODEM_ABORT_DRAIN_MAX_MS = 8000;
 const ZMODEM_ABORT_INTERRUPT_DELAY_MS = 150;
+const ZMODEM_FIN_RETRY_MS = 500;
+const ZMODEM_FIN_GRACE_MS = 2000;
+const ZMODEM_SESSION_IDLE_TIMEOUT_MS = 120_000;
 const UPLOAD_CHUNK_SIZE = 8192;
 const ZMODEM_YIELD_EVERY_CHUNKS = 16;
 // Batch size for both directions' chunked file IPC (save/read), matching the
@@ -141,6 +144,8 @@ export function createZmodemSentry(connID, term, onActive, sendBytes = sendInput
     // null outside the final receive handshake; [] while waiting for OO.
     // Some lrzsz/PTY combinations omit OO and print the shell prompt directly.
     let pendingReceiveOO = null;
+    let receiveFinRetryTimer = null;
+    let receiveFinGraceTimer = null;
     const terminalOutput = createZmodemHeaderFilter();
 
     const isDrainingTerminal = () => Date.now() < drainTerminalUntil;
@@ -174,6 +179,15 @@ export function createZmodemSentry(connID, term, onActive, sendBytes = sendInput
 
     const finishSession = (session) => {
         if (session && currentSession !== session) return;
+        if (receiveFinRetryTimer !== null) {
+            clearTimeout(receiveFinRetryTimer);
+            receiveFinRetryTimer = null;
+        }
+        if (receiveFinGraceTimer !== null) {
+            clearTimeout(receiveFinGraceTimer);
+            receiveFinGraceTimer = null;
+        }
+        pendingReceiveOO = null;
         currentSession = null;
         sessionActive = false;
         // Clear any stuck partial-header state so the shell's next prompt
@@ -271,7 +285,27 @@ export function createZmodemSentry(connID, term, onActive, sendBytes = sendInput
                     finishSession(zsession);
                 });
                 zsession.on('receive', frame => {
-                    if (zsession.type === 'receive' && frame?.NAME === 'ZFIN') pendingReceiveOO = [];
+                    if (zsession.type !== 'receive' || frame?.NAME !== 'ZFIN') return;
+                    pendingReceiveOO = [];
+
+                    // zmodem.js sends the matching ZFIN once and then waits
+                    // indefinitely for OO. If that final response is lost, both
+                    // lrzsz's `sz` and this terminal remain stuck even though all
+                    // files are complete. Retry once, then finish locally for
+                    // peers that omit OO entirely.
+                    const zfinResponse = Zmodem.Header.build('ZFIN').to_hex();
+                    receiveFinRetryTimer = setTimeout(() => {
+                        receiveFinRetryTimer = null;
+                        if (currentSession === zsession && pendingReceiveOO) {
+                            queuePeerBytes(zfinResponse);
+                        }
+                    }, ZMODEM_FIN_RETRY_MS);
+                    receiveFinGraceTimer = setTimeout(() => {
+                        receiveFinGraceTimer = null;
+                        if (currentSession !== zsession || !pendingReceiveOO) return;
+                        try { zsession.consume([0x4f, 0x4f]); }
+                        catch { finishSession(zsession); }
+                    }, ZMODEM_FIN_GRACE_MS);
                 });
                 runSession(connID, zsession)
                     .catch(e => {
@@ -461,17 +495,25 @@ async function receiveFiles(zsession) {
         transferPromises.push(p);
     });
 
-    // Wait for session to end, with a 2-minute safety timeout.
+    // Wait for session to end, with a 2-minute inactivity timeout. A batch may
+    // legitimately take longer, so protocol frames and offers refresh it.
     // Register this before start(): a fast local/SSH peer may complete the
     // final handshake before a later listener could observe it.
-    const SESSION_TIMEOUT_MS = 120_000;
     const sessionEnd = new Promise(resolve => zsession.on('session_end', resolve));
     let timeoutID;
+    let rejectTimeout;
     const timeout = new Promise((_, reject) => {
-        timeoutID = setTimeout(() => reject(new Error('timeout')), SESSION_TIMEOUT_MS);
+        rejectTimeout = reject;
     });
+    const refreshTimeout = () => {
+        clearTimeout(timeoutID);
+        timeoutID = setTimeout(() => rejectTimeout(new Error('timeout')), ZMODEM_SESSION_IDLE_TIMEOUT_MS);
+    };
+    zsession.on('receive', refreshTimeout);
+    zsession.on('offer', refreshTimeout);
 
     // start() sends ZRINIT to the server, initiating the transfer handshake.
+    refreshTimeout();
     zsession.start();
 
     try {
