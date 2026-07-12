@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { sendInput, resizeTerm, on, off } from './api.js';
 import { findQuickCommandByShortcut } from './quick-command.js';
 import { createZmodemSentry } from './zmodem.js';
+import { buildTerminalOptions } from './terminal-options.mjs';
 import { t } from './i18n.js';
 
 const isMac = navigator.platform.startsWith('Mac');
@@ -362,20 +363,14 @@ export function createTerminal(connID, settings, options = {}) {
   // Menlo/Monaco are pre-installed on every Mac and are proper ASCII-width monospace fonts.
   // Listing them before the generic `monospace` prevents xterm from falling back to a
   // CJK full-width font (e.g. STFangsong) on Chinese macOS, which makes cell width 2x.
-  const term = new Terminal({
-    fontSize: resolvedSize,
+  const term = new Terminal(buildTerminalOptions({
+    connID,
+    platform: navigator.platform,
     fontFamily: resolvedFont,
-    letterSpacing: 0,
-    cursorBlink: settings?.cursor_blink !== false,
-    cursorStyle: settings?.cursor_style || 'block',
-    scrollback: settings?.scrollback || 10000,
+    fontSize: resolvedSize,
     theme: buildTheme(settings?.color_scheme),
-    allowTransparency: false,
-    convertEol: true,
-    // Required by @xterm/addon-search's match-highlight decorations, which
-    // call the still-proposed Terminal.registerDecoration API.
-    allowProposedApi: true,
-  });
+    settings,
+  }));
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
