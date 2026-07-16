@@ -123,12 +123,19 @@ func (s *Server) stopLocked(ctx context.Context) error {
 	}
 	s.running = false
 	var err error
-	if s.netSrv != nil {
-		err = s.netSrv.Shutdown(ctx)
-	}
 	if s.httpSrv != nil {
-		if shutdownErr := s.httpSrv.Shutdown(ctx); err == nil {
-			err = shutdownErr
+		// Only cancels the session sweeper and (if set) shuts down an
+		// internally-owned http.Server, which we never use — see netSrv below.
+		err = s.httpSrv.Shutdown(ctx)
+	}
+	if s.netSrv != nil {
+		// Close, not Shutdown: an MCP client (e.g. a connected claude/codex CLI
+		// session) holds a long-lived Streamable HTTP connection that never goes
+		// idle on its own, so a graceful Shutdown would hang until forced by a
+		// timeout. Stop is always followed by process exit or a port change, so
+		// there is nothing to gain from waiting — close everything immediately.
+		if closeErr := s.netSrv.Close(); err == nil {
+			err = closeErr
 		}
 	}
 	if s.ln != nil {
