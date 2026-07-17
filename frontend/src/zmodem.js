@@ -177,6 +177,12 @@ export function createZmodemSentry(connID, term, onActive, sendBytes = sendInput
             });
     };
 
+    // zmodem.js deliberately exposes a fire-and-forget sender.  That is a
+    // good fit for a WebSocket, but each frame here crosses Wails IPC and is
+    // then queued for the SSH PTY.  Bound the number of outstanding frames so
+    // a large `rz` upload cannot run far ahead of the remote receiver.
+    const flushPeerBytes = () => senderQueue;
+
     const finishSession = (session) => {
         if (session && currentSession !== session) return;
         if (receiveFinRetryTimer !== null) {
@@ -307,7 +313,7 @@ export function createZmodemSentry(connID, term, onActive, sendBytes = sendInput
                         catch { finishSession(zsession); }
                     }, ZMODEM_FIN_GRACE_MS);
                 });
-                runSession(connID, zsession)
+                runSession(connID, zsession, flushPeerBytes)
                     .catch(e => {
                         const msg = String(e?.message ?? e);
                         if (!msg.includes('aborted') && !msg.includes('peer_aborted') && !msg.includes('timeout')) {
@@ -413,11 +419,11 @@ export function createZmodemSentry(connID, term, onActive, sendBytes = sendInput
     return { consume, abort: abortSession };
 }
 
-async function runSession(connID, zsession) {
+async function runSession(connID, zsession, flushPeerBytes = async () => {}) {
     if (zsession.type === 'receive') {
         await receiveFiles(zsession);
     } else {
-        await sendFiles(connID, zsession);
+        await sendFiles(connID, zsession, flushPeerBytes);
     }
 }
 
@@ -535,7 +541,7 @@ async function receiveFiles(zsession) {
 }
 
 // rz on server → we send files
-async function sendFiles(connID, zsession) {
+async function sendFiles(connID, zsession, flushPeerBytes) {
     showToast(t('zmodem.selectFiles'));
 
     let files;
@@ -570,6 +576,10 @@ async function sendFiles(connID, zsession) {
         // comes from changed.
         const handle = await openZmodemUploadFile(file.path);
         try {
+            // A receiver may request a non-zero ZRPOS when it is resuming a
+            // partial transfer.  The protocol frame already starts at that
+            // offset; seek the local source to keep its payload aligned.
+            let skip = xfer.get_offset();
             let chunks = 0;
             let eof = false;
             while (!eof) {
@@ -577,14 +587,25 @@ async function sendFiles(connID, zsession) {
                 const res = await readZmodemFileChunk(handle);
                 eof = res.eof;
                 const bytes = Uint8Array.from(atob(res.chunk || ''), c => c.charCodeAt(0));
-                for (let i = 0; i < bytes.length; i += UPLOAD_CHUNK_SIZE) {
+                let start = 0;
+                if (skip > 0) {
+                    const skipped = Math.min(skip, bytes.length);
+                    skip -= skipped;
+                    start = skipped;
+                }
+                for (let i = start; i < bytes.length; i += UPLOAD_CHUNK_SIZE) {
                     if (zsession.aborted?.()) throw new Zmodem.Error('aborted');
                     xfer.send(bytes.subarray(i, Math.min(i + UPLOAD_CHUNK_SIZE, bytes.length)));
                     updateZmodemProgress(xfer.get_offset());
                     chunks++;
-                    if (chunks % ZMODEM_YIELD_EVERY_CHUNKS === 0) await sleep(0);
+                    if (chunks % ZMODEM_YIELD_EVERY_CHUNKS === 0) {
+                        await flushPeerBytes();
+                        await sleep(0);
+                    }
                 }
             }
+            if (skip > 0) throw new Error('Zmodem resume offset exceeds local file size');
+            await flushPeerBytes();
         } finally {
             try { await closeZmodemUploadFile(handle); } catch {}
         }

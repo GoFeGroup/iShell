@@ -9,6 +9,7 @@ globalThis.document = {
     getElementById: () => null,
     documentElement: { setAttribute: () => {} },
 };
+globalThis.navigator = { language: 'en-US' };
 globalThis.window = { go: { backend: { App: { SendInputBytes: async () => {} } } } };
 
 const { createZmodemSentry } = await import('./zmodem.js');
