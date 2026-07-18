@@ -59,6 +59,7 @@ Useful checks:
 
 ```bash
 go test ./...
+cd frontend && npm test
 cd frontend && npm run build
 ```
 

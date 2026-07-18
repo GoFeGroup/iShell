@@ -158,12 +158,15 @@ func (a *App) Shutdown(ctx context.Context) {
 }
 
 func dataDir() string {
+	// APPDATA is Windows' native data-dir env var, but it also doubles as
+	// this app's cross-platform test-isolation override (see
+	// TestAppMCPServerLifecycle) — honor it before the OS-specific defaults
+	// so tests never fall through to the real user profile on macOS/Linux.
+	if d := os.Getenv("APPDATA"); d != "" {
+		return filepath.Join(d, "iShell")
+	}
 	home, _ := os.UserHomeDir()
 	switch runtime.GOOS {
-	case "windows":
-		if d := os.Getenv("APPDATA"); d != "" {
-			return filepath.Join(d, "iShell")
-		}
 	case "darwin":
 		return filepath.Join(home, "Library", "Application Support", "iShell")
 	}

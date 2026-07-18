@@ -14,6 +14,7 @@ iShell is a Wails desktop app with a Go backend and Vite frontend. Root Go entry
 - `cd frontend && npm run dev`: run the Vite frontend only.
 - `cd frontend && npm run build`: produce assets for Wails embedding.
 - `go test ./...`: run all Go package tests.
+- `cd frontend && npm test`: run frontend tests (`node --test src/*.test.mjs`).
 
 Install frontend dependencies with `cd frontend && npm install`; Wails also runs this via `frontend:install`.
 
@@ -23,7 +24,9 @@ Use `gofmt` for Go files and idiomatic package names such as `ssh` and `storage`
 
 ## Testing Guidelines
 
-There are no committed test files. Add Go tests as `*_test.go` beside the package under test, and prefer table-driven tests for storage, key handling, and path logic. Run `go test ./...` before backend changes. For frontend changes, run `cd frontend && npm run build` to catch import and bundling errors.
+Go tests live as `*_test.go` beside the package under test (`backend/ssh`, `backend/storage`, `backend/ai`, `backend/mcpserver`, `backend/local`, `backend/termout`, and the top-level `backend` package); prefer table-driven tests for storage, key handling, and path logic. Run `go test ./...` before backend changes. Tests that construct a real `*App` and call `Startup` must sandbox it with `t.Setenv("APPDATA", t.TempDir())` — `dataDir()` honors `APPDATA` as a cross-platform override, not just on Windows — otherwise they touch the real user profile.
+
+Frontend tests live as `*.test.mjs` beside the module under test (e.g. `zmodem-protocol.test.mjs`, `i18n.test.mjs`) and run via Node's built-in test runner (`cd frontend && npm test`), no framework or jsdom dependency. Favor modules with logic that's separable from DOM wiring; where a module touches `window`/`document`/`navigator`/`localStorage` at import time, stub those globals with `globalThis.x = ...` before a *dynamic* `import()` of the module — a static `import` is hoisted above the stubs and will crash. For frontend UI changes with no unit-testable logic, run `cd frontend && npm run build` to catch import and bundling errors.
 
 ## Commit & Pull Request Guidelines
 

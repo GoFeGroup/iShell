@@ -14,7 +14,8 @@ make build-windows-installer  # Windows NSIS installer (requires: brew install n
 make clean
 
 go test ./...             # run all Go tests
-cd frontend && npm run build   # check frontend bundling errors (no test runner)
+cd frontend && npm test        # run frontend tests (node --test src/*.test.mjs)
+cd frontend && npm run build   # check frontend bundling errors
 ```
 
 ## Architecture
@@ -75,6 +76,8 @@ Every exported method on `App` in `app.go` is callable from JS as `window.go.mai
 | macOS | `~/Library/Application Support/iShell` |
 | Windows | `%APPDATA%\iShell` |
 | Linux | `$XDG_CONFIG_HOME/ishell` or `~/.config/ishell` |
+
+`dataDir()` in `app.go` checks the `APPDATA` env var *before* the OS switch, on every platform, not just Windows. This is what lets tests sandbox `App.Startup` away from the real user profile via `t.Setenv("APPDATA", t.TempDir())` regardless of the host OS (see `backend/mcpserver_app_test.go`) — if that check is ever moved back inside the `windows` case, those tests silently fall through to the real `~/Library/Application Support/iShell` / `~/.config/ishell` on macOS/Linux instead of a temp dir.
 
 ### Wails fullscreen API
 
