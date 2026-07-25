@@ -43,6 +43,20 @@ type App struct {
 	// share one map since handles are unique regardless of direction.
 	zmodemFiles map[string]*os.File
 	zmodemMu    sync.Mutex
+
+	// connOrder tracks every currently open terminal's connID in the order it
+	// was opened (SSH and local shells interleaved). Both ssh.Manager and
+	// local.Manager key their connections by a Go map (map[string]*Conn /
+	// map[string]*session), and Go deliberately randomizes map iteration
+	// order on every run — so ranging over those maps directly (as the old
+	// App.ListTerminals implementation did) returns a different, arbitrary
+	// terminal order on every call. connOrder is the single source of truth
+	// for "the current terminal order" as seen by MCP's list_terminals tool,
+	// independent of either manager's internal map layout. It is appended to
+	// in Connect/ConnectLocal and pruned in Disconnect — see
+	// appendConnOrder/removeConnOrder below.
+	connOrderMu sync.Mutex
+	connOrder   []string
 }
 
 type TransferRecord struct {
@@ -256,18 +270,60 @@ func (a *App) Connect(req ConnectRequest) (string, error) {
 		Cols:            req.Cols,
 		Rows:            req.Rows,
 	})
+	if err == nil {
+		// Record this connID's position in the global open-order list. This
+		// must happen here (not inside ssh.Manager) so that SSH and local
+		// terminals share one chronological sequence — see connOrder's
+		// doc comment on the App struct.
+		a.appendConnOrder(connID)
+	}
 	return connID, err
 }
 
 func (a *App) ConnectLocal(cols, rows int) (string, error) {
-	return a.localMgr.Connect(cols, rows)
+	connID, err := a.localMgr.Connect(cols, rows)
+	if err == nil {
+		a.appendConnOrder(connID)
+	}
+	return connID, err
 }
 
 func (a *App) Disconnect(connID string) error {
+	var err error
 	if a.localMgr.Has(connID) {
-		return a.localMgr.Disconnect(connID)
+		err = a.localMgr.Disconnect(connID)
+	} else {
+		err = a.sshMgr.Disconnect(connID)
 	}
-	return a.sshMgr.Disconnect(connID)
+	if err == nil {
+		// Only drop connID from the order list once the underlying manager
+		// confirms it's actually gone, so a failed Disconnect (e.g. unknown
+		// connID) can't desync connOrder from the managers' real state.
+		a.removeConnOrder(connID)
+	}
+	return err
+}
+
+// appendConnOrder records connID as the most-recently-opened terminal.
+// Called once, right after a successful Connect/ConnectLocal.
+func (a *App) appendConnOrder(connID string) {
+	a.connOrderMu.Lock()
+	a.connOrder = append(a.connOrder, connID)
+	a.connOrderMu.Unlock()
+}
+
+// removeConnOrder drops connID from the open-order list after it has been
+// disconnected. connOrder is small (one entry per open terminal tab), so a
+// linear scan here is simpler than a parallel index map and cheap in practice.
+func (a *App) removeConnOrder(connID string) {
+	a.connOrderMu.Lock()
+	for i, id := range a.connOrder {
+		if id == connID {
+			a.connOrder = append(a.connOrder[:i], a.connOrder[i+1:]...)
+			break
+		}
+	}
+	a.connOrderMu.Unlock()
 }
 
 func (a *App) GetActiveConnections() map[string]string {
@@ -676,9 +732,36 @@ func (a *App) GetMCPServerStatus() MCPServerStatus {
 // ListTerminals returns every currently open terminal tab (SSH connections
 // and local shells), for the MCP list_terminals tool and any future
 // terminal-picker UI.
+//
+// The result must be in a stable, deterministic order that matches how the
+// terminals were actually opened (matching the frontend's tab order), so it
+// walks connOrder rather than ranging over either manager's internal map —
+// see connOrder's doc comment on the App struct for why that distinction
+// matters.
 func (a *App) ListTerminals() []mcpserver.TerminalInfo {
 	out := make([]mcpserver.TerminalInfo, 0)
-	for connID, sessionID := range a.sshMgr.ListActive() {
+
+	// sshMgr.ListActive() is only used here as a connID -> sessionID lookup
+	// table (map key access, not iteration), so its own unordered-ness is
+	// irrelevant: the actual output order comes entirely from connOrder below.
+	activeSSH := a.sshMgr.ListActive()
+
+	a.connOrderMu.Lock()
+	order := append([]string(nil), a.connOrder...)
+	a.connOrderMu.Unlock()
+
+	for _, connID := range order {
+		if a.localMgr.Has(connID) {
+			out = append(out, mcpserver.TerminalInfo{ConnID: connID, Label: "Local Shell", Kind: "local"})
+			continue
+		}
+		sessionID, ok := activeSSH[connID]
+		if !ok {
+			// connID was disconnected between the connOrder snapshot above and
+			// this lookup (a benign race with a concurrent Disconnect call) —
+			// skip it rather than emit a half-populated entry.
+			continue
+		}
 		info := mcpserver.TerminalInfo{ConnID: connID, Kind: "ssh"}
 		if a.store != nil {
 			if sess, err := a.store.GetSession(sessionID); err == nil && sess != nil {
@@ -690,9 +773,6 @@ func (a *App) ListTerminals() []mcpserver.TerminalInfo {
 			info.Label = connID
 		}
 		out = append(out, info)
-	}
-	for _, connID := range a.localMgr.ListActive() {
-		out = append(out, mcpserver.TerminalInfo{ConnID: connID, Label: "Local Shell", Kind: "local"})
 	}
 	return out
 }

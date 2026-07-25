@@ -4,6 +4,7 @@ import { shortcutLabelForIndex } from './quick-command.js';
 import { loadProfiles } from './sidebar.js';
 import { t, setLanguage, getLanguagePref, LANGUAGE_OPTIONS } from './i18n.js';
 import { confirmDialog } from './confirm-dialog.js';
+import { buildMCPClientCommands, renderMCPCommandHTML } from './mcp-client-commands.js';
 
 export async function initSettings(initialPage = 'appearance') {
   const panel = document.getElementById('panel-settings');
@@ -201,19 +202,32 @@ export async function initSettings(initialPage = 'appearance') {
     <!-- AI - MCP Server -->
     <div class="settings-page" id="sp-ai-mcp">
       <div class="settings-page-title">${t('settings.nav.aiMcp')}</div>
-      <div class="settings-section">
+      <div class="mcp-server-card">
+        <div class="mcp-card-heading">
+          <div>
+            <div class="mcp-card-title">${t('settings.ai.mcpServerConfig')}</div>
+            <div class="mcp-status-summary" aria-live="polite">
+              <span class="mcp-status-badge" id="mcp-status-badge"></span>
+              <span class="mcp-status-detail" id="mcp-status"></span>
+            </div>
+          </div>
+        </div>
         <div class="settings-row">
-          <div><div class="settings-row-label">${t('settings.ai.mcpEnabled')}</div><div class="settings-row-desc">${t('settings.ai.mcpEnabledDesc')}</div></div>
+          <div class="settings-row-label">${t('settings.ai.mcpEnabled')}</div>
           <div class="settings-row-control"><div class="toggle-switch ${settings.mcp_server_enabled?'on':''}" id="st-mcp-enabled"></div></div>
         </div>
         <div class="settings-row">
           <div class="settings-row-label">${t('settings.ai.mcpPort')}</div>
-          <div class="settings-row-control"><input class="input" type="number" id="st-mcp-port" value="${settings.mcp_server_port || 7378}" style="width:100px;" /></div>
+          <div class="settings-row-control"><input class="input mcp-port-input" type="number" id="st-mcp-port" value="${settings.mcp_server_port || 7378}" /></div>
         </div>
-        <div class="settings-row-desc" id="mcp-status" style="margin:6px 0 10px;"></div>
+        <div class="mcp-security-notice">
+          <div class="mcp-security-title">⚠ ${t('settings.ai.mcpSecurityTitle')}</div>
+          <div class="settings-row-desc">${t('settings.ai.mcpEnabledDesc')}</div>
+        </div>
       </div>
       <div class="settings-section">
-        <div class="settings-section-title">${t('settings.ai.mcpConnectHelp')}</div>
+        <div class="settings-section-title">${t('settings.ai.mcpClientCommands')}</div>
+        <div class="mcp-connect-hint" id="mcp-connect-hint"></div>
         <div id="mcp-connect-commands"></div>
       </div>
     </div>
@@ -409,33 +423,48 @@ export async function initSettings(initialPage = 'appearance') {
 
   function renderMCPStatus(st) {
     const statusEl = document.getElementById('mcp-status');
+    const statusBadge = document.getElementById('mcp-status-badge');
     if (statusEl) {
       if (st.running) {
         statusEl.textContent = `${t('settings.ai.mcpStatusRunning')} ${st.addr}`;
-        statusEl.style.color = 'var(--green)';
+        statusBadge.textContent = t('settings.ai.mcpStatusEnabled');
+        statusBadge.className = 'mcp-status-badge running';
+      } else if (st.error) {
+        statusEl.textContent = st.error;
+        statusBadge.textContent = t('settings.ai.mcpStatusError');
+        statusBadge.className = 'mcp-status-badge error';
       } else {
-        statusEl.textContent = st.error ? `${t('settings.ai.mcpStatusStopped')} — ${st.error}` : t('settings.ai.mcpStatusStopped');
-        statusEl.style.color = 'var(--text-muted)';
+        statusEl.textContent = current.mcp_server_enabled ? t('settings.ai.mcpStatusStopped') : t('settings.ai.mcpStatusDisabled');
+        statusBadge.textContent = current.mcp_server_enabled ? t('settings.ai.mcpStatusStopped') : t('settings.ai.mcpStatusDisabled');
+        statusBadge.className = 'mcp-status-badge stopped';
       }
     }
+    const hint = document.getElementById('mcp-connect-hint');
+    if (hint) {
+      hint.textContent = st.running ? t('settings.ai.mcpConnectHelp') : t('settings.ai.mcpUnavailableHint');
+      hint.classList.toggle('unavailable', !st.running);
+    }
     const port = current.mcp_server_port || 7378;
-    const commands = [
-      `claude mcp add --transport http ishell http://127.0.0.1:${port}/mcp`,
-      `codex mcp add ishell --url http://127.0.0.1:${port}/mcp`,
-    ];
+    const clients = buildMCPClientCommands(port);
+    const copyLabel = t('settings.ai.mcpCopy');
     const box = document.getElementById('mcp-connect-commands');
     if (box) {
-      box.innerHTML = commands.map(cmd => `
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <code style="flex:1;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;overflow-x:auto;white-space:nowrap;">${esc(cmd)}</code>
-          <button class="btn btn-secondary btn-sm mcp-copy-btn" data-cmd="${esc(cmd)}" type="button">${t('settings.ai.mcpCopy')}</button>
-        </div>`).join('');
+      box.innerHTML = `<div class="mcp-client-grid">${clients.map(client => `
+        <section class="mcp-client-card">
+          <div class="mcp-client-name">${client.name}</div>
+          ${renderMCPCommandHTML(t('settings.ai.mcpAddCommand'), client.add, copyLabel)}
+          ${renderMCPCommandHTML(t('settings.ai.mcpRemoveCommand'), client.remove, copyLabel)}
+        </section>`).join('')}</div>`;
       box.querySelectorAll('.mcp-copy-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
-          await navigator.clipboard.writeText(btn.dataset.cmd);
-          const orig = btn.textContent;
-          btn.textContent = t('settings.ai.mcpCopied');
-          setTimeout(() => { btn.textContent = orig; }, 1200);
+          try {
+            await navigator.clipboard.writeText(btn.dataset.cmd);
+            const orig = btn.textContent;
+            btn.textContent = t('settings.ai.mcpCopied');
+            setTimeout(() => { btn.textContent = orig; }, 1200);
+          } catch {
+            showToast(t('settings.ai.mcpCopyFailed'));
+          }
         });
       });
     }

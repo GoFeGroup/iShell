@@ -846,6 +846,9 @@ class AISidebarInstance {
       }
       this.chatsForTarget = [sess, ...this.chatsForTarget];
       await this.openChat(sess.id);
+      // Creating a chat is an explicit compose action, so leave the cursor
+      // ready in its input once the new chat view has finished rendering.
+      this.focusInput();
     } catch (e) {
       showToast('❌ ' + e);
     }

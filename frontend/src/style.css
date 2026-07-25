@@ -317,6 +317,29 @@ kbd{padding:2px 6px;background:var(--bg-elevated);border:1px solid var(--border)
 .settings-row:last-child{border-bottom:none;}
 .settings-row-label{font-size:13px;} .settings-row-desc{font-size:11px;color:var(--text-muted);margin-top:2px;}
 .settings-row-control{flex-shrink:0;min-width:140px;text-align:right;}
+.mcp-server-card{margin-bottom:24px;padding:16px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-surface);box-shadow:var(--shadow-sm);}
+.mcp-card-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:6px;}
+.mcp-card-title{font-size:14px;font-weight:600;}
+.mcp-status-summary{display:flex;align-items:center;gap:7px;margin-top:6px;min-height:20px;font-size:11px;color:var(--text-muted);}
+.mcp-status-badge{display:inline-flex;align-items:center;flex-shrink:0;border-radius:999px;padding:2px 7px;font-size:10px;font-weight:600;line-height:1.35;background:var(--bg-elevated);color:var(--text-muted);}
+.mcp-status-badge.running{background:var(--green-dim);color:var(--green);}
+.mcp-status-badge.error{background:var(--red-dim);color:var(--red);}
+.mcp-status-detail{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);}
+.mcp-port-input{width:100px;}
+.mcp-security-notice{margin-top:14px;padding:10px 12px;border:1px solid rgba(249,226,175,.28);border-radius:var(--radius-sm);background:var(--yellow-dim);}
+.mcp-security-title{font-size:12px;font-weight:600;color:var(--yellow);}
+.mcp-security-notice .settings-row-desc{margin-top:3px;color:var(--text-secondary);line-height:1.45;}
+.mcp-connect-hint{margin:-4px 0 12px;font-size:12px;color:var(--text-muted);}
+.mcp-connect-hint.unavailable{padding:8px 10px;border:1px solid rgba(249,226,175,.25);border-radius:var(--radius-sm);background:var(--yellow-dim);color:var(--text-secondary);}
+.mcp-client-grid{display:grid;grid-template-columns:1fr;gap:8px;}
+.mcp-client-card{min-width:0;padding:9px 10px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-surface);}
+.mcp-client-name{margin-bottom:6px;font-size:13px;font-weight:600;line-height:1.25;}
+.mcp-command+.mcp-command{margin-top:7px;padding-top:7px;border-top:1px solid var(--border-subtle);}
+.mcp-command-label{margin-bottom:3px;font-size:10px;line-height:1.2;color:var(--text-muted);}
+.mcp-command-line{display:flex;align-items:center;gap:6px;min-width:0;line-height:1;}
+.mcp-command-line code{flex:1;min-width:0;padding:5px 7px;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--bg-elevated);font-family:var(--font-mono);font-size:11px;line-height:1.25;overflow-x:auto;white-space:nowrap;}
+.mcp-command-line .mcp-copy-btn{flex-shrink:0;}
+@media (max-width:720px){.mcp-status-summary{align-items:flex-start;flex-direction:column;gap:4px;}.mcp-status-detail{white-space:normal;word-break:break-all;}.mcp-command-line{align-items:flex-start;}.mcp-command-line code{white-space:pre-wrap;overflow-wrap:anywhere;}}
 .quick-command-editor{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
 .qc-empty{padding:10px 0;color:var(--text-muted);font-size:13px;}
 .qc-row{display:flex;align-items:stretch;gap:8px;padding:10px;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--bg-surface);}

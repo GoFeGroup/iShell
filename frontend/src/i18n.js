@@ -186,7 +186,9 @@ const dict = {
         mcpEnabled: 'Enable MCP Server',
         mcpEnabledDesc: 'Once enabled, any local process that can reach this port — including your own claude/codex CLI — can read and run commands in any terminal tab open in iShell, with no confirmation prompt. Only enable this if you trust everything running on this machine.',
         mcpPort: 'Port', mcpStatusRunning: 'Running at', mcpStatusStopped: 'Stopped',
-        mcpConnectHelp: 'Add iShell as an MCP tool source in your claude/codex CLI:', mcpCopy: 'Copy', mcpCopied: 'Copied',
+        mcpServerConfig: 'Server configuration', mcpStatusEnabled: 'Running', mcpStatusDisabled: 'Not enabled', mcpStatusError: 'Unable to start',
+        mcpSecurityTitle: 'Security notice', mcpClientCommands: 'Client setup', mcpConnectHelp: 'Add or remove iShell as an MCP tool source in your Claude or Codex CLI.',
+        mcpUnavailableHint: 'Start the MCP server before using these commands. You can still copy them now.', mcpAddCommand: 'Add iShell', mcpRemoveCommand: 'Remove iShell', mcpCopy: 'Copy', mcpCopied: 'Copied', mcpCopyFailed: '❌ Could not copy command',
       },
       toolCalls: {
         builtinTitle: 'Built-in Tools', builtinDesc: 'These tools are always available to the AI assistant and cannot be edited or removed.',
@@ -445,7 +447,9 @@ const dict = {
         mcpEnabled: '启用 MCP Server',
         mcpEnabledDesc: '开启后，任何能连接到本机该端口的进程——包括你自己的 claude/codex CLI——都可以读取并执行 iShell 中任意已打开终端 tab 里的命令，不会有二次确认。仅在你信任这台机器上运行的所有程序时开启。',
         mcpPort: '端口', mcpStatusRunning: '正在监听', mcpStatusStopped: '已停止',
-        mcpConnectHelp: '在你的 claude/codex CLI 中把 iShell 加为 MCP 工具源：', mcpCopy: '复制', mcpCopied: '已复制',
+        mcpServerConfig: '服务配置', mcpStatusEnabled: '运行中', mcpStatusDisabled: '未启用', mcpStatusError: '启动失败',
+        mcpSecurityTitle: '安全提示', mcpClientCommands: '客户端接入', mcpConnectHelp: '在 Claude 或 Codex CLI 中添加或删除 iShell MCP 工具源。',
+        mcpUnavailableHint: '请先启动 MCP 服务再使用这些命令；现在仍可复制命令。', mcpAddCommand: '添加 iShell', mcpRemoveCommand: '删除 iShell', mcpCopy: '复制', mcpCopied: '已复制', mcpCopyFailed: '❌ 无法复制命令',
       },
       toolCalls: {
         builtinTitle: '内置工具', builtinDesc: '这些工具始终对 AI 助手可用，不能编辑或删除。',
@@ -702,7 +706,9 @@ const dict = {
         mcpEnabled: '啟用 MCP Server',
         mcpEnabledDesc: '開啟後，任何能連線到本機該埠的行程——包括你自己的 claude/codex CLI——都可以讀取並執行 iShell 中任意已開啟終端機分頁裡的命令，不會有二次確認。僅在你信任這台機器上執行的所有程式時開啟。',
         mcpPort: '埠號', mcpStatusRunning: '正在監聽', mcpStatusStopped: '已停止',
-        mcpConnectHelp: '在你的 claude/codex CLI 中把 iShell 加為 MCP 工具來源：', mcpCopy: '複製', mcpCopied: '已複製',
+        mcpServerConfig: '服務設定', mcpStatusEnabled: '運行中', mcpStatusDisabled: '未啟用', mcpStatusError: '啟動失敗',
+        mcpSecurityTitle: '安全提示', mcpClientCommands: '客戶端連線', mcpConnectHelp: '在 Claude 或 Codex CLI 中新增或移除 iShell MCP 工具來源。',
+        mcpUnavailableHint: '請先啟動 MCP 服務再使用這些指令；目前仍可複製指令。', mcpAddCommand: '新增 iShell', mcpRemoveCommand: '移除 iShell', mcpCopy: '複製', mcpCopied: '已複製', mcpCopyFailed: '❌ 無法複製指令',
       },
       toolCalls: {
         builtinTitle: '內建工具', builtinDesc: '這些工具始終可供 AI 助理使用，無法編輯或刪除。',
