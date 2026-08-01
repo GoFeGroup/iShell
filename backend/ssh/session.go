@@ -132,6 +132,10 @@ func (ts *TermSession) pumpInput() {
 		select {
 		case data := <-ts.inputCh:
 			if _, err := ts.stdin.Write(data); err != nil {
+				// Cancel the session ctx so queued/future Write callers fail
+				// fast; without this they'd fill inputCh and then block their
+				// Wails IPC goroutines until Disconnect.
+				ts.cancel()
 				return
 			}
 		case <-ts.ctx.Done():

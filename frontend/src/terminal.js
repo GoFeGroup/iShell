@@ -311,22 +311,7 @@ export function createTerminal(connID, settings, options = {}) {
       return inst.term;
     }
     // Font changed: tear down old instance and fall through to rebuild.
-    off('terminal:data:' + connID);
-    inst.disposables?.forEach(d => d.dispose());
-    inst.xtermEl.removeEventListener('compositionstart', inst.compositionStartHandler, true);
-    inst.xtermEl.removeEventListener('compositionend', inst.compositionEndHandler, true);
-    inst.xtermEl.removeEventListener('beforeinput', inst.beforeInputHandler, true);
-    inst.xtermEl.removeEventListener('paste', inst.pasteHandler, true);
-    inst.xtermEl.removeEventListener('focusin', inst.focusInHandler, true);
-    inst.xtermEl.removeEventListener('mousedown', inst.mouseDownHandler, true);
-    inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
-    document.removeEventListener('mousemove', inst.mouseMoveHandler, true);
-    document.removeEventListener('mouseup',   inst.mouseUpHandler,   true);
-    inst.resizeObs.disconnect();
-    cancelPendingFit(inst);
-    cancelViewportRestore(inst);
-    inst.term.dispose();
-    delete instances[connID];
+    teardownInstance(connID, inst);
   }
 
   container.innerHTML = '';
@@ -729,6 +714,13 @@ export function createTerminal(connID, settings, options = {}) {
     e.stopPropagation();
     e.stopImmediatePropagation?.();
     term.focus();
+    // When the app has mouse reporting on (claude, vim with mouse=a, …), the
+    // right-click press/release already reached it via mouseDownHandler/
+    // mouseUpHandler deferring to xterm's tracking, and the app applies its
+    // own right-click behavior — claude, for one, pastes the clipboard
+    // itself. Adding our paste/menu on top would run both (text pasted
+    // twice), so defer entirely, like the other mouse handlers do.
+    if (isMouseTrackingActive()) return;
     if (instances[connID]?.rightClickAction === 'paste') {
       window.runtime.ClipboardGetText().then(pasteIntoTerminal).catch(() => {});
       return;
@@ -867,9 +859,11 @@ export function rememberTerminalViewport(connID) {
   rememberViewport(instances[connID]);
 }
 
-export function destroyTerminal(connID) {
-  const inst = instances[connID];
-  if (!inst) return;
+// Shared teardown for one terminal instance: unhooks the Wails data listener,
+// all DOM/document listeners, xterm disposables, and unregisters the
+// instance. Used by both the font-change rebuild path in createTerminal and
+// destroyTerminal.
+function teardownInstance(connID, inst) {
   off('terminal:data:' + connID);
   cancelPendingFit(inst);
   cancelViewportRestore(inst);
@@ -878,15 +872,21 @@ export function destroyTerminal(connID) {
   inst.xtermEl.removeEventListener('compositionend',   inst.compositionEndHandler,   true);
   inst.xtermEl.removeEventListener('beforeinput',      inst.beforeInputHandler,      true);
   inst.xtermEl.removeEventListener('paste',            inst.pasteHandler,            true);
-  inst.xtermEl.removeEventListener('focusin',           inst.focusInHandler,           true);
+  inst.xtermEl.removeEventListener('focusin',          inst.focusInHandler,          true);
   inst.xtermEl.removeEventListener('mousedown',   inst.mouseDownHandler,  true);
   inst.xtermEl.removeEventListener('contextmenu', inst.contextMenuHandler);
   document.removeEventListener('mousemove',       inst.mouseMoveHandler,  true);
   document.removeEventListener('mouseup',         inst.mouseUpHandler,    true);
   inst.resizeObs.disconnect();
   try { inst.term.dispose(); } catch {}
-  delete cwdByConn[connID];
   delete instances[connID];
+}
+
+export function destroyTerminal(connID) {
+  const inst = instances[connID];
+  if (!inst) return;
+  teardownInstance(connID, inst);
+  delete cwdByConn[connID];
 }
 
 export function focusTerminal(connID) {

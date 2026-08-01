@@ -36,7 +36,8 @@ globalThis.CustomEvent = class CustomEvent {
     this.detail = opts.detail;
   }
 };
-globalThis.navigator = { language: 'en-US' };
+// Node 21+ exposes a getter-only globalThis.navigator; plain assignment throws.
+Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US' }, writable: true, configurable: true });
 
 const { t, getLocale, getLanguagePref, setLanguage, LANGUAGE_OPTIONS } = await import('./i18n.js');
 

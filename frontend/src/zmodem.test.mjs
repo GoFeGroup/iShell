@@ -9,7 +9,8 @@ globalThis.document = {
     getElementById: () => null,
     documentElement: { setAttribute: () => {} },
 };
-globalThis.navigator = { language: 'en-US' };
+// Node 21+ exposes a getter-only globalThis.navigator; plain assignment throws.
+Object.defineProperty(globalThis, 'navigator', { value: { language: 'en-US' }, writable: true, configurable: true });
 globalThis.window = { go: { backend: { App: { SendInputBytes: async () => {} } } } };
 
 const { createZmodemSentry } = await import('./zmodem.js');

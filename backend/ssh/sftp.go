@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,6 +41,120 @@ type TransferProgress struct {
 }
 
 type ProgressHandler func(TransferProgress)
+
+// progressInterval throttles intermediate progress events.
+const progressInterval = 200 * time.Millisecond
+
+// ctxReader counts bytes read from r and aborts once ctx is cancelled.
+type ctxReader struct {
+	ctx     context.Context
+	r       io.Reader
+	onBytes func(int64)
+}
+
+func (cr *ctxReader) Read(p []byte) (int, error) {
+	select {
+	case <-cr.ctx.Done():
+		return 0, cr.ctx.Err()
+	default:
+	}
+	n, err := cr.r.Read(p)
+	if n > 0 && cr.onBytes != nil {
+		cr.onBytes(int64(n))
+	}
+	return n, err
+}
+
+// ctxWriter counts bytes written to w and aborts once ctx is cancelled.
+type ctxWriter struct {
+	ctx     context.Context
+	w       io.Writer
+	onBytes func(int64)
+}
+
+func (cw *ctxWriter) Write(p []byte) (int, error) {
+	select {
+	case <-cw.ctx.Done():
+		return 0, cw.ctx.Err()
+	default:
+	}
+	n, err := cw.w.Write(p)
+	if n > 0 && cw.onBytes != nil {
+		cw.onBytes(int64(n))
+	}
+	return n, err
+}
+
+// transferReporter accumulates bytes transferred for one file and emits
+// throttled progress events, shared by the upload and download paths.
+type transferReporter struct {
+	ctx        context.Context
+	onProgress ProgressHandler
+	transferID string
+	name       string
+	action     string
+	total      int64
+	start      time.Time
+
+	mu       sync.Mutex
+	done     int64
+	lastEmit time.Time
+}
+
+func newTransferReporter(ctx context.Context, onProgress ProgressHandler, transferID, name, action string, total int64) *transferReporter {
+	return &transferReporter{
+		ctx:        ctx,
+		onProgress: onProgress,
+		transferID: transferID,
+		name:       name,
+		action:     action,
+		total:      total,
+		start:      time.Now(),
+	}
+}
+
+func (tr *transferReporter) emitStart() {
+	tr.mu.Lock()
+	tr.lastEmit = time.Now()
+	tr.mu.Unlock()
+	emitProgress(tr.ctx, tr.onProgress, tr.transferID, tr.name, tr.action, 0, tr.total, 0, false, false, "")
+}
+
+// add records n more transferred bytes and emits a throttled progress event.
+func (tr *transferReporter) add(n int64) {
+	tr.mu.Lock()
+	tr.done += n
+	done := tr.done
+	shouldEmit := time.Since(tr.lastEmit) >= progressInterval
+	if shouldEmit {
+		tr.lastEmit = time.Now()
+	}
+	tr.mu.Unlock()
+	if !shouldEmit {
+		return
+	}
+	var speed float64
+	if elapsed := time.Since(tr.start).Seconds(); elapsed > 0 {
+		speed = float64(done) / elapsed
+	}
+	emitProgress(tr.ctx, tr.onProgress, tr.transferID, tr.name, tr.action, done, tr.total, speed, false, false, "")
+}
+
+// finish emits the terminal progress event for the transfer, mapping a
+// cancelled ctx to the cancelled state rather than an error.
+func (tr *transferReporter) finish(err error) {
+	tr.mu.Lock()
+	done := tr.done
+	tr.mu.Unlock()
+	switch {
+	case err == nil:
+		emitProgress(tr.ctx, tr.onProgress, tr.transferID, tr.name, tr.action, tr.total, tr.total, 0, true, false, "")
+	case errors.Is(err, context.Canceled) || tr.ctx.Err() != nil:
+		emitProgress(tr.ctx, tr.onProgress, tr.transferID, tr.name, tr.action, done, tr.total, 0, true, true, "")
+	default:
+		emitProgress(tr.ctx, tr.onProgress, tr.transferID, tr.name, tr.action, done, tr.total, 0, true, false, err.Error())
+	}
+}
 
 // ── Directory listing ─────────────────────────────────────────────────────────
 
@@ -140,47 +255,18 @@ func UploadFileWithProgress(ctx context.Context, transferID string, client *sftp
 	go func() {
 		defer src.Close()
 		defer dst.Close()
-		var lastEmit time.Time
-		emit := func(done int64, speed float64, finished, cancelled bool, errMsg string) {
-			lastEmit = time.Now()
-			emitProgress(ctx, onProgress, transferID, name, "upload", done, total, speed, finished, cancelled, errMsg)
+		tr := newTransferReporter(ctx, onProgress, transferID, name, "upload", total)
+		tr.emitStart()
+		counted := io.Reader(&ctxReader{ctx: ctx, r: src, onBytes: tr.add})
+		if total > 0 {
+			// sftp.File.ReadFrom only pipelines write requests when it can see
+			// the remaining size on the reader's concrete type; an opaque
+			// wrapper would silently fall back to one packet per round-trip.
+			// *io.LimitedReader is one of the types it inspects.
+			counted = &io.LimitedReader{R: counted, N: total}
 		}
-		emit(0, 0, false, false, "")
-		start := time.Now()
-		var done int64
-		buf := make([]byte, 32*1024)
-		for {
-			select {
-			case <-ctx.Done():
-				emit(done, 0, true, true, "")
-				return
-			default:
-			}
-			n, err := src.Read(buf)
-			if n > 0 {
-				if _, werr := dst.Write(buf[:n]); werr != nil {
-					emit(done, 0, true, false, werr.Error())
-					return
-				}
-				done += int64(n)
-				elapsed := time.Since(start).Seconds()
-				var speed float64
-				if elapsed > 0 {
-					speed = float64(done) / elapsed
-				}
-				if time.Since(lastEmit) >= 200*time.Millisecond {
-					emit(done, speed, false, false, "")
-				}
-			}
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				emit(done, 0, true, false, err.Error())
-				return
-			}
-		}
-		emit(total, 0, true, false, "")
+		_, err := dst.ReadFrom(counted)
+		tr.finish(err)
 	}()
 
 	return nil
@@ -219,47 +305,13 @@ func DownloadFileWithProgress(ctx context.Context, transferID string, client *sf
 	go func() {
 		defer src.Close()
 		defer dst.Close()
-		var lastEmit time.Time
-		emit := func(done int64, speed float64, finished, cancelled bool, errMsg string) {
-			lastEmit = time.Now()
-			emitProgress(ctx, onProgress, transferID, name, "download", done, total, speed, finished, cancelled, errMsg)
-		}
-		emit(0, 0, false, false, "")
-		start := time.Now()
-		var done int64
-		buf := make([]byte, 32*1024)
-		for {
-			select {
-			case <-ctx.Done():
-				emit(done, 0, true, true, "")
-				return
-			default:
-			}
-			n, err := src.Read(buf)
-			if n > 0 {
-				if _, werr := dst.Write(buf[:n]); werr != nil {
-					emit(done, 0, true, false, werr.Error())
-					return
-				}
-				done += int64(n)
-				elapsed := time.Since(start).Seconds()
-				var speed float64
-				if elapsed > 0 {
-					speed = float64(done) / elapsed
-				}
-				if time.Since(lastEmit) >= 200*time.Millisecond {
-					emit(done, speed, false, false, "")
-				}
-			}
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				emit(done, 0, true, false, err.Error())
-				return
-			}
-		}
-		emit(total, 0, true, false, "")
+		tr := newTransferReporter(ctx, onProgress, transferID, name, "download", total)
+		tr.emitStart()
+		// WriteTo pipelines read requests (sftp enables concurrent reads by
+		// default) and reassembles chunks in order before writing, so the
+		// counting writer still observes strictly sequential progress.
+		_, err := src.WriteTo(&ctxWriter{ctx: ctx, w: dst, onBytes: tr.add})
+		tr.finish(err)
 	}()
 
 	return nil
@@ -346,7 +398,6 @@ func DownloadPathWithProgress(ctx context.Context, transferID string, client *sf
 			local  string
 		}
 		stack := []dirJob{{remote: remotePath, local: localRoot}}
-		buf := make([]byte, 32*1024)
 
 		for len(stack) > 0 {
 			select {
@@ -387,10 +438,14 @@ func DownloadPathWithProgress(ctx context.Context, transferID string, client *sf
 					continue
 				}
 				addTotal(entry.Size())
-				if err := downloadRemoteFile(client, remoteChild, localChild, buf, func(n int64) {
+				if err := downloadRemoteFile(ctx, client, remoteChild, localChild, func(n int64) {
 					addDone(n)
 					maybeEmit()
 				}); err != nil {
+					if ctx.Err() != nil {
+						emit(true, true, "")
+						return
+					}
 					emit(true, false, fmt.Sprintf("download %s: %v", remoteChild, err))
 					return
 				}
@@ -404,7 +459,7 @@ func DownloadPathWithProgress(ctx context.Context, transferID string, client *sf
 	return nil
 }
 
-func downloadRemoteFile(client *sftp.Client, remotePath, localPath string, buf []byte, onBytes func(int64)) error {
+func downloadRemoteFile(ctx context.Context, client *sftp.Client, remotePath, localPath string, onBytes func(int64)) error {
 	src, err := client.Open(remotePath)
 	if err != nil {
 		return fmt.Errorf("open remote file: %w", err)
@@ -420,21 +475,8 @@ func downloadRemoteFile(client *sftp.Client, remotePath, localPath string, buf [
 	}
 	defer dst.Close()
 
-	for {
-		n, err := src.Read(buf)
-		if n > 0 {
-			if _, werr := dst.Write(buf[:n]); werr != nil {
-				return werr
-			}
-			onBytes(int64(n))
-		}
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-	}
+	_, err = src.WriteTo(&ctxWriter{ctx: ctx, w: dst, onBytes: onBytes})
+	return err
 }
 
 func emitProgress(ctx context.Context, onProgress ProgressHandler, id, name, action string, done, total int64, speed float64, finished, cancelled bool, errMsg string) {

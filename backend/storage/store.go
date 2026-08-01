@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -78,6 +79,13 @@ CREATE INDEX IF NOT EXISTS idx_port_forwards_session ON port_forwards(session_id
 
 type Store struct {
 	db *sql.DB
+
+	// settingsCache avoids re-querying and triple-parsing the settings JSON on
+	// every LoadSettings call (which happens per connect, per AI turn, per
+	// known-hosts lookup). LoadSettings returns deep copies so callers can
+	// never mutate the cached value through shared slices.
+	settingsMu    sync.RWMutex
+	settingsCache *Settings
 }
 
 func Open(dataDir string) (*Store, error) {
@@ -281,6 +289,23 @@ func (s *Store) DeleteSession(id string) error {
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 func (s *Store) LoadSettings() (*Settings, error) {
+	s.settingsMu.RLock()
+	cached := s.settingsCache
+	s.settingsMu.RUnlock()
+	if cached != nil {
+		return cached.clone(), nil
+	}
+	st, err := s.loadSettingsFromDB()
+	if err != nil {
+		return nil, err
+	}
+	s.settingsMu.Lock()
+	s.settingsCache = st.clone()
+	s.settingsMu.Unlock()
+	return st, nil
+}
+
+func (s *Store) loadSettingsFromDB() (*Settings, error) {
 	row := s.db.QueryRow(`SELECT value FROM settings WHERE key = 'app'`)
 	var raw string
 	if err := row.Scan(&raw); err == sql.ErrNoRows {
@@ -357,5 +382,11 @@ func (s *Store) SaveSettings(st Settings) error {
 	_, err = s.db.Exec(`
 		INSERT INTO settings (key, value) VALUES ('app', ?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, string(b))
-	return err
+	if err != nil {
+		return err
+	}
+	s.settingsMu.Lock()
+	s.settingsCache = st.clone()
+	s.settingsMu.Unlock()
+	return nil
 }

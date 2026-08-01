@@ -31,6 +31,9 @@ type Conn struct {
 	forwards      map[string]*forwardHandle
 	sshAgent      sshagent.Agent
 	agentCloser   io.Closer
+	// jumpAgentCloser is the agent connection dialed for jump-host auth (when
+	// the jump profile uses AuthAgent); closed on Disconnect like agentCloser.
+	jumpAgentCloser io.Closer
 }
 
 // Manager manages all active SSH connections.
@@ -39,8 +42,14 @@ type Manager struct {
 	conns       map[string]*Conn
 	ctx         context.Context
 	store       *storage.Store
-	pendingMu   sync.Mutex
-	pendingKeys map[string]gossh.PublicKey // hostname:port → key awaiting acceptance
+	pendingMu sync.Mutex
+	// pendingKeys holds host keys awaiting user acceptance, keyed by the exact
+	// hostname string the HostKeyCallback received (the dial address, i.e.
+	// "host:port"). The "ssh:unknown_host" event carries this same string and
+	// the frontend passes it back verbatim to AcceptHostKey, so the two sides
+	// agree by construction. A reconnect to the same host simply overwrites
+	// the previous pending entry.
+	pendingKeys map[string]gossh.PublicKey
 }
 
 func NewManager(ctx context.Context, store *storage.Store) *Manager {
@@ -76,52 +85,70 @@ func (e *HostKeyError) Error() string {
 	return fmt.Sprintf("unknown host key for %s: %s", e.Host, gossh.FingerprintSHA256(e.Key))
 }
 
-func (m *Manager) Connect(opts ConnectOptions) (string, error) {
-	sess := opts.Session
-	host := fmt.Sprintf("%s:%d", sess.Host, sess.Port)
+// buildAuthMethods assembles the SSH auth methods for sess, with optional
+// override credentials from the connect dialog ("" means use the stored
+// value): password if present, private key (falling back to the default key
+// when nothing else is configured), the SSH agent for AuthAgent sessions, and
+// a no-op keyboard-interactive fallback when nothing matched. When agent auth
+// is used, the returned agent/closer are non-nil and the caller owns closing
+// the closer.
+func buildAuthMethods(sess *storage.Session, pwOverride, keyPathOverride, passphraseOverride string) ([]gossh.AuthMethod, sshagent.Agent, io.Closer, error) {
+	var methods []gossh.AuthMethod
 
-	// ── Auth methods ──────────────────────────────────────────────────────────
-	var authMethods []gossh.AuthMethod
-
-	authType := sess.AuthType
-	pw := opts.Password
+	pw := pwOverride
 	if pw == "" {
 		pw = sess.Password
 	}
 	if pw != "" {
-		authMethods = append(authMethods, gossh.Password(pw))
+		methods = append(methods, gossh.Password(pw))
 	}
 
-	keyPath := opts.KeyPath
+	keyPath := keyPathOverride
 	if keyPath == "" {
 		keyPath = sess.KeyPath
 	}
-	if keyPath == "" && pw == "" && authType != storage.AuthAgent {
+	if keyPath == "" && pw == "" && sess.AuthType != storage.AuthAgent {
 		keyPath = DefaultPrivateKeyPath
 	}
-	passphrase := opts.Passphrase
+	passphrase := passphraseOverride
 	if passphrase == "" {
 		passphrase = sess.Passphrase
 	}
-	if keyPath != "" || authType == storage.AuthKey {
-		if keyPath != "" {
-			signer, err := LoadPrivateKey(keyPath, passphrase)
-			if err != nil {
-				return "", fmt.Errorf("load private key: %w", err)
-			}
-			authMethods = append(authMethods, gossh.PublicKeys(signer))
+	if keyPath != "" {
+		signer, err := LoadPrivateKey(keyPath, passphrase)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("load private key: %w", err)
 		}
+		methods = append(methods, gossh.PublicKeys(signer))
 	}
 
-	var sshAgentObj sshagent.Agent
+	var agentObj sshagent.Agent
 	var agentCloser io.Closer
-	if authType == storage.AuthAgent {
+	if sess.AuthType == storage.AuthAgent {
 		var err error
-		sshAgentObj, agentCloser, err = DialAgent()
+		agentObj, agentCloser, err = DialAgent()
 		if err != nil {
-			return "", fmt.Errorf("ssh agent auth: %w", err)
+			return nil, nil, nil, fmt.Errorf("ssh agent auth: %w", err)
 		}
-		authMethods = append(authMethods, gossh.PublicKeysCallback(sshAgentObj.Signers))
+		methods = append(methods, gossh.PublicKeysCallback(agentObj.Signers))
+	}
+
+	if len(methods) == 0 {
+		// Fallback: keyboard-interactive (prompts will not appear in GUI, but avoids hard fail)
+		methods = append(methods, gossh.KeyboardInteractive(func(_, _ string, qs []string, _ []bool) ([]string, error) {
+			return make([]string, len(qs)), nil
+		}))
+	}
+	return methods, agentObj, agentCloser, nil
+}
+
+func (m *Manager) Connect(opts ConnectOptions) (string, error) {
+	sess := opts.Session
+	host := fmt.Sprintf("%s:%d", sess.Host, sess.Port)
+
+	authMethods, sshAgentObj, agentCloser, err := buildAuthMethods(&sess, opts.Password, opts.KeyPath, opts.Passphrase)
+	if err != nil {
+		return "", err
 	}
 	// Closed automatically on any failure below; ownership passes to Conn
 	// (closed on Disconnect) once the connection is fully established.
@@ -132,13 +159,6 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 				agentCloser.Close()
 			}
 		}()
-	}
-
-	if len(authMethods) == 0 {
-		// Fallback: keyboard-interactive (prompts will not appear in GUI, but avoids hard fail)
-		authMethods = append(authMethods, gossh.KeyboardInteractive(func(_, _ string, qs []string, _ []bool) ([]string, error) {
-			return make([]string, len(qs)), nil
-		}))
 	}
 
 	// ── Host key callback ─────────────────────────────────────────────────────
@@ -188,25 +208,21 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 
 	var client *gossh.Client
 	var jumpClient *gossh.Client
+	var jumpAgentCloser io.Closer
 
 	if opts.JumpSession != nil {
 		j := opts.JumpSession
-		var jumpAuth []gossh.AuthMethod
-		jumpPW := j.Password
-		if jumpPW != "" {
-			jumpAuth = append(jumpAuth, gossh.Password(jumpPW))
+		jumpAuth, _, jumpCloser, err := buildAuthMethods(j, "", "", "")
+		if err != nil {
+			return "", fmt.Errorf("jump host auth: %w", err)
 		}
-		if j.KeyPath != "" {
-			signer, err := LoadPrivateKey(j.KeyPath, j.Passphrase)
-			if err != nil {
-				return "", fmt.Errorf("load jump host key: %w", err)
-			}
-			jumpAuth = append(jumpAuth, gossh.PublicKeys(signer))
-		}
-		if len(jumpAuth) == 0 {
-			jumpAuth = append(jumpAuth, gossh.KeyboardInteractive(func(_, _ string, qs []string, _ []bool) ([]string, error) {
-				return make([]string, len(qs)), nil
-			}))
+		jumpAgentCloser = jumpCloser
+		if jumpAgentCloser != nil {
+			defer func() {
+				if !agentConnected {
+					jumpAgentCloser.Close()
+				}
+			}()
 		}
 		jumpUser := j.Username
 		if jumpUser == "" {
@@ -223,7 +239,6 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 			HostKeyCallback: hkCallback,
 			Timeout:         timeout,
 		}
-		var err error
 		jumpClient, err = gossh.Dial("tcp", jumpAddr, jumpCfg)
 		if err != nil {
 			return "", fmt.Errorf("dial jump host %s: %w", jumpAddr, err)
@@ -297,14 +312,15 @@ func (m *Manager) Connect(opts ConnectOptions) (string, error) {
 	agentConnected = true
 
 	conn := &Conn{
-		ID:            connID,
-		SessionID:     sess.ID,
-		client:        client,
-		jumpClient:    jumpClient,
-		term:          term,
-		sshAgent:      sshAgentObj,
-		agentCloser:   agentCloser,
-		stopKeepalive: stopKA,
+		ID:              connID,
+		SessionID:       sess.ID,
+		client:          client,
+		jumpClient:      jumpClient,
+		term:            term,
+		sshAgent:        sshAgentObj,
+		agentCloser:     agentCloser,
+		jumpAgentCloser: jumpAgentCloser,
+		stopKeepalive:   stopKA,
 	}
 	m.mu.Lock()
 	m.conns[connID] = conn
@@ -361,6 +377,9 @@ func (m *Manager) Disconnect(connID string) error {
 	}
 	if conn.agentCloser != nil {
 		conn.agentCloser.Close()
+	}
+	if conn.jumpAgentCloser != nil {
+		conn.jumpAgentCloser.Close()
 	}
 	err := conn.client.Close()
 	if conn.jumpClient != nil {
@@ -419,7 +438,12 @@ func (m *Manager) SFTPClient(connID string) (*sftp.Client, error) {
 	if conn.sftpCl != nil {
 		return conn.sftpCl, nil
 	}
-	cl, err := sftp.NewClient(conn.client)
+	// Concurrent writes let File.ReadFrom pipeline write requests instead of
+	// waiting one round-trip per 32KB packet, which is the difference between
+	// ~640KB/s and full bandwidth on a 50ms-RTT link. Reads are pipelined by
+	// default. The trade-off (a failed upload may leave the remote file
+	// inconsistent) already applies to any partially-completed transfer.
+	cl, err := sftp.NewClient(conn.client, sftp.UseConcurrentWrites(true))
 	if err != nil {
 		return nil, fmt.Errorf("open sftp: %w", err)
 	}

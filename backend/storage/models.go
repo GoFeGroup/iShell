@@ -82,6 +82,35 @@ type Settings struct {
 	MCPServerPort       int                 `json:"mcp_server_port" yaml:"mcp_server_port"`
 }
 
+// cloneSlice copies s into a fresh backing array, preserving nil vs empty —
+// LoadSettings guarantees non-nil slices and the frontend relies on them
+// marshalling as [] rather than null.
+func cloneSlice[T any](s []T) []T {
+	if s == nil {
+		return nil
+	}
+	out := make([]T, len(s))
+	copy(out, s)
+	return out
+}
+
+// clone deep-copies st, including the nested command/parameter slices, so the
+// Store's settings cache and its callers never share mutable state.
+func (st *Settings) clone() *Settings {
+	out := *st
+	out.QuickCommands = cloneSlice(st.QuickCommands)
+	out.QuickCommandGroups = cloneSlice(st.QuickCommandGroups)
+	for i := range out.QuickCommandGroups {
+		out.QuickCommandGroups[i].Commands = cloneSlice(out.QuickCommandGroups[i].Commands)
+	}
+	out.AIProviders = cloneSlice(st.AIProviders)
+	out.CustomToolCalls = cloneSlice(st.CustomToolCalls)
+	for i := range out.CustomToolCalls {
+		out.CustomToolCalls[i].Parameters = cloneSlice(out.CustomToolCalls[i].Parameters)
+	}
+	return &out
+}
+
 // AIProvider is one configured OpenAI-compatible model service. The first
 // entry in Settings.AIProviders is the default used when a chat session
 // hasn't picked one explicitly.

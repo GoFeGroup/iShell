@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -484,6 +485,37 @@ func (a *App) newCancellableTransfer() (string, context.Context) {
 	return transferID, ctx
 }
 
+// failTransferStart cleans up after a transfer whose goroutine never started
+// (e.g. the local file could not be opened): the cancel handle registered by
+// newCancellableTransfer would otherwise leak — no Finished progress event
+// will ever fire for it — and the frontend would hold a transferID that never
+// appears in GetSFTPTransfers. It records a failed TransferRecord and emits
+// it so the UI can show the error.
+func (a *App) failTransferStart(transferID, connID, action, name, remotePath, localPath string, err error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	rec := TransferRecord{
+		TransferID: transferID,
+		ConnID:     connID,
+		Name:       name,
+		Action:     action,
+		RemotePath: remotePath,
+		LocalPath:  localPath,
+		Finished:   true,
+		ErrMsg:     err.Error(),
+		StartedAt:  now,
+		UpdatedAt:  now,
+	}
+	a.txMu.Lock()
+	cancel := a.cancels[transferID]
+	delete(a.cancels, transferID)
+	a.transfers[transferID] = rec
+	a.txMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	wailsRuntime.EventsEmit(a.ctx, "sftp:progress", rec)
+}
+
 // CancelSFTPTransfer stops an in-flight upload/download. It is a no-op error
 // if the transfer has already finished or never existed.
 func (a *App) CancelSFTPTransfer(transferID string) error {
@@ -505,21 +537,7 @@ func (a *App) UploadFiles(connID, remotePath string) ([]string, error) {
 	if err != nil || len(localPaths) == 0 {
 		return nil, err
 	}
-	cl, err := a.sshMgr.SFTPClient(connID)
-	if err != nil {
-		return nil, err
-	}
-	var ids []string
-	for _, lp := range localPaths {
-		name := filepath.Base(lp)
-		rp := remotePath + "/" + name
-		transferID, ctx := a.newCancellableTransfer()
-		if err := ssh.UploadFileWithProgress(ctx, transferID, cl, lp, rp, a.transferProgressHandler(connID, "upload", rp, lp)); err != nil {
-			wailsRuntime.LogErrorf(a.ctx, "upload %s: %v", lp, err)
-		}
-		ids = append(ids, transferID)
-	}
-	return ids, nil
+	return a.UploadSpecificFiles(connID, localPaths, remotePath)
 }
 
 // UploadSpecificFiles uploads a pre-selected list of local paths.
@@ -535,6 +553,7 @@ func (a *App) UploadSpecificFiles(connID string, localPaths []string, remotePath
 		transferID, ctx := a.newCancellableTransfer()
 		if err := ssh.UploadFileWithProgress(ctx, transferID, cl, lp, rp, a.transferProgressHandler(connID, "upload", rp, lp)); err != nil {
 			wailsRuntime.LogErrorf(a.ctx, "upload %s: %v", lp, err)
+			a.failTransferStart(transferID, connID, "upload", name, rp, lp, err)
 		}
 		ids = append(ids, transferID)
 	}
@@ -564,6 +583,7 @@ func (a *App) DownloadFilesToDir(connID string, remotePaths []string, localDir s
 		transferID, ctx := a.newCancellableTransfer()
 		if err := ssh.DownloadPathWithProgress(ctx, transferID, cl, rp, localDir, a.transferProgressHandler(connID, "download", rp, localPath)); err != nil {
 			wailsRuntime.LogErrorf(a.ctx, "download %s: %v", rp, err)
+			a.failTransferStart(transferID, connID, "download", filepath.Base(rp), rp, localPath, err)
 		}
 		ids = append(ids, transferID)
 	}
@@ -595,6 +615,31 @@ func (a *App) ClearFinishedSFTPTransfers(connID string) int {
 		}
 	}
 	return cleared
+}
+
+// maxFinishedTransfers bounds how many finished records stay in a.transfers.
+// Users can still clear them manually; this cap only keeps a long-running
+// session with heavy transfer traffic from growing the map without bound.
+const maxFinishedTransfers = 200
+
+// pruneFinishedTransfersLocked drops the oldest finished records beyond
+// maxFinishedTransfers. In-flight transfers are never touched. Caller holds
+// a.txMu.
+func (a *App) pruneFinishedTransfersLocked() {
+	var finished []TransferRecord
+	for _, rec := range a.transfers {
+		if rec.Finished {
+			finished = append(finished, rec)
+		}
+	}
+	if len(finished) <= maxFinishedTransfers {
+		return
+	}
+	// UpdatedAt is RFC3339 (UTC), so lexicographic order is chronological.
+	sort.Slice(finished, func(i, j int) bool { return finished[i].UpdatedAt < finished[j].UpdatedAt })
+	for _, rec := range finished[:len(finished)-maxFinishedTransfers] {
+		delete(a.transfers, rec.TransferID)
+	}
 }
 
 func (a *App) transferProgressHandler(connID, action, remotePath, localPath string) ssh.ProgressHandler {
@@ -630,6 +675,7 @@ func (a *App) transferProgressHandler(connID, action, remotePath, localPath stri
 		if progress.Finished {
 			cancel = a.cancels[progress.TransferID]
 			delete(a.cancels, progress.TransferID)
+			a.pruneFinishedTransfersLocked()
 		}
 		a.txMu.Unlock()
 		if cancel != nil {
