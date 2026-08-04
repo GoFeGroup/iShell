@@ -222,7 +222,7 @@ function visibleTerminalRect(inst) {
   return rect;
 }
 
-function fitVisibleTerminal(connID, inst, { restoreScroll = false, snapshot = null } = {}) {
+function fitVisibleTerminal(connID, inst, { restoreScroll = true, snapshot = null } = {}) {
   const rect = visibleTerminalRect(inst);
   if (!rect) return false;
   const restoreSnapshot = restoreScroll ? (snapshot || {
@@ -301,6 +301,14 @@ export function createTerminal(connID, settings, options = {}) {
         scheduleTerminalFit(connID, inst, { restoreScroll: true, snapshot: restoreSnapshot, caller: 'createTerminal-RAF' });
       } else {
         cancelPendingFit(inst);
+        // The container may have been resized while this tab was hidden
+        // (visibility:hidden keeps the RO callback firing, but
+        // visibleTerminalRect bails on inactive tabs without updating
+        // lastFitWidth/Height), so re-fit if the size drifted.
+        const rect = visibleTerminalRect(inst);
+        if (rect && (rect.width !== inst.lastFitWidth || rect.height !== inst.lastFitHeight)) {
+          scheduleTerminalFit(connID, inst, { restoreScroll: true, caller: 'createTerminal-refit' });
+        }
       }
       inst.containerEl = container;
       inst.containerId = containerId;
@@ -747,12 +755,15 @@ export function createTerminal(connID, settings, options = {}) {
     if (rect.width === inst.lastFitWidth && rect.height === inst.lastFitHeight) {
       return;
     }
-    const restoreSnapshot = Date.now() - (inst._lastTabSwitch ?? 0) < 500
+    // Within 500ms of a tab switch, the restore nudge itself fires onScroll and
+    // pollutes the saved viewport values, so reuse the snapshot taken at switch
+    // time. Otherwise pass null and let the fit take a fresh snapshot.
+    const snapshot = Date.now() - (inst._lastTabSwitch ?? 0) < 500
       ? inst.restoreSnapshot
       : null;
     scheduleTerminalFit(connID, inst, {
-      restoreScroll: !!restoreSnapshot,
-      snapshot: restoreSnapshot,
+      restoreScroll: true,
+      snapshot,
       caller: 'ResizeObserver',
     });
   });
@@ -1025,7 +1036,7 @@ export function applyLiveSettings(settings) {
   });
 }
 
-export function fitTerminal(connID, { restoreScroll = false, caller = 'fitTerminal' } = {}) {
+export function fitTerminal(connID, { restoreScroll = true, caller = 'fitTerminal' } = {}) {
   const inst = instances[connID];
   if (!inst) return;
   fitVisibleTerminal(connID, inst, { restoreScroll, caller });
@@ -1037,7 +1048,7 @@ export function suspendTerminalAutoFit(suspended) {
   Object.entries(instances).forEach(([connID, inst]) => {
     if (!inst.needsFitAfterSuspend) return;
     inst.needsFitAfterSuspend = false;
-    scheduleTerminalFit(connID, inst, { restoreScroll: false, caller: 'resume-auto-fit' });
+    scheduleTerminalFit(connID, inst, { restoreScroll: true, caller: 'resume-auto-fit' });
   });
 }
 
