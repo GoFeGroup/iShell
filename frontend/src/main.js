@@ -992,7 +992,7 @@ async function switchToTab(tab) {
   renderPaneLayout(tab);
   updateActiveTabClass();
   showPanel('terminal');
-  showTerminalContent(tab, previousTab);
+  showTerminalContent(tab);
   terminalPanes(tab).forEach(pane => mountTerminalPane(tab, pane));
   const pane = activeTerminalPane(tab);
   setActivePane(tab, pane, { focus: !!pane?.connID });
@@ -1109,26 +1109,18 @@ function showPanel(name) {
   });
 }
 
-function showTerminalContent(tab, previousTab = null) {
-  if (previousTab?.terminalContent && previousTab.terminalContent !== tab.terminalContent) {
-    suspendAISidebarLayout(previousTab);
-    previousTab.terminalContent.classList.remove('active');
-    previousTab.terminalContent.setAttribute('aria-hidden', 'true');
-  }
-  if (tab?.terminalContent) {
-    tab.terminalContent.classList.add('active');
-    tab.terminalContent.removeAttribute('aria-hidden');
-    return;
-  }
+function showTerminalContent(tab) {
   document.querySelectorAll('#panel-terminal .terminal-tab-content').forEach(el => {
     const isActive = el === tab?.terminalContent;
-    if (!isActive) {
+    if (isActive) {
+      el.classList.add('active');
+      el.removeAttribute('aria-hidden');
+    } else if (el.classList.contains('active')) {
       const t = tabs.find(t => t.terminalContent === el);
       suspendAISidebarLayout(t);
+      el.classList.remove('active');
+      el.setAttribute('aria-hidden', 'true');
     }
-    el.classList.toggle('active', isActive);
-    if (isActive) el.removeAttribute('aria-hidden');
-    else el.setAttribute('aria-hidden', 'true');
   });
 }
 
