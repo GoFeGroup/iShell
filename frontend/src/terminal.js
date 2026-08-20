@@ -2,6 +2,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { sendInput, resizeTerm, on, off } from './api.js';
 import { findQuickCommandByShortcut } from './quick-command.js';
 import { createZmodemSentry } from './zmodem.js';
@@ -349,6 +350,7 @@ export function createTerminal(connID, settings, options = {}) {
     window.runtime.BrowserOpenURL(uri);
   }));
   term.open(xtermEl);
+  loadWebglAddon(term);
 
   // Parse CWD reports emitted by shells/terminal integrations.
   const osc7Disposable = term.parser.registerOscHandler(7, (data) => {
@@ -824,6 +826,32 @@ function setTerminalLigatures(connID, enabled) {
     inst.ligaturesAddon.dispose();
     inst.ligaturesAddon = null;
   }
+}
+
+// Renders via WebGL2 for large-scrollback throughput; falls back to xterm's
+// built-in DOM renderer whenever WebGL isn't usable. The addon's constructor
+// throws synchronously on browsers/GPUs without WebGL2 (e.g. software-only
+// or GPU-blocklisted environments), and a live context can still be lost
+// later (GPU driver reset, tab backgrounding on some platforms) — both paths
+// dispose the addon and let xterm re-render with the DOM renderer instead of
+// leaving the terminal blank.
+function loadWebglAddon(term) {
+  let webglAddon;
+  try {
+    webglAddon = new WebglAddon();
+  } catch {
+    return null;
+  }
+  webglAddon.onContextLoss(() => {
+    webglAddon.dispose();
+  });
+  try {
+    term.loadAddon(webglAddon);
+  } catch {
+    webglAddon.dispose();
+    return null;
+  }
+  return webglAddon;
 }
 
 let beepAudioCtx = null;
