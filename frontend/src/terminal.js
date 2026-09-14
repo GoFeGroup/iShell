@@ -350,7 +350,12 @@ export function createTerminal(connID, settings, options = {}) {
     window.runtime.BrowserOpenURL(uri);
   }));
   term.open(xtermEl);
-  loadWebglAddon(term);
+  // The ligatures addon's README requires xterm's default canvas renderer: its
+  // character joiners tell the renderer to draw multi-char glyphs as one wide
+  // glyph, but the WebGL renderer's texture atlas is keyed per single
+  // character, so the two together intermittently paint garbled glyphs for
+  // ligature-eligible sequences. Only load WebGL when ligatures start disabled.
+  const webglAddon = settings?.ligatures ? null : loadWebglAddon(term, connID);
 
   // Parse CWD reports emitted by shells/terminal integrations.
   const osc7Disposable = term.parser.registerOscHandler(7, (data) => {
@@ -773,7 +778,7 @@ export function createTerminal(connID, settings, options = {}) {
 
   instances[connID] = {
     term, fitAddon, searchAddon, searchResultsDisposable: null, resizeObs, dataHandler,
-    ligaturesEnabled: false, ligaturesAddon: null,
+    ligaturesEnabled: false, ligaturesAddon: null, webglAddon,
     rightClickAction: settings?.right_click_action || 'menu',
     connID,
     mouseDownHandler, mouseMoveHandler, mouseUpHandler, contextMenuHandler,
@@ -815,6 +820,11 @@ function setTerminalLigatures(connID, enabled) {
   if (!inst || enabled === inst.ligaturesEnabled) return;
   inst.ligaturesEnabled = enabled;
   if (enabled) {
+    // Ligatures require xterm's default canvas renderer — see loadWebglAddon.
+    if (inst.webglAddon) {
+      inst.webglAddon.dispose();
+      inst.webglAddon = null;
+    }
     import('@xterm/addon-ligatures').then(({ LigaturesAddon }) => {
       const current = instances[connID];
       if (!current || current.term !== inst.term || !current.ligaturesEnabled || current.ligaturesAddon) return;
@@ -825,6 +835,7 @@ function setTerminalLigatures(connID, enabled) {
   } else if (inst.ligaturesAddon) {
     inst.ligaturesAddon.dispose();
     inst.ligaturesAddon = null;
+    inst.webglAddon = loadWebglAddon(inst.term, connID);
   }
 }
 
@@ -835,7 +846,15 @@ function setTerminalLigatures(connID, enabled) {
 // later (GPU driver reset, tab backgrounding on some platforms) — both paths
 // dispose the addon and let xterm re-render with the DOM renderer instead of
 // leaving the terminal blank.
-function loadWebglAddon(term) {
+//
+// Must never run at the same time as the ligatures addon: ligatures' README
+// requires xterm's default canvas renderer, because its character joiners
+// tell the renderer to draw multi-char glyphs as one wide glyph while the
+// WebGL renderer's texture atlas is keyed per single character — combined,
+// they intermittently paint garbled glyphs for ligature-eligible sequences
+// (e.g. "ti", "li", "fi"). Callers must keep inst.webglAddon and
+// inst.ligaturesAddon mutually exclusive.
+function loadWebglAddon(term, connID) {
   let webglAddon;
   try {
     webglAddon = new WebglAddon();
@@ -844,6 +863,8 @@ function loadWebglAddon(term) {
   }
   webglAddon.onContextLoss(() => {
     webglAddon.dispose();
+    const current = connID != null ? instances[connID] : null;
+    if (current?.webglAddon === webglAddon) current.webglAddon = null;
   });
   try {
     term.loadAddon(webglAddon);
