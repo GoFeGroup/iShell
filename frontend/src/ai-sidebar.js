@@ -1,7 +1,7 @@
 import {
   listAIChatSessionsForTarget, createAIChatSession, renameAIChatSession, deleteAIChatSession,
   getAIChatMessages, sendAIMessage, retryAIMessage, approveAIToolCall, rejectAIToolCall, setAIAutoExec,
-  setAIChatProvider, stopAIRun, isAIRunActive, on, off,
+  setAIChatProvider, stopAIRun, isAIRunActive, getPendingAIToolCall, on, off,
 } from './api.js';
 import { t } from './i18n.js';
 import { showToast } from './toast.js';
@@ -924,7 +924,13 @@ class AISidebarInstance {
         return;
       }
       this.lastRenderedSignature = signature;
-      this.renderHistory(messages);
+      // A tool call awaiting Run/Reject only lives in agent memory, not in
+      // the persisted messages — fetch it so the rebuilt history still shows
+      // an actionable card instead of a dead one (see renderHistoricalToolCall).
+      let pendingCall = null;
+      try { pendingCall = await getPendingAIToolCall(chatID); } catch { /* best-effort */ }
+      if (this.destroyed || this.currentChatID !== chatID) return;
+      this.renderHistory(messages, pendingCall);
       perfLog('refreshCurrentChat rendered', {
         tab: this.tab.id,
         signature,
@@ -1495,6 +1501,16 @@ class AISidebarInstance {
 
   renderPendingToolCard({ pending_id, tool_call_id, command }) {
     this.currentAssistantBubble = null;
+    const card = this.buildToolApprovalCard(pending_id, tool_call_id, command);
+    this.messagesEl?.appendChild(card);
+    this.scrollToBottom();
+    this.cardsByToolCallID[tool_call_id] = card;
+  }
+
+  // Shared by the live "ai:tool_call" event handler and by renderHistoricalToolCall,
+  // which needs to rebuild this same interactive card when re-rendering history
+  // finds a tool call that is still awaiting approval.
+  buildToolApprovalCard(pendingID, toolCallID, command) {
     const card = document.createElement('div');
     card.className = 'ai-tool-card pending';
     card.dataset.startedAt = String(Date.now());
@@ -1520,19 +1536,17 @@ class AISidebarInstance {
       runBtn.disabled = true;
       rejectBtn.disabled = true;
       status.textContent = t('aiSidebar.running');
-      try { await approveAIToolCall(pending_id); } catch (e) { status.textContent = String(e); }
+      try { await approveAIToolCall(pendingID); } catch (e) { status.textContent = String(e); }
     });
     rejectBtn.addEventListener('click', async () => {
       runBtn.disabled = true;
       rejectBtn.disabled = true;
-      try { await rejectAIToolCall(pending_id); } catch (e) { status.textContent = String(e); }
+      try { await rejectAIToolCall(pendingID); } catch (e) { status.textContent = String(e); }
     });
     actions.append(runBtn, rejectBtn);
 
     card.append(cmdEl, actions, status);
-    this.messagesEl?.appendChild(card);
-    this.scrollToBottom();
-    this.cardsByToolCallID[tool_call_id] = card;
+    return card;
   }
 
   applyToolResult({ tool_call_id, tool, command, output }) {
@@ -1582,7 +1596,7 @@ class AISidebarInstance {
     return card;
   }
 
-  renderHistory(messages) {
+  renderHistory(messages, pendingCall = null) {
     if (!this.messagesEl) return;
     const startedAt = performance.now();
     perfLog('renderHistory start', { tab: this.tab.id, messages: messages.length });
@@ -1616,7 +1630,7 @@ class AISidebarInstance {
         if (m.tool_calls) {
           let calls = [];
           try { calls = JSON.parse(m.tool_calls); } catch { calls = []; }
-          calls.forEach(call => this.renderHistoricalToolCall(call, toolResultsByID[call.id], fragment));
+          calls.forEach(call => this.renderHistoricalToolCall(call, toolResultsByID[call.id], fragment, pendingCall));
         }
       }
     });
@@ -1639,7 +1653,7 @@ class AISidebarInstance {
     perfLog('renderHistory done', this.tab.id, (performance.now() - startedAt).toFixed(1) + 'ms');
   }
 
-  renderHistoricalToolCall(call, resultMsg, parent = this.messagesEl) {
+  renderHistoricalToolCall(call, resultMsg, parent = this.messagesEl, pendingCall = null) {
     if (!this.messagesEl) return;
     let args = {};
     try { args = JSON.parse(call.function?.arguments || '{}'); } catch { args = {}; }
@@ -1649,6 +1663,16 @@ class AISidebarInstance {
     else if (call.function?.name === 'terminal_run') command = args.command || '';
     else command = Object.values(args).map(String).join(' ');
     const rejected = resultMsg?.content === 'User declined to run this command.';
+
+    // No result yet and still awaiting the user's decision (the agent hasn't
+    // resolved it) — render the same interactive Run/Reject card the live
+    // "ai:tool_call" event would have produced, instead of a dead placeholder.
+    if (!resultMsg && !rejected && pendingCall?.tool_call_id === call.id) {
+      const card = this.buildToolApprovalCard(pendingCall.pending_id, call.id, command);
+      parent.appendChild(card);
+      this.cardsByToolCallID[call.id] = card;
+      return;
+    }
 
     const card = document.createElement('div');
     card.className = 'ai-tool-card ' + (rejected ? 'rejected' : 'done');

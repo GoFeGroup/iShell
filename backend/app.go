@@ -1355,3 +1355,14 @@ func (a *App) IsAIRunActive(chatID string) bool {
 	}
 	return a.aiAgent.IsRunning(chatID)
 }
+
+// GetPendingAIToolCall returns the tool call currently awaiting Run/Reject
+// approval for chatID, or nil if none — mirroring IsAIRunActive, this lets
+// the frontend restore the approval card after missing the "ai:tool_call"
+// event because the chat's tab was inactive when it fired.
+func (a *App) GetPendingAIToolCall(chatID string) *ai.PendingToolCallInfo {
+	if a.aiAgent == nil {
+		return nil
+	}
+	return a.aiAgent.PendingToolCall(chatID)
+}

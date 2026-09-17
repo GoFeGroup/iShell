@@ -85,6 +85,7 @@ export const setAIAutoExec       = (chatID, on)        => go().SetAIAutoExec(cha
 export const setAIChatProvider   = (chatID, providerID) => go().SetAIChatProvider(chatID, providerID);
 export const stopAIRun           = (chatID)            => go().StopAIRun(chatID);
 export const isAIRunActive       = (chatID)            => go().IsAIRunActive(chatID);
+export const getPendingAIToolCall = (chatID)           => go().GetPendingAIToolCall(chatID);
 export const generateCommandSuggestion = (connID, prompt) => go().GenerateCommandSuggestion(connID, prompt);
 export const testAIProvider      = (provider)          => go().TestAIProvider(provider);
 

@@ -210,6 +210,31 @@ func (ag *Agent) RejectToolCall(pendingID string) error {
 	return ag.resolveToolCall(pendingID, false)
 }
 
+// PendingToolCallInfo describes a terminal_run call awaiting approval, in
+// the same shape as the "ai:tool_call" event payload, so the frontend can
+// re-render the Run/Reject card after missing that event (e.g. the chat's
+// tab was inactive when it fired).
+type PendingToolCallInfo struct {
+	PendingID  string `json:"pending_id"`
+	ToolCallID string `json:"tool_call_id"`
+	Command    string `json:"command"`
+}
+
+// PendingToolCall returns the tool call currently awaiting the user's
+// Run/Reject decision for chatID, or nil if none is pending. Tool calls
+// within a turn are handled one at a time, so at most one is ever pending
+// per chat.
+func (ag *Agent) PendingToolCall(chatID string) *PendingToolCallInfo {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	for _, p := range ag.pending {
+		if p.ChatID == chatID {
+			return &PendingToolCallInfo{PendingID: p.ID, ToolCallID: p.ToolCallID, Command: p.Command}
+		}
+	}
+	return nil
+}
+
 func (ag *Agent) resolveToolCall(pendingID string, approved bool) error {
 	ag.mu.Lock()
 	p, ok := ag.pending[pendingID]
