@@ -72,7 +72,7 @@ func TestAppMCPServerLifecycle(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("list_terminals returned an error result")
 	}
-	// No terminals are open in this sandboxed run; a clean empty-array
+	// No terminals are open in this sandboxed run; a clean empty-list
 	// response (no panic, no 500) is exactly what proves App.ListTerminals
 	// is wired correctly end to end.
 	got := ""
@@ -81,7 +81,7 @@ func TestAppMCPServerLifecycle(t *testing.T) {
 			got += tc.Text
 		}
 	}
-	if got != "[]" {
+	if got != `{"terminals":[]}` {
 		t.Fatalf("expected empty terminal list, got: %s", got)
 	}
 

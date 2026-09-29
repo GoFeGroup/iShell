@@ -183,7 +183,11 @@ func registerTools(mcpSrv *server.MCPServer, src TerminalSource) {
 }
 
 func handleListTerminals(_ context.Context, src TerminalSource, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultJSON(src.ListTerminals())
+	// MCP requires structuredContent to be a JSON object, so wrap the slice;
+	// strict clients (e.g. Claude Code) reject a bare array.
+	return mcp.NewToolResultJSON(struct {
+		Terminals []TerminalInfo `json:"terminals"`
+	}{Terminals: src.ListTerminals()})
 }
 
 func handleTerminalRead(_ context.Context, src TerminalSource, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
