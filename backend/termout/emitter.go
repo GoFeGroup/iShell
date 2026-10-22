@@ -58,11 +58,18 @@ type Emitter struct {
 
 // New returns an Emitter that emits "terminal:data:<connID>" events on ctx.
 func New(ctx context.Context, connID string) *Emitter {
+	return NewWithSink(connID, func(event, data string) {
+		wailsRuntime.EventsEmit(ctx, event, data)
+	})
+}
+
+// NewWithSink returns an Emitter that delivers each flushed, base64-encoded
+// chunk to sink instead of the Wails event bus. Used by tests outside this
+// package that need to observe terminal output without a Wails runtime.
+func NewWithSink(connID string, sink func(event, data string)) *Emitter {
 	return &Emitter{
 		event: "terminal:data:" + connID,
-		sink: func(event, data string) {
-			wailsRuntime.EventsEmit(ctx, event, data)
-		},
+		sink:  sink,
 	}
 }
 

@@ -148,7 +148,14 @@ func (a *App) LaunchNewInstance() error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start new instance: %w", err)
 	}
-	return cmd.Process.Release()
+	// Process.Release does not reap on Unix; wait in the background so the new
+	// instance does not linger as <defunct> if it exits before this one.
+	go func() {
+		if err := cmd.Wait(); err != nil && a.ctx != nil {
+			wailsRuntime.LogErrorf(a.ctx, "new instance exited: %v", err)
+		}
+	}()
+	return nil
 }
 
 func appBundlePath(exe string) string {
