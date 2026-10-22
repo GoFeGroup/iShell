@@ -329,8 +329,7 @@ export async function initSettings(initialPage = 'appearance') {
     <div class="settings-page" id="sp-about">
       <div class="settings-page-title">${t('settings.nav.about')}</div>
       <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;padding:28px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;">
-        <div style="width:64px;height:64px;background:linear-gradient(135deg,var(--accent),var(--mauve));border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:30px;color:#fff;">⌨</div>
-        <div style="font-size:22px;font-weight:700;">iShell</div>
+        <img src="/ishell-logo.png" alt="iShell" width="200" height="200" style="display:block;object-fit:contain;max-width:100%;" />
         <div style="color:var(--text-muted);">${t('settings.about.versionLabel')} 1.0.0</div>
         <div style="font-size:13px;color:var(--text-secondary);max-width:300px;">${t('settings.about.description')}</div>
       </div>

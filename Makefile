@@ -3,9 +3,13 @@ BUILD_DIR := build/bin
 VERSION   := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS   := -X ishell/backend.Version=$(VERSION)
 
-.PHONY: all dev build build-mac build-mac-arm64 build-mac-amd64 build-windows clean
+.PHONY: all dev build build-mac build-mac-arm64 build-mac-amd64 build-windows clean icons
 
 all: build
+
+## 从 PNG 源文件生成应用图标（需要 Python Pillow）
+icons:
+	python3 scripts/generate-icons.py
 
 ## 开发模式（热重载）
 dev:
