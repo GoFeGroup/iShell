@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,5 +42,41 @@ func TestRemoveKnownHostMatchesExactAndHashedHosts(t *testing.T) {
 		if strings.Contains(got, removed) {
 			t.Fatalf("entry %q was not removed:\n%s", removed, got)
 		}
+	}
+}
+
+func TestAddHostKeyReplacesChangedKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	oldKey := mustTestSigner(t).PublicKey()
+	newKey := mustTestSigner(t).PublicKey()
+	otherKey := mustTestSigner(t).PublicKey()
+
+	content := strings.Join([]string{
+		knownhosts.Line([]string{"host.example:22", "alias.example:22"}, oldKey),
+		knownhosts.Line([]string{"other.example:22"}, otherKey),
+		knownhosts.HashHostname("host.example") + " " + strings.SplitN(knownhosts.Line([]string{"x"}, oldKey), " ", 2)[1],
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AddHostKey(path, "host.example:22", newKey); err != nil {
+		t.Fatalf("AddHostKey: %v", err)
+	}
+
+	cb, err := knownhosts.New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 22}
+	if err := cb("host.example:22", addr, newKey); err != nil {
+		t.Fatalf("new key not trusted: %v", err)
+	}
+	if err := cb("alias.example:22", addr, oldKey); err != nil {
+		t.Fatalf("alias sharing the old line lost trust: %v", err)
+	}
+	if err := cb("other.example:22", addr, otherKey); err != nil {
+		t.Fatalf("unrelated host lost trust: %v", err)
 	}
 }

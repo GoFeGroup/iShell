@@ -59,13 +59,19 @@ func HostKeyCallback(khPath string) (gossh.HostKeyCallback, error) {
 	return cb, nil
 }
 
-// AddHostKey appends a new host key to the known_hosts file.
+// AddHostKey records key as the trusted host key for host. Any existing entry
+// for the same host and key type is dropped first: knownhosts only consults
+// the first key of each type per host, so merely appending a replacement for
+// a changed key would leave the stale one in effect.
 func AddHostKey(khPath, host string, key gossh.PublicKey) error {
 	if khPath == "" {
 		khPath = DefaultKnownHostsPath()
 	}
 	khMu.Lock()
 	defer khMu.Unlock()
+	if err := dropHostKeyType(khPath, knownhosts.Normalize(host), key.Type()); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(khPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return err
@@ -127,6 +133,50 @@ func RemoveKnownHost(khPath, hostname string) error {
 		if !knownHostsLineMatches(line, hostname) {
 			kept = append(kept, line)
 		}
+	}
+	return os.WriteFile(khPath, []byte(strings.Join(kept, "\n")), 0600)
+}
+
+// dropHostKeyType removes addr (already normalized) from every plain
+// known_hosts line whose key type is keyType. Lines naming other hosts too
+// keep those hosts; lines left with no hosts are deleted. Marker lines
+// (@cert-authority, @revoked) and wildcard patterns are left untouched.
+func dropHostKeyType(khPath, addr, keyType string) error {
+	data, err := os.ReadFile(khPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	changed := false
+	kept := lines[:0]
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		fields := strings.Fields(trimmed)
+		if len(fields) < 3 || strings.HasPrefix(fields[0], "#") || strings.HasPrefix(fields[0], "@") || fields[1] != keyType {
+			kept = append(kept, line)
+			continue
+		}
+		var hosts []string
+		for _, pattern := range strings.Split(fields[0], ",") {
+			if pattern == addr || hashedHostnameMatches(pattern, addr) {
+				continue
+			}
+			hosts = append(hosts, pattern)
+		}
+		if len(hosts) == len(strings.Split(fields[0], ",")) {
+			kept = append(kept, line)
+			continue
+		}
+		changed = true
+		if len(hosts) > 0 {
+			kept = append(kept, strings.Join(hosts, ",")+trimmed[len(fields[0]):])
+		}
+	}
+	if !changed {
+		return nil
 	}
 	return os.WriteFile(khPath, []byte(strings.Join(kept, "\n")), 0600)
 }
